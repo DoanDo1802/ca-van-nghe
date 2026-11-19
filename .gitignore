@@ -1,0 +1,14 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment & local
+.env
+.env.*
+.DS_Store
+*.log
+
+# Raw unoptimized source assets
+raw_assets/
