@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, Suspense } from 'react';
-import { useFrame } from '@react-three/fiber';
+import { useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { Sparkles, Html, useTexture } from '@react-three/drei';
 import LiveStageSet from './LiveStageSet';
@@ -31,7 +31,10 @@ function createBoardScreen() {
   video.preload = 'auto';
   const tex = new THREE.VideoTexture(video);
   tex.colorSpace = THREE.SRGBColorSpace;
-  tex.anisotropy = 8;
+  tex.generateMipmaps = false;
+  tex.minFilter = THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.anisotropy = 1;
   const material = new THREE.MeshBasicMaterial({ map: tex });
   material.userData.video = video;
   return material;
@@ -146,12 +149,13 @@ export default function AtmosphericRoom({
 
   // Iframe sits at z-index 0, just behind the canvas. A negative z-index falls
   // behind the page background, which is why the screen went black.
-  useFrame(({ gl }) => {
+  const { gl } = useThree();
+  useEffect(() => {
     const canvas = gl.domElement;
-    if (canvas.style.pointerEvents !== 'auto') canvas.style.pointerEvents = 'auto';
-    if (canvas.style.position !== 'relative') canvas.style.position = 'relative';
-    if (canvas.style.zIndex !== '1') canvas.style.zIndex = '1';
-  });
+    canvas.style.pointerEvents = 'auto';
+    canvas.style.position = 'relative';
+    canvas.style.zIndex = '1';
+  }, [gl]);
 
   const screenHoleMaterial = useMemo(() => new THREE.ShaderMaterial({
     toneMapped: false,
@@ -383,7 +387,7 @@ export default function AtmosphericRoom({
 
       {/* Bụi vàng & ánh sáng lơ lửng trên sân khấu chính */}
       <Sparkles
-        count={65}
+        count={28}
         scale={[14, 4.2, 7.4]}
         position={[0, 2.8, -12.6]}
         color="#f5a623"
@@ -426,7 +430,7 @@ export default function AtmosphericRoom({
         </mesh>
 
         <Sparkles
-          count={40}
+          count={20}
           scale={[3.4, 3.2, 8.4]}
           position={[16.9, 2.4, 3]}
           color="#f5a623"

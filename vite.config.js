@@ -7,5 +7,17 @@ export default defineConfig({
   server: {
     port: 3000,
     host: true
+  },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          react: ['react', 'react-dom'],
+          three: ['three'],
+          r3f: ['@react-three/fiber', '@react-three/drei'],
+          ui: ['lucide-react', 'canvas-confetti']
+        }
+      }
+    }
   }
 });

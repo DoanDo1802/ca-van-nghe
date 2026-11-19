@@ -260,7 +260,7 @@ export default function CanvasScene({
     >
       <Canvas
         shadows
-        dpr={[1, 1.5]}
+        dpr={[1, 1.25]}
         camera={{ position: [0, 4.5, 12.0], fov: 50, near: 0.2, far: 90 }}
         gl={{
           antialias: true,

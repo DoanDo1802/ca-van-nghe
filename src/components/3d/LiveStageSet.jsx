@@ -99,6 +99,7 @@ function wireMovingHeads(model, host) {
   const origin = new THREE.Vector3();
   const lensPos = new THREE.Vector3();
   const fixtures = [];
+  let spotCount = 0;
 
   housings.forEach((housing, i) => {
     housing.getWorldPosition(origin);
@@ -129,11 +130,17 @@ function wireMovingHeads(model, host) {
     const color = glow && glow.emissive && glow.emissive.getHex() !== 0
       ? glow.emissive.clone()
       : new THREE.Color('#ffd2a8');
-    const spot = new THREE.SpotLight(color, 18, 10, 0.52, 0.82, 2);
-    const target = new THREE.Object3D();
-    host.add(spot);
-    host.add(target);
-    spot.target = target;
+    // Cap real-time SpotLights at 3 for high FPS while keeping all parcan housings & emissive lenses animated
+    let spot = null;
+    let target = null;
+    if (i % 4 === 0 && spotCount < 3) {
+      spotCount += 1;
+      spot = new THREE.SpotLight(color, 28, 11, 0.58, 0.82, 2);
+      target = new THREE.Object3D();
+      host.add(spot);
+      host.add(target);
+      spot.target = target;
+    }
 
     const world = housing.getWorldPosition(new THREE.Vector3());
     fixtures.push({
@@ -172,13 +179,18 @@ export default function LiveStageSet({
   const clonedScene = useMemo(() => {
     const clone = scene.clone(true);
 
-    // Filter out the external diorama room walls/ceiling so the gear sits cleanly on our stage
-    const excludedKeywords = ['left wall', 'floor', 'ceiling', 'boundry'];
-
     clone.traverse((child) => {
       if (child.isMesh) {
-        child.castShadow = true;
-        child.receiveShadow = true;
+        const lname = (child.name || '').toLowerCase();
+        // Only cast shadows from large stage structures (Marshall cabs, truss frame, curtains, kick drum)
+        // to avoid rendering 195+ fine cables/hardware meshes into the shadow map every frame
+        const isLargeCaster =
+          lname.includes('marshall') ||
+          lname.includes('curtain') ||
+          lname.includes('kick') ||
+          lname.includes('stage frame');
+        child.castShadow = isLargeCaster;
+        child.receiveShadow = !lname.includes('cable') && !lname.includes('light');
 
         if (child.material) {
           child.material.roughness = Math.min(1.0, (child.material.roughness || 0.8) * 1.05);
@@ -233,8 +245,8 @@ export default function LiveStageSet({
     host.current.updateWorldMatrix(true, false);
     if (builtFor.current !== clonedScene) {
       rig.current.forEach((fixture) => {
-        fixture.spot.removeFromParent();
-        fixture.target.removeFromParent();
+        if (fixture.spot) fixture.spot.removeFromParent();
+        if (fixture.target) fixture.target.removeFromParent();
       });
       rig.current = wireMovingHeads(clonedScene, host.current);
       builtFor.current = clonedScene;
@@ -247,17 +259,19 @@ export default function LiveStageSet({
       _yaw.setFromAxisAngle(_up, sweep * 0.58);
       _pitch.setFromAxisAngle(_axisX, nod * 0.18);
       fixture.node.quaternion.copy(_yaw).multiply(fixture.base).multiply(_pitch);
-      fixture.node.updateWorldMatrix(true, false);
-      fixture.node.getWorldPosition(_pos);
-      _aim.set(
-        fixture.front ? 16.4 + nod * 0.4 : 15.75 - nod * 0.35,
-        0.7,
-        THREE.MathUtils.clamp(fixture.baseZ + sweep * 1.65, -0.5, 6.5)
-      );
-      host.current.worldToLocal(_pos);
-      fixture.spot.position.copy(_pos);
-      host.current.worldToLocal(_aim);
-      fixture.target.position.copy(_aim);
+      if (fixture.spot && fixture.target) {
+        fixture.node.updateWorldMatrix(true, false);
+        fixture.node.getWorldPosition(_pos);
+        _aim.set(
+          fixture.front ? 16.4 + nod * 0.4 : 15.75 - nod * 0.35,
+          0.7,
+          THREE.MathUtils.clamp(fixture.baseZ + sweep * 1.65, -0.5, 6.5)
+        );
+        host.current.worldToLocal(_pos);
+        fixture.spot.position.copy(_pos);
+        host.current.worldToLocal(_aim);
+        fixture.target.position.copy(_aim);
+      }
       if (fixture.glow) fixture.glow.emissiveIntensity = 2.8 + (sweep * 0.5 + 0.5) * 0.7;
     }
   });

@@ -18,11 +18,11 @@ const FRESNEL_SCALE = 1.55;
 const SPEAKER_X = [-6.45, 6.45];
 const SPEAKER_Z = [-15.47, -9.7];
 
-function prepare(scene, tune) {
+function prepare(scene, tune, castShadow = true) {
   const clone = scene.clone(true);
   clone.traverse((obj) => {
     if (!obj.isMesh) return;
-    obj.castShadow = true;
+    obj.castShadow = castShadow;
     obj.receiveShadow = true;
     const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
     mats.forEach((mat) => {
@@ -45,7 +45,7 @@ function Fresnel(props) {
       mat.emissive = new THREE.Color('#ffd089');
       mat.emissiveIntensity = 2.2;
     }
-  }), [scene]);
+  }, false), [scene]);
   return <primitive object={clone} {...props} />;
 }
 
@@ -62,37 +62,45 @@ function aimHeadAt(head, spot, target, aim) {
   spot.target = target;
 }
 
-function SweepFresnel({ position, phase, color }) {
+function SweepFresnel({ position, phase, color, hasLight = true }) {
   const head = useRef(null);
   const spot = useRef(null);
   const target = useRef(null);
   const aim = useMemo(() => new THREE.Vector3(), []);
 
   useLayoutEffect(() => {
-    if (spot.current && target.current) spot.current.target = target.current;
-  }, []);
+    if (hasLight && spot.current && target.current) spot.current.target = target.current;
+  }, [hasLight]);
 
   useFrame(({ clock }) => {
     const t = clock.elapsedTime;
     const sweep = Math.sin(t * 0.62 + phase);
     aim.set(position[0] * 0.25 + sweep * 2.2, 0.42, -11.6);
-    aimHeadAt(head.current, spot.current, target.current, aim);
+    if (hasLight) {
+      aimHeadAt(head.current, spot.current, target.current, aim);
+    } else if (head.current) {
+      head.current.lookAt(aim);
+    }
   });
 
   return (
     <group position={position}>
       <group ref={head}>
         <Fresnel scale={FRESNEL_SCALE} />
-        <spotLight
-          ref={spot}
-          color={color}
-          intensity={70}
-          angle={0.55}
-          penumbra={0.85}
-          distance={14}
-          decay={2}
-        />
-        <object3D ref={target} position={[0, 0, 6]} />
+        {hasLight && (
+          <>
+            <spotLight
+              ref={spot}
+              color={color}
+              intensity={95}
+              angle={0.62}
+              penumbra={0.85}
+              distance={15}
+              decay={2}
+            />
+            <object3D ref={target} position={[0, 0, 6]} />
+          </>
+        )}
       </group>
     </group>
   );
@@ -121,6 +129,7 @@ export default function MainStageDressing() {
           position={[x, fresnelY, -8.15]}
           phase={i * 0.9}
           color={colors[i]}
+          hasLight={i === 1 || i === 3}
         />
       ))}
     </group>
