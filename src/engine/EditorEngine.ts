@@ -17,7 +17,8 @@ import type {
   TransformTool,
   Vec3,
 } from '../types';
-import { AssetRepository } from '../storage';
+import { AssetRepository, ProjectRepository } from '../storage';
+import { useAssetStore } from '../store/useAssetStore';
 import { clearGlbContainerCache, loadGlbFromArrayBuffer } from './animation/GlbAnimExtractor';
 import { evaluateClipAtTime } from './animation/KeyframeEvaluator';
 import { CommandManager } from './CommandManager';
@@ -57,6 +58,7 @@ import { configureAmmo, initAmmo, isAmmoLoaded } from './serialization/AmmoLoade
 import { importCaVanNgheScene } from './serialization/CaVanNgheImporter';
 import { getEntityMeta } from './serialization/EntityComponentHelper';
 import {
+  clearGlbAssetBufferCache,
   createResourceTracker,
   deserializeEntity,
   deserializeScene,
@@ -120,6 +122,11 @@ export class EditorEngine {
   private playState: PlayModeState = 'edit';
   private playSnapshot: SceneSchema | null = null;
   private sceneGeneration = 0;
+  private currentSceneId = 'default-scene';
+  private currentSceneName = 'Untitled Scene';
+  private autoDraftReady = false;
+  private autoDraftTimer: number | null = null;
+  private autoDraftUnsubs: Array<() => void> = [];
   private pendingScrubOldTransform = new Map<string, TransformData>();
 
   private animationClips: Record<string, AnimationClipData> = {};
@@ -185,13 +192,14 @@ export class EditorEngine {
 
   private constructor() {}
 
-  mount(canvas: HTMLCanvasElement): void {
+  mount(canvas: HTMLCanvasElement, options?: { restoreAutoDraft?: boolean }): void {
     if (this.app) {
       if (this.canvas === canvas) return;
       this.unmount();
     }
 
     this.canvas = canvas;
+    this.autoDraftReady = false;
 
     configureAmmo();
     void initAmmo();
@@ -257,6 +265,7 @@ export class EditorEngine {
 
     canvas.addEventListener('pointerdown', this.handlePointerDown);
     canvas.addEventListener('pointerup', this.handlePointerUp);
+    canvas.addEventListener('dblclick', this.handleDoubleClick);
 
     this.unsubGizmoDragEnd = this.eventBus.on('gizmo:drag-end', ({ entityIds }) => {
       if (!this.isRecording || !this.activeRecordingClipId || this.playState !== 'edit') {
@@ -279,23 +288,149 @@ export class EditorEngine {
 
     app.start();
 
+    this.autoDraftUnsubs = [
+      this.eventBus.on('command:executed', () => this.scheduleAutoDraft()),
+      this.eventBus.on('entity:property-changed', () => this.scheduleAutoDraft()),
+      this.eventBus.on('hierarchy:changed', () => this.scheduleAutoDraft()),
+      this.eventBus.on('timeline:keyframe-recorded', () => this.scheduleAutoDraft()),
+    ];
+
     this.eventBus.emit('engine:ready', { version: pc.version });
     this.eventBus.emit('scene:loaded', { sceneId: 'default-scene' });
     this.emitHierarchyChanged();
 
-    void importCaVanNgheScene(this).catch((err) => {
+    const gen = this.sceneGeneration;
+    if (options?.restoreAutoDraft !== false) {
+      void this.restoreStartupScene(gen, app, sceneRoot);
+    } else {
+      void importCaVanNgheScene(this).catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.consoleBridge.error(`Failed to auto-load Ca Van Nghe scene: ${msg}`);
+      });
+    }
+  }
+
+  private async restoreStartupScene(
+    gen: number,
+    app: pc.Application,
+    sceneRoot: pc.Entity
+  ): Promise<void> {
+    try {
+      const draft = await ProjectRepository.loadAutoDraft();
+      if (
+        this.sceneGeneration !== gen ||
+        this.app !== app ||
+        this.sceneRoot !== sceneRoot ||
+        !app.scene
+      ) {
+        return;
+      }
+      if (draft) {
+        await this.syncUpdatedCharacterAsset();
+        if (
+          this.sceneGeneration !== gen ||
+          this.app !== app ||
+          this.sceneRoot !== sceneRoot ||
+          !app.scene
+        ) {
+          return;
+        }
+        this.loadSceneSchema(draft);
+        await useAssetStore.getState().loadAssets();
+        this.consoleBridge.log(`Restored saved scene "${draft.metadata?.name || 'Untitled Scene'}".`);
+        return;
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.consoleBridge.warn(`Failed to restore auto-draft scene: ${msg}`);
+    }
+
+    if (
+      this.sceneGeneration !== gen ||
+      this.app !== app ||
+      this.sceneRoot !== sceneRoot ||
+      !app.scene
+    ) {
+      return;
+    }
+
+    try {
+      await importCaVanNgheScene(this);
+    } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.consoleBridge.error(`Failed to auto-load Ca Van Nghe scene: ${msg}`);
-    });
+    }
+  }
+
+  private async syncUpdatedCharacterAsset(): Promise<void> {
+    try {
+      const assets = await AssetRepository.listAssets();
+      const charAsset = assets.find(
+        (a) => a.name === 'Character.glb' && a.folderPath === '/CaVanNghe'
+      );
+      if (!charAsset) return;
+
+      const head = await fetch('/models/Character.glb', { method: 'HEAD' });
+      const contentLen = Number(head.headers.get('content-length') || 0);
+      if (contentLen > 0 && contentLen === charAsset.sizeBytes) return;
+
+      const res = await fetch('/models/Character.glb');
+      if (!res.ok) return;
+      const buf = await res.arrayBuffer();
+      if (buf.byteLength !== charAsset.sizeBytes) {
+        await AssetRepository.updateAssetBlob(charAsset.id, buf);
+        clearGlbAssetBufferCache(charAsset.id);
+      }
+    } catch {
+      /* Ignore offline/network errors during startup asset sync */
+    }
+  }
+
+  private scheduleAutoDraft(): void {
+    if (!this.autoDraftReady || this.playState !== 'edit') return;
+    if (this.autoDraftTimer !== null) {
+      window.clearTimeout(this.autoDraftTimer);
+    }
+    this.autoDraftTimer = window.setTimeout(() => {
+      this.autoDraftTimer = null;
+      void this.saveAutoDraftNow();
+    }, 1000);
+  }
+
+  async saveAutoDraftNow(): Promise<void> {
+    if (!this.app || !this.sceneRoot || this.playState !== 'edit' || !this.autoDraftReady) {
+      return;
+    }
+    try {
+      const schema = this.exportSceneSchema();
+      await ProjectRepository.saveAutoDraft(schema);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.consoleBridge.warn(`Auto-draft save failed: ${msg}`);
+    }
+  }
+
+  getSceneName(): string {
+    return this.currentSceneName;
   }
 
   unmount(): void {
     if (!this.app) return;
+    if (this.autoDraftTimer !== null) {
+      window.clearTimeout(this.autoDraftTimer);
+      this.autoDraftTimer = null;
+    }
+    for (const unsub of this.autoDraftUnsubs) {
+      unsub();
+    }
+    this.autoDraftUnsubs = [];
+    this.autoDraftReady = false;
     this.sceneGeneration++;
 
     if (this.canvas) {
       this.canvas.removeEventListener('pointerdown', this.handlePointerDown);
       this.canvas.removeEventListener('pointerup', this.handlePointerUp);
+      this.canvas.removeEventListener('dblclick', this.handleDoubleClick);
     }
 
     this.unsubGizmoDragEnd?.();
@@ -542,18 +677,45 @@ export class EditorEngine {
       return;
     }
 
-    const center = new pc.Vec3();
-    let count = 0;
+    const combinedBox = new pc.BoundingBox();
+    let hasBounds = false;
+
+    const collectBounds = (node: pc.GraphNode) => {
+      if (!(node instanceof pc.Entity) || !node.enabled) return;
+      if (node.render && node.render.enabled) {
+        for (const mi of node.render.meshInstances) {
+          if (!mi.aabb || !mi.visible) continue;
+          if (!hasBounds) {
+            combinedBox.copy(mi.aabb);
+            hasBounds = true;
+          } else {
+            combinedBox.add(mi.aabb);
+          }
+        }
+      }
+      for (const child of node.children) {
+        collectBounds(child);
+      }
+    };
+
+    const fallbackCenter = new pc.Vec3();
+    let entityCount = 0;
     for (const id of this.selectedEntityIds) {
       const entity = this.getEntityById(id);
       if (entity) {
-        center.add(entity.getPosition());
-        count++;
+        collectBounds(entity);
+        fallbackCenter.add(entity.getPosition());
+        entityCount++;
       }
     }
-    if (count > 0) {
-      center.mulScalar(1 / count);
-      this.cameraController.focusOn(center, 3);
+
+    if (hasBounds) {
+      const center = combinedBox.center.clone();
+      const radius = combinedBox.halfExtents.length();
+      this.cameraController.focusOn(center, Math.max(radius, 1.2));
+    } else if (entityCount > 0) {
+      fallbackCenter.mulScalar(1 / entityCount);
+      this.cameraController.focusOn(fallbackCenter, 1.2);
     }
   }
 
@@ -574,7 +736,13 @@ export class EditorEngine {
     const summaries: EntitySummary[] = [];
 
     const visit = (entity: pc.Entity, parentId: string | null) => {
-      const childIds = entity.children.map((c) => (c as pc.Entity).getGuid());
+      if (entity !== this.sceneRoot && entity.tags.has('__glb_internal__')) {
+        return;
+      }
+
+      const childIds = entity.children
+        .filter((c): c is pc.Entity => c instanceof pc.Entity && !c.tags.has('__glb_internal__'))
+        .map((c) => c.getGuid());
       const componentTypes = Object.keys(entity.c ?? {}).filter((t): t is ComponentType =>
         KNOWN_COMPONENT_TYPES.has(t as ComponentType)
       );
@@ -590,7 +758,9 @@ export class EditorEngine {
       });
 
       for (const child of entity.children) {
-        visit(child as pc.Entity, entity.getGuid());
+        if (child instanceof pc.Entity && !child.tags.has('__glb_internal__')) {
+          visit(child, entity.getGuid());
+        }
       }
     };
 
@@ -1125,10 +1295,14 @@ export class EditorEngine {
     this.currentPlayheadTime = 0;
     this.playModeClipTimes.clear();
     this.createDefaultScene(this.sceneRoot, false);
+    this.currentSceneId = crypto.randomUUID();
+    this.currentSceneName = 'Untitled Scene';
+    this.autoDraftReady = true;
     this.commandManager.clear();
     this.selectEntities([]);
-    this.eventBus.emit('scene:loaded', { sceneId: crypto.randomUUID() });
+    this.eventBus.emit('scene:loaded', { sceneId: this.currentSceneId });
     this.emitHierarchyChanged();
+    void this.saveAutoDraftNow();
   }
 
   /**
@@ -1161,9 +1335,15 @@ export class EditorEngine {
     this.glbDestroyCallbacks.push(destroyFn);
   }
 
-  notifySceneChanged(sceneId?: string): void {
-    this.eventBus.emit('scene:loaded', { sceneId: sceneId || crypto.randomUUID() });
+  notifySceneChanged(sceneId?: string, sceneName?: string): void {
+    this.currentSceneId = sceneId || crypto.randomUUID();
+    if (sceneName) {
+      this.currentSceneName = sceneName;
+    }
+    this.autoDraftReady = true;
+    this.eventBus.emit('scene:loaded', { sceneId: this.currentSceneId });
     this.emitHierarchyChanged();
+    void this.saveAutoDraftNow();
   }
 
   exportSceneSchema(): SceneSchema {
@@ -1173,6 +1353,10 @@ export class EditorEngine {
     return serializeScene(this.sceneRoot, this.app, {
       editorLayerId: this.editorLayer?.id,
       animations: this.animationClips,
+      metadata: {
+        id: this.currentSceneId,
+        name: this.currentSceneName,
+      },
     });
   }
 
@@ -1196,10 +1380,13 @@ export class EditorEngine {
       this.trackedMaterials.add(mat);
     }
 
+    this.currentSceneId = schema.metadata?.id || crypto.randomUUID();
+    this.currentSceneName = schema.metadata?.name || 'Untitled Scene';
+    this.autoDraftReady = true;
     this.commandManager.clear();
     this.selectEntities([]);
     this.eventBus.emit('scene:loaded', {
-      sceneId: schema.metadata?.id || crypto.randomUUID(),
+      sceneId: this.currentSceneId,
     });
     this.emitHierarchyChanged();
 
@@ -1306,6 +1493,15 @@ export class EditorEngine {
       }
 
       entity.setLocalPosition(dropPos.x, dropPos.y, dropPos.z);
+
+      const tempRoot = new pc.Entity('__temp_prefab_root');
+      tempRoot.addChild(entity);
+      await restoreGlbEntities(tempRoot, this.app, {
+        registerDestroy: (fn) => this.glbDestroyCallbacks.push(fn),
+        shouldAbort: () => !this.app || !this.sceneRoot,
+      });
+      tempRoot.removeChild(entity);
+      tempRoot.destroy();
 
       const cmd = new CreateEntityCommand(
         this.commandContext,
@@ -1604,6 +1800,28 @@ export class EditorEngine {
       }
     } else if (!multi) {
       this.selectEntities([]);
+    }
+  };
+
+  private readonly handleDoubleClick = (e: MouseEvent): void => {
+    if (
+      this.playState !== 'edit' ||
+      e.button !== 0 ||
+      e.altKey ||
+      !this.canvas ||
+      !this.selectionPicker
+    ) {
+      return;
+    }
+
+    const rect = this.canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    const hit = this.selectionPicker.pick(x, y);
+    if (hit) {
+      this.selectEntities([hit.getGuid()]);
+      this.focusSelected();
     }
   };
 }

@@ -346,10 +346,8 @@ export const HierarchyPanel: React.FC = () => {
           onClick={(e) => handleSelect(id, e)}
           onDoubleClick={(e) => {
             e.stopPropagation();
-            if (!isRoot) {
-              setRenamingId(id);
-              setRenameValue(summary.name);
-            }
+            engine.selectEntities([id]);
+            engine.focusSelected();
           }}
           onContextMenu={(e) => openContextMenu(e, id)}
           style={{ paddingLeft: `${depth * 14 + 6}px` }}

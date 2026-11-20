@@ -9,8 +9,11 @@ const MAX_DISTANCE = 500;
 const ORBIT_SENSITIVITY = 0.25;
 const FLY_LOOK_SENSITIVITY = 0.2;
 const BASE_FLY_SPEED = 8;
+const MIN_FLY_SPEED = 2;
+const MAX_FLY_SPEED = 40;
 const BOOST_MULTIPLIER = 2.5;
 const PAN_SENSITIVITY = 0.0015;
+const DOLLY_SENSITIVITY = 0.005;
 const ZOOM_STEP = 0.1;
 
 export class EditorCameraController {
@@ -23,8 +26,9 @@ export class EditorCameraController {
   private distance = 14.6;
   private yaw = 0;
   private pitch = -6.3;
+  private flySpeed = BASE_FLY_SPEED;
 
-  private activeMode: 'none' | 'fly' | 'orbit' | 'pan' = 'none';
+  private activeMode: 'none' | 'fly' | 'orbit' | 'pan' | 'dolly' = 'none';
   private lastPointerX = 0;
   private lastPointerY = 0;
   private readonly pressedKeys = new Set<string>();
@@ -127,7 +131,9 @@ export class EditorCameraController {
     this.lastPointerX = e.clientX;
     this.lastPointerY = e.clientY;
 
-    if (e.button === 2) {
+    if (e.button === 2 && e.altKey) {
+      this.activeMode = 'dolly';
+    } else if (e.button === 2) {
       this.activeMode = 'fly';
     } else if (e.button === 0 && e.altKey) {
       this.activeMode = 'orbit';
@@ -168,12 +174,17 @@ export class EditorCameraController {
       this.tempUp.copy(this.cameraEntity.up).mulScalar(dy * scale);
       this.focusPoint.add(this.tempRight).add(this.tempUp);
       this.updateOrbitTransform();
+    } else if (this.activeMode === 'dolly') {
+      const delta = dx + dy;
+      const factor = Math.exp(-delta * DOLLY_SENSITIVITY);
+      this.distance = pc.math.clamp(this.distance * factor, MIN_DISTANCE, MAX_DISTANCE);
+      this.updateOrbitTransform();
     }
   };
 
   private onMouseUp = (e: MouseEvent): void => {
     if (
-      (this.activeMode === 'fly' && e.button === 2) ||
+      ((this.activeMode === 'fly' || this.activeMode === 'dolly') && e.button === 2) ||
       (this.activeMode === 'orbit' && e.button === 0) ||
       (this.activeMode === 'pan' && e.button === 1)
     ) {
@@ -184,6 +195,11 @@ export class EditorCameraController {
   private onWheel = (e: WheelEvent): void => {
     if (this.destroyed) return;
     e.preventDefault();
+    if (this.activeMode === 'fly') {
+      const factor = 1 - Math.sign(e.deltaY) * ZOOM_STEP;
+      this.flySpeed = pc.math.clamp(this.flySpeed * factor, MIN_FLY_SPEED, MAX_FLY_SPEED);
+      return;
+    }
     const factor = 1 + Math.sign(e.deltaY) * ZOOM_STEP;
     this.distance = pc.math.clamp(this.distance * factor, MIN_DISTANCE, MAX_DISTANCE);
     this.updateOrbitTransform();
@@ -228,7 +244,7 @@ export class EditorCameraController {
     if (forwardInput === 0 && rightInput === 0 && upInput === 0) return;
 
     const speed =
-      BASE_FLY_SPEED *
+      this.flySpeed *
       (this.pressedKeys.has('ShiftLeft') || this.pressedKeys.has('ShiftRight')
         ? BOOST_MULTIPLIER
         : 1) *

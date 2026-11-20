@@ -1,5 +1,7 @@
 import { useEffect } from 'react';
 import { EditorEngine } from '../../engine/EditorEngine';
+import { ProjectRepository } from '../../storage';
+import { useConsoleStore } from '../../store/useConsoleStore';
 import { useEditorStore } from '../../store/useEditorStore';
 import type { TransformTool } from '../../types';
 
@@ -13,11 +15,12 @@ function isTypingTarget(target: EventTarget | null): boolean {
 /**
  * Global editor keyboard shortcuts:
  * - Q / W / E / R: Select / Move / Rotate / Scale
+ * - X: Toggle World / Local coordinate space
  * - F: Focus camera on selected entity
  * - Ctrl+Z: Undo
  * - Ctrl+Y / Ctrl+Shift+Z: Redo
  * - Ctrl+D: Duplicate selected entities
- * - Delete: Delete selected entities
+ * - Delete / Backspace: Delete selected entities
  * - F2: Rename primary selected entity
  */
 export function useKeyboardShortcuts(): void {
@@ -33,6 +36,28 @@ export function useKeyboardShortcuts(): void {
 
       if (mod) {
         const key = e.key.toLowerCase();
+        if (key === 's') {
+          e.preventDefault();
+          void (async () => {
+            try {
+              const schema = engine.exportSceneSchema();
+              await ProjectRepository.saveProject(schema);
+              await ProjectRepository.saveAutoDraft(schema);
+              useConsoleStore.getState().addLog({
+                level: 'log',
+                source: 'File',
+                message: `Saved project "${schema.metadata.name}" to IndexedDB.`,
+              });
+            } catch (err) {
+              useConsoleStore.getState().addLog({
+                level: 'error',
+                source: 'File',
+                message: `Save Project failed: ${err instanceof Error ? err.message : String(err)}`,
+              });
+            }
+          })();
+          return;
+        }
         if (key === 'z') {
           e.preventDefault();
           if (e.shiftKey) {
@@ -85,11 +110,18 @@ export function useKeyboardShortcuts(): void {
           engine.setTool(tool);
           break;
         }
+        case 'x': {
+          const next = store.coordSpace === 'world' ? 'local' : 'world';
+          store.setCoordSpace(next);
+          engine.setCoordSpace(next);
+          break;
+        }
         case 'f': {
           engine.focusSelected();
           break;
         }
-        case 'delete': {
+        case 'delete':
+        case 'backspace': {
           const deletable = store.selectedEntityIds.filter((id) => id !== store.rootEntityId);
           if (deletable.length > 0) {
             e.preventDefault();

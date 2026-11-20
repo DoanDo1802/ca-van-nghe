@@ -138,6 +138,7 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({ viewportSize }) => {
     try {
       const schema = engine.exportSceneSchema();
       await ProjectRepository.saveProject(schema);
+      await ProjectRepository.saveAutoDraft(schema);
       useConsoleStore.getState().addLog({
         level: 'log',
         source: 'File',
@@ -182,6 +183,7 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({ viewportSize }) => {
         return;
       }
       engine.loadSceneSchema(schema);
+      await ProjectRepository.saveAutoDraft(schema);
       setLoadModalOpen(false);
       useConsoleStore.getState().addLog({
         level: 'log',
@@ -244,6 +246,7 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({ viewportSize }) => {
     try {
       const schema = await BundleExporter.importStandaloneBundle(file);
       engine.loadSceneSchema(schema);
+      await ProjectRepository.saveAutoDraft(schema);
       await loadAssets();
       useConsoleStore.getState().addLog({
         level: 'log',

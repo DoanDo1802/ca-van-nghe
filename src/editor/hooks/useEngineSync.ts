@@ -45,7 +45,7 @@ export function useEngineSync(): void {
         store.clearSelection();
         syncHierarchy();
         const rootId = engine.getSceneRoot()?.getGuid() ?? '';
-        store.setSceneMeta(sceneId, store.sceneName, rootId);
+        store.setSceneMeta(sceneId, engine.getSceneName(), rootId);
         useTimelineStore.getState().syncFromEngine();
       }),
 

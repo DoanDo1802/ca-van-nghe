@@ -3,6 +3,15 @@ import * as pc from 'playcanvas';
 const HIGHLIGHT_COLOR = new pc.Color(1, 0.65, 0.1, 1);
 const DROP_GHOST_COLOR = new pc.Color(0.25, 0.78, 1.0, 0.95);
 const GROUND_PLANE = new pc.Plane(new pc.Vec3(0, 1, 0), 0);
+const SCENE_GROUP_FOLDERS = new Set([
+  'Environment_Shell',
+  'Walls',
+  'Ceiling_Coffered',
+  'Lighting_Rig',
+  'Main_Stage',
+  'Acoustic_Stage',
+  'Lounge_Furniture',
+]);
 
 export class SelectionPicker {
   private readonly app: pc.Application;
@@ -139,30 +148,65 @@ export class SelectionPicker {
 
   private resolveSceneEntity(node: pc.GraphNode | null): pc.Entity | null {
     let curr: pc.GraphNode | null = node;
-    while (curr && !(curr instanceof pc.Entity)) {
+    while (
+      curr &&
+      curr !== this.sceneRoot &&
+      (!(curr instanceof pc.Entity) || curr.tags.has('__glb_internal__'))
+    ) {
       curr = curr.parent;
     }
     if (!curr || curr === this.sceneRoot) return null;
 
-    let ancestor: pc.GraphNode | null = curr.parent;
-    while (ancestor) {
-      if (ancestor === this.sceneRoot) {
-        return curr as pc.Entity;
+    let resolved: pc.Entity | null = null;
+    let cursor: pc.GraphNode | null = curr;
+    while (cursor && cursor !== this.sceneRoot) {
+      if (
+        !resolved &&
+        cursor instanceof pc.Entity &&
+        !cursor.tags.has('__glb_internal__')
+      ) {
+        const parent = cursor.parent;
+        if (
+          parent === this.sceneRoot ||
+          (parent instanceof pc.Entity && SCENE_GROUP_FOLDERS.has(parent.name))
+        ) {
+          resolved = cursor;
+        }
       }
-      ancestor = ancestor.parent;
+      cursor = cursor.parent;
     }
 
-    return null;
+    return cursor === this.sceneRoot ? resolved : null;
   }
 
   private computeEntityAabb(entity: pc.Entity): pc.BoundingBox {
-    const render = entity.render;
-    if (render && render.meshInstances && render.meshInstances.length > 0) {
-      const box = new pc.BoundingBox();
-      box.copy(render.meshInstances[0].aabb);
-      for (let i = 1; i < render.meshInstances.length; i++) {
-        box.add(render.meshInstances[i].aabb);
+    const box = new pc.BoundingBox();
+    let hasMesh = false;
+
+    const visit = (node: pc.GraphNode) => {
+      if (!(node instanceof pc.Entity) || !node.enabled) return;
+
+      const render = node.render;
+      if (render && render.enabled && render.meshInstances) {
+        for (const mi of render.meshInstances) {
+          if (!mi.aabb) continue;
+          if (!hasMesh) {
+            box.copy(mi.aabb);
+            hasMesh = true;
+          } else {
+            box.add(mi.aabb);
+          }
+        }
       }
+
+      for (const child of node.children) {
+        visit(child);
+      }
+    };
+
+    visit(entity);
+
+    if (hasMesh) {
       return box;
     }
 

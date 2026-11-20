@@ -26,7 +26,7 @@ export const WebGamePlayer: React.FC = () => {
       }
     });
 
-    engine.mount(canvas);
+    engine.mount(canvas, { restoreAutoDraft: false });
 
     return () => {
       active = false;
