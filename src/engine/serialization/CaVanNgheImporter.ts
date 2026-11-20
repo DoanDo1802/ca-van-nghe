@@ -6,11 +6,14 @@ import type { PrefabData } from '../../types';
 import type { EditorEngine } from '../EditorEngine';
 import { loadGlbFromArrayBuffer } from '../animation/GlbAnimExtractor';
 import { getEntityMeta } from './EntityComponentHelper';
+import { clearGlbAssetBufferCache } from './SceneDeserializer';
 import {
   buildEnvironmentShell,
   buildLightingRig,
   buildMainAndAcousticStages,
   createSharedLoungeMaterials,
+  enhanceGlbMaterials,
+  type GlbMaterialCache,
 } from './LoungeSceneBuilder';
 
 interface LoungeDecoItem {
@@ -44,6 +47,80 @@ function extractFilenameFromUrl(url: string): string {
 function getPrefabNameForUrl(url: string): string {
   const base = extractFilenameFromUrl(url).replace(/\.(glb|gltf)$/i, '');
   return `PF_${base}`;
+}
+
+async function instantiateLoungeGlbItem(options: {
+  app: pc.Application;
+  engine: EditorEngine;
+  buffer: ArrayBuffer;
+  item: LoungeDecoItem;
+  assetId?: string;
+  prefabName?: string;
+  glbMaterialCache: GlbMaterialCache;
+}): Promise<pc.Entity> {
+  const { app, engine, buffer, item, assetId, prefabName, glbMaterialCache } = options;
+  const filename = extractFilenameFromUrl(item.url);
+  const loaded = await loadGlbFromArrayBuffer(app, buffer, filename, assetId ?? item.url);
+  engine.registerExternalResources(loaded.destroyResources);
+
+  const entity = loaded.entity;
+  enhanceGlbMaterials(engine, entity, item.url, glbMaterialCache);
+  entity.name = item.name;
+  entity.setLocalPosition(item.position[0], item.position[1], item.position[2]);
+  entity.setLocalEulerAngles(
+    item.rotation[0] * RAD_TO_DEG,
+    item.rotation[1] * RAD_TO_DEG,
+    item.rotation[2] * RAD_TO_DEG
+  );
+  entity.setLocalScale(item.scale[0], item.scale[1], item.scale[2]);
+
+  const tags = [item.category, item.interactiveId].filter((t): t is string => Boolean(t));
+  if (prefabName) {
+    tags.push(`prefab:${prefabName}`);
+  }
+  if (tags.length > 0) {
+    entity.tags.add(...tags);
+  }
+
+  if (loaded.animTracks.length > 0) {
+    const meta = getEntityMeta(entity);
+    meta.anim = {
+      defaultState: loaded.animTracks[0],
+      states: loaded.animTracks.map((trackName) => ({
+        name: trackName,
+        clipAssetId: trackName,
+        speed: 1,
+        loop: true,
+      })),
+      transitions: [],
+      keyframeClipIds: [],
+    };
+  }
+
+  if (assetId) {
+    const meta = getEntityMeta(entity);
+    meta.render = { ...(meta.render ?? {}), meshAssetId: assetId };
+  }
+
+  return entity;
+}
+
+function tagStagePrefabs(root: pc.GraphNode, prefabNameByAssetId: Map<string, string>): void {
+  if (root instanceof pc.Entity) {
+    const meshAssetId = getEntityMeta(root).render?.meshAssetId;
+    if (meshAssetId) {
+      const prefabName = prefabNameByAssetId.get(meshAssetId);
+      if (prefabName) {
+        const tag = `prefab:${prefabName}`;
+        if (!root.tags.has(tag)) {
+          root.tags.add(tag);
+        }
+      }
+    }
+  }
+  for (const child of root.children) {
+    tagStagePrefabs(child, prefabNameByAssetId);
+  }
 }
 
 /**
@@ -87,11 +164,11 @@ export async function importCaVanNgheScene(engine: EditorEngine): Promise<void> 
 
   // Persist unique models into AssetRepository under "/CaVanNghe"
   const existingAssets = await AssetRepository.listAssets();
-  const existingByName = new Map<string, string>();
+  const existingByName = new Map<string, { id: string; sizeBytes: number }>();
   const existingPrefabs = new Map<string, string>();
   for (const asset of existingAssets) {
     if (asset.folderPath === CA_VAN_NGHE_FOLDER) {
-      existingByName.set(asset.name, asset.id);
+      existingByName.set(asset.name, { id: asset.id, sizeBytes: asset.sizeBytes });
     } else if (asset.type === 'prefab' && asset.folderPath === PREFABS_FOLDER) {
       existingPrefabs.set(asset.name, asset.id);
     }
@@ -100,13 +177,17 @@ export async function importCaVanNgheScene(engine: EditorEngine): Promise<void> 
   const assetIdByUrl = new Map<string, string>();
   for (const url of uniqueUrls) {
     const filename = extractFilenameFromUrl(url);
-    const existingId = existingByName.get(filename);
-    if (existingId) {
-      assetIdByUrl.set(url, existingId);
+    const buffer = bufferCache.get(url);
+    const existing = existingByName.get(filename);
+    if (existing) {
+      assetIdByUrl.set(url, existing.id);
+      if (buffer && existing.sizeBytes !== buffer.byteLength) {
+        await AssetRepository.updateAssetBlob(existing.id, buffer);
+        clearGlbAssetBufferCache(existing.id);
+      }
       continue;
     }
 
-    const buffer = bufferCache.get(url);
     if (!buffer) continue;
 
     const mimeType = filename.toLowerCase().endsWith('.gltf')
@@ -126,16 +207,22 @@ export async function importCaVanNgheScene(engine: EditorEngine): Promise<void> 
   urlCounts.set('/models/fresnel-led.glb', 5);
 
   const prefabIdByUrl = new Map<string, string>();
+  const prefabNameByUrl = new Map<string, string>();
+  const prefabNameByAssetId = new Map<string, string>();
   for (const [url, count] of urlCounts.entries()) {
     if (count < 2) continue;
     const prefabName = getPrefabNameForUrl(url);
+    const assetId = assetIdByUrl.get(url) ?? null;
+    prefabNameByUrl.set(url, prefabName);
+    if (assetId) {
+      prefabNameByAssetId.set(assetId, prefabName);
+    }
     const existingPrefabId = existingPrefabs.get(prefabName);
     if (existingPrefabId) {
       prefabIdByUrl.set(url, existingPrefabId);
       continue;
     }
 
-    const assetId = assetIdByUrl.get(url) ?? null;
     const prefabData: PrefabData = {
       id: crypto.randomUUID(),
       name: prefabName,
@@ -151,7 +238,7 @@ export async function importCaVanNgheScene(engine: EditorEngine): Promise<void> 
             id: crypto.randomUUID(),
             type: 'render',
             enabled: true,
-            meshType: 'box',
+            meshType: assetId ? 'asset' : 'box',
             meshAssetId: assetId,
             castShadows: true,
             receiveShadows: true,
@@ -184,10 +271,12 @@ export async function importCaVanNgheScene(engine: EditorEngine): Promise<void> 
   engine.prepareEmptyScene();
   sceneRoot.name = 'CaVanNghe_Main';
 
-  // Ambient & Sky settings matching Day Mode lounge
-  app.scene.ambientLight = new pc.Color(0.65, 0.6, 0.55);
+  // Ambient & Sky settings matching original dark luxury lounge
+  app.scene.ambientLight = new pc.Color(0.28, 0.25, 0.22);
+  app.scene.exposure = 1.1;
 
   const mats = createSharedLoungeMaterials(engine);
+  const glbMaterialCache: GlbMaterialCache = new Map();
 
   // 1. Environment Shell (Floor, Carpets, Walls, Ceiling, Beams, Downlights)
   buildEnvironmentShell(sceneRoot, mats);
@@ -196,7 +285,8 @@ export async function importCaVanNgheScene(engine: EditorEngine): Promise<void> 
   buildLightingRig(sceneRoot);
 
   // 3. Main Stage & Acoustic Stage (Stages, Steps, LED Strips, PA Speakers, Fresnels, Gig, Video LEDs)
-  await buildMainAndAcousticStages(engine, sceneRoot, mats, fetchBuffer, assetIdByUrl);
+  await buildMainAndAcousticStages(engine, sceneRoot, mats, fetchBuffer, assetIdByUrl, glbMaterialCache);
+  tagStagePrefabs(sceneRoot, prefabNameByAssetId);
 
   // 4. Main Camera inside the lounge (in front of reception desk, clear view of bar + stages)
   const mainCam = new pc.Entity('Main Camera');
@@ -204,7 +294,7 @@ export async function importCaVanNgheScene(engine: EditorEngine): Promise<void> 
     fov: 50,
     nearClip: 0.2,
     farClip: 120,
-    clearColor: new pc.Color(0.08, 0.07, 0.06, 1),
+    clearColor: new pc.Color(0.035, 0.039, 0.059, 1),
   });
   if (mainCam.camera) {
     mainCam.camera.enabled = false;
@@ -226,6 +316,22 @@ export async function importCaVanNgheScene(engine: EditorEngine): Promise<void> 
     playerEntity.setLocalEulerAngles(0, 180, 0);
     playerEntity.setLocalScale(0.62, 0.62, 0.62);
     playerEntity.tags.add('player');
+    if (charLoaded.animTracks.length > 0) {
+      const meta = getEntityMeta(playerEntity);
+      meta.anim = {
+        defaultState: charLoaded.animTracks.includes('Idle_Loop')
+          ? 'Idle_Loop'
+          : charLoaded.animTracks[0],
+        states: charLoaded.animTracks.map((trackName) => ({
+          name: trackName,
+          clipAssetId: trackName,
+          speed: 1,
+          loop: !trackName.startsWith('Jump'),
+        })),
+        transitions: [],
+        keyframeClipIds: [],
+      };
+    }
     if (charAssetId) {
       getEntityMeta(playerEntity).render = { meshAssetId: charAssetId };
     }
@@ -241,49 +347,15 @@ export async function importCaVanNgheScene(engine: EditorEngine): Promise<void> 
     if (!buffer) continue;
 
     try {
-      const filename = extractFilenameFromUrl(item.url);
-      const assetId = assetIdByUrl.get(item.url);
-      const loaded = await loadGlbFromArrayBuffer(app, buffer, filename, assetId ?? item.url);
-      engine.registerExternalResources(loaded.destroyResources);
-
-      const entity = loaded.entity;
-      entity.name = item.name;
-      entity.setLocalPosition(item.position[0], item.position[1], item.position[2]);
-      entity.setLocalEulerAngles(
-        item.rotation[0] * RAD_TO_DEG,
-        item.rotation[1] * RAD_TO_DEG,
-        item.rotation[2] * RAD_TO_DEG
-      );
-      entity.setLocalScale(item.scale[0], item.scale[1], item.scale[2]);
-
-      const tags = [item.category, item.interactiveId].filter((t): t is string => Boolean(t));
-      if (prefabIdByUrl.has(item.url)) {
-        tags.push(`prefab:${getPrefabNameForUrl(item.url)}`);
-      }
-      if (tags.length > 0) {
-        entity.tags.add(...tags);
-      }
-
-      if (loaded.animTracks.length > 0) {
-        const meta = getEntityMeta(entity);
-        meta.anim = {
-          defaultState: loaded.animTracks[0],
-          states: loaded.animTracks.map((trackName) => ({
-            name: trackName,
-            clipAssetId: trackName,
-            speed: 1,
-            loop: true,
-          })),
-          transitions: [],
-          keyframeClipIds: [],
-        };
-      }
-
-      if (assetId) {
-        const meta = getEntityMeta(entity);
-        meta.render = { ...(meta.render ?? {}), meshAssetId: assetId };
-      }
-
+      const entity = await instantiateLoungeGlbItem({
+        app,
+        engine,
+        buffer,
+        item,
+        assetId: assetIdByUrl.get(item.url),
+        prefabName: prefabNameByUrl.get(item.url),
+        glbMaterialCache,
+      });
       furnitureGroup.addChild(entity);
     } catch (itemErr) {
       engine.consoleBridge.warn(
@@ -295,5 +367,5 @@ export async function importCaVanNgheScene(engine: EditorEngine): Promise<void> 
   }
 
   await useAssetStore.getState().loadAssets();
-  engine.notifySceneChanged('ca-van-nghe-lounge');
+  engine.notifySceneChanged('ca-van-nghe-lounge', 'Ca Van Nghe');
 }

@@ -34,16 +34,20 @@ export function createVideoScreenMaterial(
   });
 
   const material = new pc.StandardMaterial();
-  material.diffuse = new pc.Color(0.05, 0.05, 0.05);
-  material.emissive = new pc.Color(1, 1, 1);
+  material.diffuse = new pc.Color(0.03, 0.04, 0.06);
+  material.emissive = new pc.Color(0.03, 0.04, 0.06);
   material.emissiveIntensity = 1.15;
-  material.emissiveMap = texture;
   material.useLighting = false;
   material.update();
 
   let videoReady = false;
   const onCanPlay = () => {
-    videoReady = true;
+    if (!videoReady) {
+      videoReady = true;
+      material.emissive = new pc.Color(1, 1, 1);
+      material.emissiveMap = texture;
+      material.update();
+    }
     void video.play().catch(() => {
       /* Autoplay may wait for user gesture; will play on interaction */
     });
