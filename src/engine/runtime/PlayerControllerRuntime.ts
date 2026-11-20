@@ -105,11 +105,13 @@ export class PlayerControllerRuntime {
     }
 
     const rot = this.playerEntity.getLocalEulerAngles();
-    this.yaw = rot.y || 180;
+    // Player faces -Z (rot.y = 180°). Camera orbits behind player (+Z) when yaw = 0°.
+    this.yaw = ((rot.y - 180) % 360 + 360) % 360;
 
     if (this.playerEntity.anim) {
       this.playerEntity.anim.activate = true;
       this.playerEntity.anim.enabled = true;
+      this.playerEntity.anim.playing = true;
       this.playAnim('Idle_Loop');
     }
 
@@ -217,7 +219,9 @@ export class PlayerControllerRuntime {
       const targetYaw = (Math.atan2(fwdX * nf + rgtX * nr, fwdZ * nf + rgtZ * nr) * 180) / Math.PI;
       this.playerEntity.setLocalEulerAngles(0, targetYaw, 0);
 
-      this.playAnim(isRunning ? 'Walk_Formal_Loop' : 'Walk_Loop');
+      if (this.grounded) {
+        this.playAnim(isRunning ? 'Running' : 'Walk_Loop');
+      }
     } else if (this.grounded) {
       this.playAnim('Idle_Loop');
     }
@@ -227,6 +231,8 @@ export class PlayerControllerRuntime {
     if (this.grounded && this.keys.has('Space')) {
       this.velocityY = JUMP_VELOCITY;
       this.grounded = false;
+      const isRunning = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
+      this.playAnim(isRunning && isMoving ? 'JumpWhileRun' : 'Jumping');
     }
 
     if (!this.grounded) {
@@ -328,11 +334,17 @@ export class PlayerControllerRuntime {
   private playAnim(name: string): void {
     const anim = this.playerEntity?.anim;
     if (!anim || this.currentAnimState === name) return;
+    const prev = this.currentAnimState;
     this.currentAnimState = name;
     try {
+      anim.playing = true;
       const baseLayer = anim.baseLayer;
       if (baseLayer && baseLayer.states?.includes(name)) {
-        baseLayer.transition(name, 0.18);
+        if (!prev) {
+          baseLayer.play(name);
+        } else {
+          baseLayer.transition(name, 0.18);
+        }
       }
     } catch {
       /* Track name may differ in GLB; ignore cleanly */

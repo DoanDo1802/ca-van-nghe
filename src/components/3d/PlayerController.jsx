@@ -625,8 +625,10 @@ export default function PlayerController({
     if (activeEmote) {
       const mapped = EMOTE_ACTION_MAP[activeEmote];
       if (mapped) playAnimation(mapped);
+    } else if (!isGrounded.current) {
+      playAnimation(keys.current.run && hasMovement ? 'JumpWhileRun' : 'Jumping');
     } else if (hasMovement) {
-      playAnimation(keys.current.run ? 'Sprint_Loop' : 'Walk_Loop');
+      playAnimation(keys.current.run ? 'Running' : 'Walk_Loop');
     } else {
       playAnimation('Idle_Loop');
     }
