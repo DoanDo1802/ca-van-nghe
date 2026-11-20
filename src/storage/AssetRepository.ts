@@ -293,6 +293,21 @@ export async function deleteAsset(id: string): Promise<void> {
   await Promise.all([...ops, tx.done]);
 }
 
+/**
+ * Updates an existing asset's binary blob and manifest byte size in IndexedDB.
+ */
+export async function updateAssetBlob(id: string, buffer: ArrayBuffer): Promise<void> {
+  const db = await getDb();
+  const entry = await db.get('assets', id);
+  if (!entry) return;
+  const tx = db.transaction(['assets', 'blobs'], 'readwrite');
+  await Promise.all([
+    tx.objectStore('assets').put({ ...entry, sizeBytes: buffer.byteLength }),
+    tx.objectStore('blobs').put({ key: entry.indexedDbKey, data: buffer }),
+    tx.done,
+  ]);
+}
+
 export const AssetRepository = {
   importFile,
   savePrefab,
@@ -302,4 +317,5 @@ export const AssetRepository = {
   getAssetManifest,
   listAssets,
   deleteAsset,
+  updateAssetBlob,
 };

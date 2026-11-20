@@ -170,6 +170,14 @@ export function deserializeScene(
 
 const glbAssetBufferCache = new Map<string, { buffer: ArrayBuffer; name: string }>();
 
+export function clearGlbAssetBufferCache(assetId?: string): void {
+  if (assetId) {
+    glbAssetBufferCache.delete(assetId);
+  } else {
+    glbAssetBufferCache.clear();
+  }
+}
+
 export interface RestoreGlbOptions {
   registerDestroy?: (destroyFn: () => void) => void;
   shouldAbort?: () => boolean;
@@ -281,13 +289,16 @@ export async function restoreGlbEntities(
     }
 
     if (loaded.animTracks.length > 0) {
+      const rootBone = entity.children[0] instanceof pc.Entity ? entity.children[0] : entity;
       if (!entity.anim) {
         entity.addComponent('anim', {
           activate: false,
           speed: 1,
+          rootBone,
         });
       }
       if (entity.anim) {
+        entity.anim.rootBone = rootBone;
         for (const [trackName, track] of Object.entries(loaded.animTrackMap)) {
           entity.anim.assignAnimation(trackName, track);
         }

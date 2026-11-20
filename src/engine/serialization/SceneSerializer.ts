@@ -90,6 +90,17 @@ export function serializeEntity(entity: pc.Entity, editorLayerId?: number): Enti
         metalnessMapAssetId: meta.render?.metalnessMapAssetId ?? null,
       },
     });
+  } else if (meta.render?.meshAssetId) {
+    components.push({
+      id: getOrCreateComponentId(entity, 'render'),
+      type: 'render',
+      enabled: true,
+      meshType: 'asset',
+      meshAssetId: meta.render.meshAssetId,
+      castShadows: true,
+      receiveShadows: true,
+      material: createDefaultMaterialData(),
+    });
   }
 
   if (entity.light) {
@@ -183,10 +194,12 @@ export function serializeEntity(entity: pc.Entity, editorLayerId?: number): Enti
     components.push(structuredClone(meta.script));
   }
 
+  const hasGlbMeshAsset = Boolean(meta.render?.meshAssetId);
   const children: EntityData[] = [];
   for (const childNode of entity.children) {
     if (!(childNode instanceof pc.Entity)) continue;
     if (isEditorOnlyEntity(childNode, editorLayerId)) continue;
+    if (hasGlbMeshAsset && childNode.tags.has('__glb_internal__')) continue;
     children.push(serializeEntity(childNode, editorLayerId));
   }
 

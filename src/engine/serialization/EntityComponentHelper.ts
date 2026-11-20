@@ -275,7 +275,7 @@ function applyRenderComponent(
     entity.render.castShadows = data.castShadows;
     entity.render.receiveShadows = data.receiveShadows;
     entity.render.enabled = data.enabled;
-  } else {
+  } else if (data.meshType !== 'asset') {
     const mat = buildStandardMaterial(data.material, trackMaterial);
     entity.addComponent('render', {
       type: data.meshType,

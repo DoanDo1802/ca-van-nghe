@@ -112,6 +112,17 @@ function loadContainerAsset(
   return promise.then((asset) => ({ asset, cached: Boolean(cacheKey) }));
 }
 
+const GLB_INTERNAL_TAG = '__glb_internal__';
+
+function markGlbInternalSubtree(node: pc.GraphNode): void {
+  if (node instanceof pc.Entity) {
+    node.tags.add(GLB_INTERNAL_TAG);
+  }
+  for (const child of node.children) {
+    markGlbInternalSubtree(child);
+  }
+}
+
 function instantiateFromAsset(
   app: pc.Application,
   asset: pc.Asset,
@@ -119,15 +130,18 @@ function instantiateFromAsset(
   isCached: boolean
 ): LoadedGlbResult {
   const resource = asset.resource as pc.ContainerResource;
-  const entity = resource.instantiateRenderEntity({
+  const instantiated = resource.instantiateRenderEntity({
     castShadows: true,
     receiveShadows: true,
   });
 
+  // PlayCanvas instantiateRenderEntity() returns the single GLB root node directly (without a
+  // wrapper) when a GLB has 1 scene and 1 root node. Always wrap it in a fresh identity entity
+  // so caller transforms (position/rotation/scale/lookAt) never overwrite baked GLB transforms.
   const baseName = filename.replace(/\.(glb|gltf)$/i, '').trim();
-  if (!entity.name || entity.name === 'Untitled' || entity.name === 'RootNode') {
-    entity.name = baseName || 'GLB Model';
-  }
+  const entity = new pc.Entity(baseName || 'GLB Model');
+  entity.addChild(instantiated);
+  markGlbInternalSubtree(instantiated);
 
   const animTracks: string[] = [];
   const animTrackMap: Record<string, pc.AnimTrack> = {};
@@ -136,6 +150,7 @@ function instantiateFromAsset(
       entity.addComponent('anim', {
         activate: false,
         speed: 1,
+        rootBone: instantiated,
       });
     }
 
