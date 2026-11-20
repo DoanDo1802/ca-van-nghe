@@ -33,7 +33,10 @@ export interface SharedLoungeMaterials {
   mainScreenPoster: pc.StandardMaterial;
 }
 
-function createParquetTexture(engine: EditorEngine, app: pc.Application): pc.Texture {
+function createParquetTexture(
+  app: pc.Application,
+  trackTexture: (tex: pc.Texture) => void
+): pc.Texture {
   const canvas = document.createElement('canvas');
   canvas.width = 512;
   canvas.height = 512;
@@ -84,11 +87,14 @@ function createParquetTexture(engine: EditorEngine, app: pc.Application): pc.Tex
     addressV: pc.ADDRESS_REPEAT,
   });
   tex.setSource(canvas);
-  engine.registerExternalResources(() => tex.destroy());
+  trackTexture(tex);
   return tex;
 }
 
-function createMainScreenPosterTexture(engine: EditorEngine, app: pc.Application): pc.Texture {
+function createMainScreenPosterTexture(
+  app: pc.Application,
+  trackTexture: (tex: pc.Texture) => void
+): pc.Texture {
   const canvas = document.createElement('canvas');
   canvas.width = 1024;
   canvas.height = 576;
@@ -125,13 +131,13 @@ function createMainScreenPosterTexture(engine: EditorEngine, app: pc.Application
     addressV: pc.ADDRESS_CLAMP_TO_EDGE,
   });
   tex.setSource(canvas);
-  engine.registerExternalResources(() => tex.destroy());
+  trackTexture(tex);
   return tex;
 }
 
 function loadRepeatTexture(
-  engine: EditorEngine,
   app: pc.Application,
+  trackTexture: (tex: pc.Texture) => void,
   url: string,
   onReady: (tex: pc.Texture) => void
 ): pc.Texture {
@@ -152,7 +158,7 @@ function loadRepeatTexture(
     onReady(tex);
   };
   img.src = url;
-  engine.registerExternalResources(() => tex.destroy());
+  trackTexture(tex);
   return tex;
 }
 
@@ -184,18 +190,98 @@ function makeMat(
   return m;
 }
 
+export function inferLoungeMaterialIdByEntityName(entityName: string): string | undefined {
+  switch (entityName) {
+    case 'Lounge Floor':
+      return 'lounge:floorWood';
+    case 'Wall North (Back)':
+      return 'lounge:brickWall:12:2.5';
+    case 'Wall West (Bar)':
+    case 'Wall East (Stage)':
+      return 'lounge:brickWall:11:2.5';
+    case 'Wall South Left':
+    case 'Wall South Right':
+      return 'lounge:brickWall:5.5:2.5';
+    case 'Entrance Arch Header':
+      return 'lounge:brickWall:1.5:0.7';
+    case 'LED Screen Panel':
+      return 'lounge:mainScreenPoster';
+    case 'LED Video Screen':
+      return 'lounge:videoScreen';
+    default:
+      return undefined;
+  }
+}
+
+export function applyLoungeMaterialPreset(
+  app: pc.Application,
+  entity: pc.Entity,
+  presetId: string,
+  trackTexture: (tex: pc.Texture) => void,
+  trackMaterial?: (mat: pc.StandardMaterial) => void
+): void {
+  if (!entity.render) return;
+
+  if (presetId === 'lounge:videoScreen') {
+    const videoHandle = createVideoScreenMaterial(app, '/media/bello-ballo.mp4');
+    videoHandle.material.name = 'lounge:videoScreen';
+    trackMaterial?.(videoHandle.material);
+    entity.render.material = videoHandle.material;
+    return;
+  }
+
+  const mat = entity.render.material;
+  if (!(mat instanceof pc.StandardMaterial)) return;
+  mat.name = presetId;
+
+  if (presetId === 'lounge:floorWood') {
+    mat.diffuseMap = createParquetTexture(app, trackTexture);
+    mat.diffuseMapTiling = new pc.Vec2(10, 9);
+    mat.update();
+    return;
+  }
+
+  if (presetId === 'lounge:mainScreenPoster') {
+    mat.useLighting = false;
+    mat.emissiveMap = createMainScreenPosterTexture(app, trackTexture);
+    mat.update();
+    return;
+  }
+
+  if (presetId.startsWith('lounge:brickWall:')) {
+    const parts = presetId.split(':');
+    const rx = Number(parts[2]) || 12;
+    const ry = Number(parts[3]) || 2.5;
+    mat.diffuseMapTiling = new pc.Vec2(rx, ry);
+    mat.normalMapTiling = new pc.Vec2(rx, ry);
+    loadRepeatTexture(app, trackTexture, '/textures/gig_wall_albedo.png', (tex) => {
+      mat.diffuse = new pc.Color(0.95, 0.95, 0.95);
+      mat.diffuseMap = tex;
+      mat.update();
+    });
+    loadRepeatTexture(app, trackTexture, '/textures/gig_wall_normal.png', (tex) => {
+      mat.normalMap = tex;
+      mat.bumpiness = 0.7;
+      mat.update();
+    });
+  }
+}
+
 export function createSharedLoungeMaterials(engine: EditorEngine): SharedLoungeMaterials {
   const app = engine.getApp();
+  const trackTex = (tex: pc.Texture) => engine.registerExternalResources(() => tex.destroy());
 
   const floorWood = makeMat(engine, { diffuse: [0.85, 0.8, 0.75], metalness: 0.02, gloss: 0.35 });
+  floorWood.name = 'lounge:floorWood';
   if (app) {
-    floorWood.diffuseMap = createParquetTexture(engine, app);
+    floorWood.diffuseMap = createParquetTexture(app, trackTex);
     floorWood.diffuseMapTiling = new pc.Vec2(10, 9);
     floorWood.update();
   }
 
   const makeBrickWall = (rx: number, ry: number) => {
     const m = makeMat(engine, { diffuse: [0.22, 0.19, 0.18], metalness: 0.06, gloss: 0.12 });
+    m.name = `lounge:brickWall:${rx}:${ry}`;
     m.diffuseMapTiling = new pc.Vec2(rx, ry);
     m.normalMapTiling = new pc.Vec2(rx, ry);
     return m;
@@ -208,14 +294,14 @@ export function createSharedLoungeMaterials(engine: EditorEngine): SharedLoungeM
   const brickMats = [brickWall38, brickWall34, brickWall17, brickWallArch];
 
   if (app) {
-    loadRepeatTexture(engine, app, '/textures/gig_wall_albedo.png', (tex) => {
+    loadRepeatTexture(app, trackTex, '/textures/gig_wall_albedo.png', (tex) => {
       for (const m of brickMats) {
         m.diffuse = new pc.Color(0.95, 0.95, 0.95);
         m.diffuseMap = tex;
         m.update();
       }
     });
-    loadRepeatTexture(engine, app, '/textures/gig_wall_normal.png', (tex) => {
+    loadRepeatTexture(app, trackTex, '/textures/gig_wall_normal.png', (tex) => {
       for (const m of brickMats) {
         m.normalMap = tex;
         m.bumpiness = 0.7;
@@ -230,8 +316,9 @@ export function createSharedLoungeMaterials(engine: EditorEngine): SharedLoungeM
     emissiveIntensity: 1.0,
     useLighting: false,
   });
+  mainScreenPoster.name = 'lounge:mainScreenPoster';
   if (app) {
-    const posterTex = createMainScreenPosterTexture(engine, app);
+    const posterTex = createMainScreenPosterTexture(app, trackTex);
     mainScreenPoster.emissiveMap = posterTex;
     mainScreenPoster.update();
   }
@@ -664,7 +751,7 @@ export function enhanceGlbMaterials(
  * PlayCanvas equivalent of `hideRoomShell` from `src/components/3d/LiveStageSet.jsx:201-225`.
  * Hides diorama pub tables, mannequins, crates, ceiling hangers, freestanding walls, and outer floor.
  */
-function hideGigRoomShell(gigRoot: pc.Entity): void {
+export function hideGigRoomShell(gigRoot: pc.Entity): void {
   const renders = gigRoot.findComponents('render') as pc.RenderComponent[];
   for (const render of renders) {
     if (!render.meshInstances || render.meshInstances.length === 0) continue;
@@ -874,6 +961,7 @@ export async function buildMainAndAcousticStages(
 
   // 2x PF_LED_Board with live video texture (`/media/bello-ballo.mp4`)
   const videoHandle = createVideoScreenMaterial(app, '/media/bello-ballo.mp4');
+  videoHandle.material.name = 'lounge:videoScreen';
   engine.registerExternalResources(videoHandle.destroy);
 
   const boardW = 2.72;

@@ -24,6 +24,8 @@ export interface MaterialOverrideData {
   emissiveColor: ColorRGB;
   emissiveIntensity: number;
   opacity: number; // 0..1
+  useLighting?: boolean;
+  loungeMaterialId?: string;
   diffuseMapAssetId?: string | null;
   normalMapAssetId?: string | null;
   metalnessMapAssetId?: string | null;
@@ -51,6 +53,10 @@ export interface LightComponentData extends BaseComponentData {
   castShadows: boolean;
   innerConeAngle: number;
   outerConeAngle: number;
+  shadowBias?: number;
+  normalOffsetBias?: number;
+  shadowDistance?: number;
+  shadowResolution?: number;
 }
 
 export type CameraProjection = 'perspective' | 'orthographic';

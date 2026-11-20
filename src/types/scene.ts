@@ -48,6 +48,7 @@ export interface EntitySummary {
 
 export interface SceneSettings {
   ambientColor: ColorRGB;
+  exposure?: number;
   skyboxColor: ColorRGBA;
   gravity: Vec3;
   activeCameraEntityId: string | null;

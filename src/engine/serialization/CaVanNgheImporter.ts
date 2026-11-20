@@ -2,7 +2,7 @@ import * as pc from 'playcanvas';
 import { DEFAULT_LOUNGE_DECO_ITEMS } from '../../data/defaultLoungeLayout';
 import { AssetRepository } from '../../storage';
 import { useAssetStore } from '../../store/useAssetStore';
-import type { PrefabData } from '../../types';
+import type { PrefabData, ScriptAttributeValue } from '../../types';
 import type { EditorEngine } from '../EditorEngine';
 import { loadGlbFromArrayBuffer } from '../animation/GlbAnimExtractor';
 import { getEntityMeta } from './EntityComponentHelper';
@@ -25,6 +25,26 @@ interface LoungeDecoItem {
   rotation: [number, number, number];
   scale: [number, number, number];
   interactiveId?: string;
+  isChair?: boolean;
+  seatHeight?: number;
+}
+
+function attachObjectVariables(
+  entity: pc.Entity,
+  scriptName: string,
+  attributes: ScriptAttributeValue[]
+): void {
+  const meta = getEntityMeta(entity);
+  const compId = meta.componentIds.script ?? crypto.randomUUID();
+  meta.componentIds.script = compId;
+  meta.script = {
+    id: compId,
+    type: 'script',
+    enabled: true,
+    scriptName,
+    code: '',
+    attributes,
+  };
 }
 
 const CA_VAN_NGHE_FOLDER = '/CaVanNghe';
@@ -74,12 +94,30 @@ async function instantiateLoungeGlbItem(options: {
   );
   entity.setLocalScale(item.scale[0], item.scale[1], item.scale[2]);
 
-  const tags = [item.category, item.interactiveId].filter((t): t is string => Boolean(t));
+  const tags = [item.category, item.interactiveId, item.isChair ? 'chair' : undefined].filter(
+    (t): t is string => Boolean(t)
+  );
   if (prefabName) {
     tags.push(`prefab:${prefabName}`);
   }
   if (tags.length > 0) {
     entity.tags.add(...tags);
+  }
+
+  if (item.isChair) {
+    attachObjectVariables(entity, 'ChairSeat', [
+      { name: 'isChair', type: 'boolean', value: true },
+      { name: 'sitTitle', type: 'string', value: item.name },
+      { name: 'seatOffset', type: 'vec3', value: [0, item.seatHeight ?? 0.83, 0] },
+      { name: 'seatYawOffset', type: 'number', value: 0 },
+      { name: 'interactDistance', type: 'number', value: 2.0 },
+    ]);
+  } else if (item.interactiveId) {
+    attachObjectVariables(entity, 'Interactable', [
+      { name: 'interactId', type: 'string', value: item.interactiveId },
+      { name: 'interactTitle', type: 'string', value: item.name },
+      { name: 'interactDistance', type: 'number', value: 3.2 },
+    ]);
   }
 
   if (loaded.animTracks.length > 0) {
@@ -335,6 +373,15 @@ export async function importCaVanNgheScene(engine: EditorEngine): Promise<void> 
     if (charAssetId) {
       getEntityMeta(playerEntity).render = { meshAssetId: charAssetId };
     }
+    attachObjectVariables(playerEntity, 'PlayerController', [
+      { name: 'walkSpeed', type: 'number', value: 4.5 },
+      { name: 'runSpeed', type: 'number', value: 7.5 },
+      { name: 'jumpVelocity', type: 'number', value: 6.2 },
+      { name: 'gravity', type: 'number', value: -18 },
+      { name: 'turnSpeed', type: 'number', value: 12 },
+      { name: 'cameraDistance', type: 'number', value: 3.6 },
+      { name: 'interactRange', type: 'number', value: 3.2 },
+    ]);
     sceneRoot.addChild(playerEntity);
   }
 

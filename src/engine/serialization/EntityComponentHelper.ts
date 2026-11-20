@@ -17,6 +17,7 @@ export interface EntityEditorMeta {
   componentIds: Partial<Record<ComponentType, string>>;
   render?: {
     meshAssetId?: string | null;
+    loungeMaterialId?: string;
     diffuseMapAssetId?: string | null;
     normalMapAssetId?: string | null;
     metalnessMapAssetId?: string | null;
@@ -198,6 +199,10 @@ export function applyMaterialData(
   mat.emissiveIntensity = matData.emissiveIntensity;
   mat.opacity = matData.opacity;
   mat.blendType = matData.opacity < 1 ? pc.BLEND_NORMAL : pc.BLEND_NONE;
+  mat.useLighting = matData.useLighting !== false;
+  if (matData.loungeMaterialId) {
+    mat.name = matData.loungeMaterialId;
+  }
   mat.update();
 }
 
@@ -253,6 +258,7 @@ function applyRenderComponent(
 ): void {
   meta.render = {
     meshAssetId: data.meshAssetId ?? null,
+    loungeMaterialId: data.material.loungeMaterialId,
     diffuseMapAssetId: data.material.diffuseMapAssetId ?? null,
     normalMapAssetId: data.material.normalMapAssetId ?? null,
     metalnessMapAssetId: data.material.metalnessMapAssetId ?? null,
@@ -297,6 +303,10 @@ function applyLightComponent(entity: pc.Entity, data: LightComponentData): void 
     entity.light.castShadows = data.castShadows;
     entity.light.innerConeAngle = data.innerConeAngle;
     entity.light.outerConeAngle = data.outerConeAngle;
+    if (typeof data.shadowBias === 'number') entity.light.shadowBias = data.shadowBias;
+    if (typeof data.normalOffsetBias === 'number') entity.light.normalOffsetBias = data.normalOffsetBias;
+    if (typeof data.shadowDistance === 'number') entity.light.shadowDistance = data.shadowDistance;
+    if (typeof data.shadowResolution === 'number') entity.light.shadowResolution = data.shadowResolution;
     entity.light.enabled = data.enabled;
   } else {
     entity.addComponent('light', {
@@ -307,6 +317,10 @@ function applyLightComponent(entity: pc.Entity, data: LightComponentData): void 
       castShadows: data.castShadows,
       innerConeAngle: data.innerConeAngle,
       outerConeAngle: data.outerConeAngle,
+      shadowBias: data.shadowBias ?? 0.2,
+      normalOffsetBias: data.normalOffsetBias ?? 0.05,
+      shadowDistance: data.shadowDistance ?? 45,
+      shadowResolution: data.shadowResolution ?? 1024,
       enabled: data.enabled,
     });
   }

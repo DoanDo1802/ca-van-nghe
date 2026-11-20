@@ -3,6 +3,11 @@ import { AssetRepository } from '../../storage';
 import type { EntityData, SceneSchema } from '../../types';
 import { loadGlbFromArrayBuffer } from '../animation/GlbAnimExtractor';
 import { applyComponentDataToEntity, getEntityMeta } from './EntityComponentHelper';
+import {
+  applyLoungeMaterialPreset,
+  hideGigRoomShell,
+  inferLoungeMaterialIdByEntityName,
+} from './LoungeSceneBuilder';
 
 export interface ResourceTracker {
   materials: Set<pc.StandardMaterial>;
@@ -57,7 +62,11 @@ export function destroySubtreeResources(root: pc.Entity, destroyRoot = true): vo
   }
 }
 
-export function deserializeEntity(data: EntityData, tracker: ResourceTracker): pc.Entity {
+export function deserializeEntity(
+  data: EntityData,
+  tracker: ResourceTracker,
+  app?: pc.Application
+): pc.Entity {
   const entity = new pc.Entity(data.name);
   entity.setGuid(data.id);
   entity.enabled = data.enabled;
@@ -76,13 +85,23 @@ export function deserializeEntity(data: EntityData, tracker: ResourceTracker): p
   const trackMaterial = (mat: pc.StandardMaterial) => {
     tracker.materials.add(mat);
   };
+  const trackTexture = (tex: pc.Texture) => {
+    tracker.textures.add(tex);
+  };
 
   for (const comp of data.components) {
     applyComponentDataToEntity(entity, comp, trackMaterial);
+    if (app && comp.type === 'render' && !comp.material.diffuseMapAssetId) {
+      const presetId =
+        comp.material.loungeMaterialId ?? inferLoungeMaterialIdByEntityName(entity.name);
+      if (presetId) {
+        applyLoungeMaterialPreset(app, entity, presetId, trackTexture, trackMaterial);
+      }
+    }
   }
 
   for (const childData of data.children) {
-    const child = deserializeEntity(childData, tracker);
+    const child = deserializeEntity(childData, tracker, app);
     entity.addChild(child);
   }
 
@@ -108,6 +127,12 @@ export function deserializeScene(
     settings.ambientColor[1],
     settings.ambientColor[2]
   );
+  app.scene.exposure =
+    typeof settings.exposure === 'number'
+      ? settings.exposure
+      : schema.metadata?.id === 'ca-van-nghe-lounge'
+        ? 1.1
+        : 1.0;
 
   if (app.systems.rigidbody) {
     app.systems.rigidbody.gravity.set(
@@ -150,11 +175,11 @@ export function deserializeScene(
       applyComponentDataToEntity(targetSceneRoot, comp, trackMaterial);
     }
     for (const childData of scene.children) {
-      targetSceneRoot.addChild(deserializeEntity(childData, tracker));
+      targetSceneRoot.addChild(deserializeEntity(childData, tracker, app));
     }
     sceneRoot = targetSceneRoot;
   } else {
-    sceneRoot = deserializeEntity(scene, tracker);
+    sceneRoot = deserializeEntity(scene, tracker, app);
     app.root.addChild(sceneRoot);
   }
 
@@ -290,19 +315,44 @@ export async function restoreGlbEntities(
 
     if (loaded.animTracks.length > 0) {
       const rootBone = entity.children[0] instanceof pc.Entity ? entity.children[0] : entity;
-      if (!entity.anim) {
-        entity.addComponent('anim', {
-          activate: false,
-          speed: 1,
-          rootBone,
-        });
-      }
+      const prevActivate = entity.anim?.activate ?? false;
+      const prevSpeed = entity.anim?.speed ?? 1;
+      const prevEnabled = entity.anim?.enabled ?? true;
       if (entity.anim) {
-        entity.anim.rootBone = rootBone;
+        entity.removeComponent('anim');
+      }
+      entity.addComponent('anim', {
+        activate: prevActivate,
+        speed: prevSpeed,
+        enabled: prevEnabled,
+        rootBone,
+      });
+      if (entity.anim) {
         for (const [trackName, track] of Object.entries(loaded.animTrackMap)) {
           entity.anim.assignAnimation(trackName, track);
         }
       }
+    }
+
+    if (
+      entity.name === 'Acoustic Live Band Gear' ||
+      cached.name.toLowerCase().includes('every_other_gig_ever')
+    ) {
+      hideGigRoomShell(entity);
+    }
+
+    if (entity.tags.has('player')) {
+      const disableCull = (node: pc.GraphNode) => {
+        if (node instanceof pc.Entity && node.render) {
+          for (const mi of node.render.meshInstances) {
+            mi.cull = false;
+          }
+        }
+        for (const child of node.children) {
+          disableCull(child);
+        }
+      };
+      disableCull(entity);
     }
 
     loaded.entity.destroy();

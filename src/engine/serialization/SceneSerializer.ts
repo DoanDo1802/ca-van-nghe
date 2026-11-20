@@ -85,6 +85,10 @@ export function serializeEntity(entity: pc.Entity, editorLayerId?: number): Enti
           : defaultMat.emissiveColor,
         emissiveIntensity: mat ? mat.emissiveIntensity : defaultMat.emissiveIntensity,
         opacity: mat ? mat.opacity : defaultMat.opacity,
+        useLighting: mat ? mat.useLighting : true,
+        loungeMaterialId:
+          (mat && mat.name?.startsWith('lounge:') ? mat.name : undefined) ??
+          meta.render?.loungeMaterialId,
         diffuseMapAssetId: meta.render?.diffuseMapAssetId ?? null,
         normalMapAssetId: meta.render?.normalMapAssetId ?? null,
         metalnessMapAssetId: meta.render?.metalnessMapAssetId ?? null,
@@ -117,6 +121,10 @@ export function serializeEntity(entity: pc.Entity, editorLayerId?: number): Enti
       castShadows: l.castShadows,
       innerConeAngle: l.innerConeAngle,
       outerConeAngle: l.outerConeAngle,
+      shadowBias: l.shadowBias,
+      normalOffsetBias: l.normalOffsetBias,
+      shadowDistance: l.shadowDistance,
+      shadowResolution: l.shadowResolution,
     });
   }
 
@@ -245,6 +253,7 @@ export function serializeScene(
 
   const settings: SceneSettings = {
     ambientColor: [ambient.r, ambient.g, ambient.b],
+    exposure: app.scene.exposure,
     skyboxColor: [0.11, 0.12, 0.14, 1],
     gravity: gravity ? [gravity.x, gravity.y, gravity.z] : [0, -9.81, 0],
     activeCameraEntityId: options?.activeCameraEntityId ?? null,
