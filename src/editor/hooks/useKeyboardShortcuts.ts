@@ -1,9 +1,8 @@
 import { useEffect } from 'react';
 import { EditorEngine } from '../../engine/EditorEngine';
-import { ProjectRepository } from '../../storage';
-import { useConsoleStore } from '../../store/useConsoleStore';
 import { useEditorStore } from '../../store/useEditorStore';
 import type { TransformTool } from '../../types';
+import { saveCurrentProject } from '../utils/saveProject';
 
 function isTypingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -26,38 +25,29 @@ function isTypingTarget(target: EventTarget | null): boolean {
 export function useKeyboardShortcuts(): void {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      const mod = e.ctrlKey || e.metaKey;
+      const key = e.key.toLowerCase();
+
+      // Always intercept Ctrl+S / Cmd+S even when an input/textarea is focused
+      if (mod && key === 's') {
+        e.preventDefault();
+        if (document.activeElement instanceof HTMLElement) {
+          document.activeElement.blur();
+        }
+        window.setTimeout(() => {
+          void saveCurrentProject();
+        }, 0);
+        return;
+      }
+
       if (isTypingTarget(e.target) || isTypingTarget(document.activeElement)) {
         return;
       }
 
       const engine = EditorEngine.getInstance();
       const store = useEditorStore.getState();
-      const mod = e.ctrlKey || e.metaKey;
 
       if (mod) {
-        const key = e.key.toLowerCase();
-        if (key === 's') {
-          e.preventDefault();
-          void (async () => {
-            try {
-              const schema = engine.exportSceneSchema();
-              await ProjectRepository.saveProject(schema);
-              await ProjectRepository.saveAutoDraft(schema);
-              useConsoleStore.getState().addLog({
-                level: 'log',
-                source: 'File',
-                message: `Saved project "${schema.metadata.name}" to IndexedDB.`,
-              });
-            } catch (err) {
-              useConsoleStore.getState().addLog({
-                level: 'error',
-                source: 'File',
-                message: `Save Project failed: ${err instanceof Error ? err.message : String(err)}`,
-              });
-            }
-          })();
-          return;
-        }
         if (key === 'z') {
           e.preventDefault();
           if (e.shiftKey) {

@@ -3,8 +3,6 @@ import {
   Box,
   ChevronDown,
   Download,
-  FilePlus,
-  FolderOpen,
   Globe,
   Loader2,
   Magnet,
@@ -19,10 +17,8 @@ import {
   Save,
   SkipForward,
   Square,
-  Trash2,
   Undo2,
   Upload,
-  X,
 } from 'lucide-react';
 import { EditorEngine } from '../../engine/EditorEngine';
 import { importCaVanNgheScene } from '../../engine/serialization/CaVanNgheImporter';
@@ -31,6 +27,7 @@ import { useAssetStore } from '../../store/useAssetStore';
 import { useConsoleStore } from '../../store/useConsoleStore';
 import { useEditorStore } from '../../store/useEditorStore';
 import type { TransformTool } from '../../types';
+import { saveCurrentProject } from '../utils/saveProject';
 
 export interface TopToolbarProps {
   viewportSize?: { width: number; height: number };
@@ -56,6 +53,8 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({ viewportSize }) => {
   const canUndo = useEditorStore((s) => s.canUndo);
   const canRedo = useEditorStore((s) => s.canRedo);
   const undoLabel = useEditorStore((s) => s.undoLabel);
+  const sceneName = useEditorStore((s) => s.sceneName);
+  const isDirty = useEditorStore((s) => s.isDirty);
 
   const setActiveTool = useEditorStore((s) => s.setActiveTool);
   const setCoordSpace = useEditorStore((s) => s.setCoordSpace);
@@ -65,11 +64,6 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({ viewportSize }) => {
   const loadAssets = useAssetStore((s) => s.loadAssets);
 
   const [fileMenuOpen, setFileMenuOpen] = useState(false);
-  const [loadModalOpen, setLoadModalOpen] = useState(false);
-  const [savedProjects, setSavedProjects] = useState<
-    Array<{ id: string; name: string; updatedAt: string }>
-  >([]);
-  const [projectsLoading, setProjectsLoading] = useState(false);
   const [caVanNgheLoading, setCaVanNgheLoading] = useState(false);
 
   const fileMenuRef = useRef<HTMLDivElement>(null);
@@ -96,120 +90,43 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({ viewportSize }) => {
     };
   }, [fileMenuOpen]);
 
-  const handleNewScene = () => {
-    setFileMenuOpen(false);
-    engine.newScene();
-    useConsoleStore.getState().addLog({
-      level: 'log',
-      source: 'File',
-      message: 'Created new scene.',
-    });
-  };
-
-  const handleOpenCaVanNgheScene = async () => {
+  const handleResetCaVanNgheScene = async () => {
     if (caVanNgheLoading) return;
     setFileMenuOpen(false);
+    if (!window.confirm('Reset scene về mặc định "Ca Van Nghe"? Mọi thay đổi chưa export sẽ bị ghi đè.')) {
+      return;
+    }
     setCaVanNgheLoading(true);
     useConsoleStore.getState().addLog({
       level: 'log',
       source: 'File',
-      message: 'Loading "Ca Van Nghe" lounge scene...',
+      message: 'Resetting "Ca Van Nghe" lounge scene...',
     });
     try {
       await importCaVanNgheScene(engine);
       useConsoleStore.getState().addLog({
         level: 'log',
         source: 'File',
-        message: 'Loaded "Ca Van Nghe" lounge scene.',
+        message: 'Reset "Ca Van Nghe" lounge scene.',
       });
     } catch (err) {
       useConsoleStore.getState().addLog({
         level: 'error',
         source: 'File',
-        message: `Open "Ca Van Nghe" Scene failed: ${err instanceof Error ? err.message : String(err)}`,
+        message: `Reset "Ca Van Nghe" Scene failed: ${err instanceof Error ? err.message : String(err)}`,
       });
     } finally {
       setCaVanNgheLoading(false);
     }
   };
 
+  useEffect(() => {
+    document.title = `${sceneName}${isDirty ? '*' : ''} — Ca Van Nghe Editor`;
+  }, [sceneName, isDirty]);
+
   const handleSaveProject = async () => {
     setFileMenuOpen(false);
-    try {
-      const schema = engine.exportSceneSchema();
-      await ProjectRepository.saveProject(schema);
-      await ProjectRepository.saveAutoDraft(schema);
-      useConsoleStore.getState().addLog({
-        level: 'log',
-        source: 'File',
-        message: `Saved project "${schema.metadata.name}" to IndexedDB.`,
-      });
-    } catch (err) {
-      useConsoleStore.getState().addLog({
-        level: 'error',
-        source: 'File',
-        message: `Save Project failed: ${err instanceof Error ? err.message : String(err)}`,
-      });
-    }
-  };
-
-  const handleOpenLoadModal = async () => {
-    setFileMenuOpen(false);
-    setLoadModalOpen(true);
-    setProjectsLoading(true);
-    try {
-      const list = await ProjectRepository.listProjects();
-      setSavedProjects(list);
-    } catch (err) {
-      useConsoleStore.getState().addLog({
-        level: 'error',
-        source: 'File',
-        message: `Failed to list projects: ${err instanceof Error ? err.message : String(err)}`,
-      });
-    } finally {
-      setProjectsLoading(false);
-    }
-  };
-
-  const handleLoadProject = async (id: string) => {
-    try {
-      const schema = await ProjectRepository.loadProject(id);
-      if (!schema) {
-        useConsoleStore.getState().addLog({
-          level: 'warn',
-          source: 'File',
-          message: `Project "${id}" not found.`,
-        });
-        return;
-      }
-      engine.loadSceneSchema(schema);
-      await ProjectRepository.saveAutoDraft(schema);
-      setLoadModalOpen(false);
-      useConsoleStore.getState().addLog({
-        level: 'log',
-        source: 'File',
-        message: `Loaded project "${schema.metadata.name}".`,
-      });
-    } catch (err) {
-      useConsoleStore.getState().addLog({
-        level: 'error',
-        source: 'File',
-        message: `Load Project failed: ${err instanceof Error ? err.message : String(err)}`,
-      });
-    }
-  };
-
-  const handleDeleteProject = async (id: string) => {
-    try {
-      await ProjectRepository.deleteProject(id);
-      setSavedProjects((prev) => prev.filter((p) => p.id !== id));
-    } catch (err) {
-      useConsoleStore.getState().addLog({
-        level: 'error',
-        source: 'File',
-        message: `Delete Project failed: ${err instanceof Error ? err.message : String(err)}`,
-      });
-    }
+    await saveCurrentProject();
   };
 
   const handleExportBundle = async () => {
@@ -340,32 +257,19 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({ viewportSize }) => {
             <div className="absolute left-0 top-full mt-1 z-50 w-56 py-1 rounded-md bg-[#1e232d] border border-[#323948] shadow-xl text-xs text-gray-200">
               <button
                 type="button"
-                onClick={handleNewScene}
-                className="w-full px-3 py-1.5 text-left hover:bg-blue-600/40 flex items-center gap-2"
-              >
-                <FilePlus className="w-3.5 h-3.5 text-gray-400" />
-                <span>New Scene</span>
-              </button>
-              <button
-                type="button"
                 onClick={() => void handleSaveProject()}
-                className="w-full px-3 py-1.5 text-left hover:bg-blue-600/40 flex items-center gap-2"
+                className="w-full px-3 py-1.5 text-left hover:bg-blue-600/40 flex items-center justify-between gap-2"
               >
-                <Save className="w-3.5 h-3.5 text-sky-400" />
-                <span>Save Project</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => void handleOpenLoadModal()}
-                className="w-full px-3 py-1.5 text-left hover:bg-blue-600/40 flex items-center gap-2"
-              >
-                <FolderOpen className="w-3.5 h-3.5 text-amber-400" />
-                <span>Load Project...</span>
+                <span className="flex items-center gap-2">
+                  <Save className="w-3.5 h-3.5 text-sky-400" />
+                  <span>Save Project</span>
+                </span>
+                <span className="text-[10px] text-gray-400 font-mono">Ctrl+S</span>
               </button>
               <button
                 type="button"
                 disabled={caVanNgheLoading}
-                onClick={() => void handleOpenCaVanNgheScene()}
+                onClick={() => void handleResetCaVanNgheScene()}
                 className="w-full px-3 py-1.5 text-left hover:bg-blue-600/40 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
               >
                 {caVanNgheLoading ? (
@@ -374,7 +278,7 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({ viewportSize }) => {
                   <Music className="w-3.5 h-3.5 text-rose-400" />
                 )}
                 <span>
-                  {caVanNgheLoading ? 'Loading "Ca Van Nghe"...' : 'Open "Ca Van Nghe" Scene'}
+                  {caVanNgheLoading ? 'Resetting "Ca Van Nghe"...' : 'Reset "Ca Van Nghe" Scene'}
                 </span>
               </button>
 
@@ -442,6 +346,21 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({ viewportSize }) => {
               }
             }}
           />
+        </div>
+
+        {/* Scene Name + Unsaved Indicator (*) */}
+        <div
+          title={
+            isDirty
+              ? 'Unsaved changes — Press Ctrl+S to save'
+              : `Saved scene: ${sceneName}`
+          }
+          className="hidden sm:flex items-center gap-1 px-2 h-7 rounded bg-[#12151b] border border-[#2b313d] text-[11px] text-gray-300 max-w-[160px]"
+        >
+          <span className="truncate">{sceneName}</span>
+          {isDirty && (
+            <span className="text-amber-400 font-bold text-sm leading-none">*</span>
+          )}
         </div>
 
         {/* Transform Tools */}
@@ -656,84 +575,6 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({ viewportSize }) => {
           {resolutionLabel}
         </span>
       </div>
-
-      {/* Load Project Modal */}
-      {loadModalOpen && (
-        <div
-          className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4"
-          onClick={() => setLoadModalOpen(false)}
-        >
-          <div
-            className="w-full max-w-md rounded-lg bg-[#1b1f27] border border-[#323948] shadow-2xl overflow-hidden text-xs"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="px-4 py-2.5 border-b border-[#2b313d] flex items-center justify-between">
-              <div className="flex items-center gap-2 font-semibold text-gray-100">
-                <FolderOpen className="w-4 h-4 text-amber-400" />
-                <span>Load Project from IndexedDB</span>
-              </div>
-              <button
-                type="button"
-                onClick={() => setLoadModalOpen(false)}
-                className="text-gray-400 hover:text-white"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="max-h-72 overflow-y-auto p-3 space-y-1.5">
-              {projectsLoading ? (
-                <div className="py-8 text-center text-gray-500">Loading saved projects...</div>
-              ) : savedProjects.length === 0 ? (
-                <div className="py-8 text-center text-gray-500">
-                  No saved projects found. Use File &gt; Save Project first.
-                </div>
-              ) : (
-                savedProjects.map((proj) => (
-                  <div
-                    key={proj.id}
-                    className="p-2.5 rounded bg-[#12151b] border border-[#2b313d] hover:border-blue-500/60 flex items-center justify-between gap-2"
-                  >
-                    <div className="min-w-0">
-                      <div className="font-medium text-gray-200 truncate">{proj.name}</div>
-                      <div className="text-[10px] text-gray-500">
-                        Updated: {new Date(proj.updatedAt).toLocaleString()}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <button
-                        type="button"
-                        onClick={() => void handleLoadProject(proj.id)}
-                        className="h-6 px-2.5 rounded bg-blue-600 hover:bg-blue-500 text-white font-medium transition-colors"
-                      >
-                        Load
-                      </button>
-                      <button
-                        type="button"
-                        title="Delete Project"
-                        onClick={() => void handleDeleteProject(proj.id)}
-                        className="h-6 w-6 rounded bg-[#1b1f27] border border-[#2b313d] hover:border-red-500/60 text-gray-400 hover:text-red-400 flex items-center justify-center transition-colors"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                      </button>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-
-            <div className="px-4 py-2 border-t border-[#2b313d] flex justify-end">
-              <button
-                type="button"
-                onClick={() => setLoadModalOpen(false)}
-                className="h-7 px-3 rounded bg-[#12151b] border border-[#2b313d] hover:bg-[#252b36] text-gray-300"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </header>
   );
 };

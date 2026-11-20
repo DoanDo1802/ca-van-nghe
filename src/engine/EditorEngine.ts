@@ -52,6 +52,7 @@ import {
   SelectionPicker,
 } from './editor-world';
 import { EventBus } from './EventBus';
+import { useEditorStore } from '../store/useEditorStore';
 import { ConsoleBridge, InteractionRuntime, ScriptSandbox } from './runtime';
 import { PlayerControllerRuntime } from './runtime/PlayerControllerRuntime';
 import { configureAmmo, initAmmo, isAmmoLoaded } from './serialization/AmmoLoader';
@@ -122,11 +123,13 @@ export class EditorEngine {
   private playState: PlayModeState = 'edit';
   private playSnapshot: SceneSchema | null = null;
   private sceneGeneration = 0;
-  private currentSceneId = 'default-scene';
-  private currentSceneName = 'Untitled Scene';
+  private currentSceneId = 'ca-van-nghe-lounge';
+  private currentSceneName = 'Ca Van Nghe';
   private autoDraftReady = false;
   private autoDraftTimer: number | null = null;
+  private hasPendingAutoDraft = false;
   private autoDraftUnsubs: Array<() => void> = [];
+  private autoDraftFlushCleanup: (() => void) | null = null;
   private pendingScrubOldTransform = new Map<string, TransformData>();
 
   private animationClips: Record<string, AnimationClipData> = {};
@@ -239,13 +242,12 @@ export class EditorEngine {
     app.scene.layers.push(editorLayer);
     this.editorLayer = editorLayer;
 
-    app.scene.ambientLight = new pc.Color(0.22, 0.24, 0.28);
+    app.scene.ambientLight = new pc.Color(0.28, 0.25, 0.22);
+    app.scene.exposure = 1.1;
 
     const sceneRoot = new pc.Entity('SceneRoot');
     app.root.addChild(sceneRoot);
     this.sceneRoot = sceneRoot;
-
-    this.createDefaultScene(sceneRoot);
 
     this.cameraController = new EditorCameraController(app, canvas, editorLayer);
     const editorCamera = this.cameraController.cameraEntity.camera!;
@@ -295,8 +297,25 @@ export class EditorEngine {
       this.eventBus.on('timeline:keyframe-recorded', () => this.scheduleAutoDraft()),
     ];
 
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        this.flushPendingAutoDraft();
+      }
+    };
+    const onPageHide = () => {
+      this.flushPendingAutoDraft();
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('pagehide', onPageHide);
+    window.addEventListener('beforeunload', onPageHide);
+    this.autoDraftFlushCleanup = () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('pagehide', onPageHide);
+      window.removeEventListener('beforeunload', onPageHide);
+    };
+
     this.eventBus.emit('engine:ready', { version: pc.version });
-    this.eventBus.emit('scene:loaded', { sceneId: 'default-scene' });
+    this.eventBus.emit('scene:loaded', { sceneId: this.currentSceneId });
     this.emitHierarchyChanged();
 
     const gen = this.sceneGeneration;
@@ -388,6 +407,8 @@ export class EditorEngine {
 
   private scheduleAutoDraft(): void {
     if (!this.autoDraftReady || this.playState !== 'edit') return;
+    useEditorStore.getState().setDirty(true);
+    this.hasPendingAutoDraft = true;
     if (this.autoDraftTimer !== null) {
       window.clearTimeout(this.autoDraftTimer);
     }
@@ -397,10 +418,26 @@ export class EditorEngine {
     }, 1000);
   }
 
+  private flushPendingAutoDraft(): void {
+    if (!this.hasPendingAutoDraft || this.playState !== 'edit' || !this.autoDraftReady) {
+      return;
+    }
+    if (this.autoDraftTimer !== null) {
+      window.clearTimeout(this.autoDraftTimer);
+      this.autoDraftTimer = null;
+    }
+    void this.saveAutoDraftNow();
+  }
+
   async saveAutoDraftNow(): Promise<void> {
     if (!this.app || !this.sceneRoot || this.playState !== 'edit' || !this.autoDraftReady) {
       return;
     }
+    if (this.autoDraftTimer !== null) {
+      window.clearTimeout(this.autoDraftTimer);
+      this.autoDraftTimer = null;
+    }
+    this.hasPendingAutoDraft = false;
     try {
       const schema = this.exportSceneSchema();
       await ProjectRepository.saveAutoDraft(schema);
@@ -416,10 +453,14 @@ export class EditorEngine {
 
   unmount(): void {
     if (!this.app) return;
+    this.flushPendingAutoDraft();
+    this.autoDraftFlushCleanup?.();
+    this.autoDraftFlushCleanup = null;
     if (this.autoDraftTimer !== null) {
       window.clearTimeout(this.autoDraftTimer);
       this.autoDraftTimer = null;
     }
+    this.hasPendingAutoDraft = false;
     for (const unsub of this.autoDraftUnsubs) {
       unsub();
     }
@@ -894,6 +935,8 @@ export class EditorEngine {
     if (!this.app || !this.sceneRoot) return;
     if (this.playState === 'playing') return;
 
+    this.flushPendingAutoDraft();
+
     try {
       if (this.playState === 'paused') {
         this.app.timeScale = 1;
@@ -967,6 +1010,7 @@ export class EditorEngine {
         sceneRoot: this.sceneRoot,
         consoleBridge: this.consoleBridge,
         getEntityById: (id) => this.getEntityById(id),
+        getAssetById: (id) => useAssetStore.getState().assets.find((a) => a.id === id) ?? null,
         emitEvent: (eventName, payload) => this.interactionRuntime?.emitCustomEvent(eventName, payload),
       });
 
@@ -1287,22 +1331,10 @@ export class EditorEngine {
     if (this.playState !== 'edit') {
       this.stop();
     }
-
-    this.clearSceneResources();
-    this.animationClips = {};
-    this.isRecording = false;
-    this.activeRecordingClipId = null;
-    this.currentPlayheadTime = 0;
-    this.playModeClipTimes.clear();
-    this.createDefaultScene(this.sceneRoot, false);
-    this.currentSceneId = crypto.randomUUID();
-    this.currentSceneName = 'Untitled Scene';
-    this.autoDraftReady = true;
-    this.commandManager.clear();
-    this.selectEntities([]);
-    this.eventBus.emit('scene:loaded', { sceneId: this.currentSceneId });
-    this.emitHierarchyChanged();
-    void this.saveAutoDraftNow();
+    void importCaVanNgheScene(this).catch((err) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.consoleBridge.error(`Failed to reset Ca Van Nghe scene: ${msg}`);
+    });
   }
 
   /**
@@ -1340,9 +1372,11 @@ export class EditorEngine {
     if (sceneName) {
       this.currentSceneName = sceneName;
     }
-    this.autoDraftReady = true;
+    this.autoDraftReady = false;
     this.eventBus.emit('scene:loaded', { sceneId: this.currentSceneId });
     this.emitHierarchyChanged();
+    this.autoDraftReady = true;
+    useEditorStore.getState().setDirty(false);
     void this.saveAutoDraftNow();
   }
 
@@ -1382,13 +1416,15 @@ export class EditorEngine {
 
     this.currentSceneId = schema.metadata?.id || crypto.randomUUID();
     this.currentSceneName = schema.metadata?.name || 'Untitled Scene';
-    this.autoDraftReady = true;
+    this.autoDraftReady = false;
     this.commandManager.clear();
     this.selectEntities([]);
     this.eventBus.emit('scene:loaded', {
       sceneId: this.currentSceneId,
     });
     this.emitHierarchyChanged();
+    useEditorStore.getState().setDirty(false);
+    this.autoDraftReady = true;
 
     const gen = this.sceneGeneration;
     const sceneRoot = this.sceneRoot;
@@ -1399,7 +1435,10 @@ export class EditorEngine {
     })
       .then((restoredAny) => {
         if (restoredAny && this.sceneGeneration === gen) {
+          const prevReady = this.autoDraftReady;
+          this.autoDraftReady = false;
           this.emitHierarchyChanged();
+          this.autoDraftReady = prevReady;
         }
       })
       .catch((err) => {
@@ -1693,46 +1732,6 @@ export class EditorEngine {
     const enabledCam = cameras.find((c) => c.enabled && c.camera?.enabled);
     if (enabledCam) return enabledCam;
     return cameras.find((c) => c.enabled) ?? cameras[0];
-  }
-
-  private createDefaultScene(sceneRoot: pc.Entity, includeBox = true): void {
-    const dirLight = new pc.Entity('Directional Light');
-    dirLight.addComponent('light', {
-      type: 'directional',
-      color: new pc.Color(1, 0.98, 0.94),
-      intensity: 1.2,
-      castShadows: true,
-      shadowBias: 0.2,
-      normalOffsetBias: 0.05,
-    });
-    dirLight.setLocalEulerAngles(45, 30, 0);
-    sceneRoot.addChild(dirLight);
-
-    const gameCam = new pc.Entity('Main Camera');
-    gameCam.addComponent('camera', {
-      fov: 45,
-      nearClip: 0.1,
-      farClip: 1000,
-      clearColor: new pc.Color(0.15, 0.16, 0.19, 1),
-    });
-    if (gameCam.camera) {
-      gameCam.camera.enabled = false;
-    }
-    gameCam.setLocalPosition(0, 2, 6);
-    sceneRoot.addChild(gameCam);
-
-    if (includeBox) {
-      const box = new pc.Entity('Box');
-      const boxMat = this.createStandardMaterial(new pc.Color(0.72, 0.78, 0.88));
-      box.addComponent('render', {
-        type: 'box',
-        material: boxMat,
-        castShadows: true,
-        receiveShadows: true,
-      });
-      box.setLocalPosition(0, 0.5, 0);
-      sceneRoot.addChild(box);
-    }
   }
 
   private createStandardMaterial(diffuse: pc.Color): pc.StandardMaterial {

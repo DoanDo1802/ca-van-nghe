@@ -40,7 +40,7 @@ const ADDABLE_COMPONENTS: Array<{ type: ComponentType; label: string }> = [
   { type: 'rigidbody', label: 'RigidBody' },
   { type: 'anim', label: 'Animation' },
   { type: 'interactive', label: 'Interactive Rules' },
-  { type: 'script', label: 'Custom Script' },
+  { type: 'script', label: 'Script & Variables' },
 ];
 
 const COMPONENT_LABELS: Record<ComponentType, string> = {
@@ -51,7 +51,7 @@ const COMPONENT_LABELS: Record<ComponentType, string> = {
   rigidbody: 'RigidBody',
   anim: 'Animation',
   interactive: 'Interactive',
-  script: 'Script',
+  script: 'Script & Variables',
 };
 
 function renderComponentIcon(type: ComponentType): React.ReactNode {
@@ -411,15 +411,28 @@ export const InspectorPanel: React.FC = () => {
           })}
 
           {/* Add Component Dropdown */}
-          <div className="relative pt-1">
-            <button
-              type="button"
-              onClick={() => setAddMenuOpen((prev) => !prev)}
-              className="w-full h-7 px-3 rounded bg-blue-600/90 hover:bg-blue-500 text-white font-medium text-[11px] flex items-center justify-center gap-1.5 transition-colors"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Add Component</span>
-            </button>
+          <div className="relative pt-1 space-y-1.5">
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setAddMenuOpen((prev) => !prev)}
+                className="flex-1 h-7 px-3 rounded bg-blue-600/90 hover:bg-blue-500 text-white font-medium text-[11px] flex items-center justify-center gap-1.5 transition-colors"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Add Component</span>
+              </button>
+              {!entityData.components.some((c) => c.type === 'script') && (
+                <button
+                  type="button"
+                  onClick={() => handleAddComponent('script')}
+                  title="Add custom variables / script properties to this object"
+                  className="h-7 px-2.5 rounded bg-cyan-600/85 hover:bg-cyan-500 text-white font-medium text-[11px] flex items-center justify-center gap-1 transition-colors shrink-0"
+                >
+                  <Code className="w-3.5 h-3.5" />
+                  <span>+ Variables</span>
+                </button>
+              )}
+            </div>
 
             {addMenuOpen && (
               <div className="mt-1 rounded bg-[#1b1f27] border border-[#2f3644] shadow-lg overflow-hidden divide-y divide-[#252b36]">

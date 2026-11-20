@@ -17,6 +17,7 @@ export interface EditorStoreState {
   engineReady: boolean;
   sceneId: string | null;
   sceneName: string;
+  isDirty: boolean;
   rootEntityId: string | null;
   selectedEntityIds: string[];
   activeTool: TransformTool;
@@ -32,6 +33,7 @@ export interface EditorStoreState {
 
   setEngineReady: (ready: boolean) => void;
   setSceneMeta: (sceneId: string, sceneName: string, rootEntityId: string) => void;
+  setDirty: (dirty: boolean) => void;
   setSelectedEntityIds: (ids: string[]) => void;
   toggleEntitySelection: (id: string) => void;
   clearSelection: () => void;
@@ -62,6 +64,7 @@ export const useEditorStore = create<EditorStoreState>()((set) => ({
   engineReady: false,
   sceneId: null,
   sceneName: 'Untitled Scene',
+  isDirty: false,
   rootEntityId: null,
   selectedEntityIds: [],
   activeTool: 'move',
@@ -79,6 +82,8 @@ export const useEditorStore = create<EditorStoreState>()((set) => ({
 
   setSceneMeta: (sceneId, sceneName, rootEntityId) =>
     set({ sceneId, sceneName, rootEntityId }),
+
+  setDirty: (isDirty) => set({ isDirty }),
 
   setSelectedEntityIds: (ids) => set({ selectedEntityIds: ids }),
 

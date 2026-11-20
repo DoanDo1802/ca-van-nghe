@@ -8,12 +8,14 @@ import {
   X,
 } from 'lucide-react';
 import { EditorEngine } from '../../../engine/EditorEngine';
+import { useAssetStore } from '../../../store/useAssetStore';
 import { useEditorStore } from '../../../store/useEditorStore';
 import type {
   ColorRGB,
   ScriptAttributeType,
   ScriptAttributeValue,
   ScriptComponentData,
+  Vec3,
 } from '../../../types';
 import { ColorField } from './ColorField';
 import { NumberScrubber } from './NumberScrubber';
@@ -25,10 +27,12 @@ export interface ScriptInspectorProps {
 
 const ATTRIBUTE_TYPES: Array<{ value: ScriptAttributeType; label: string }> = [
   { value: 'number', label: 'Number' },
+  { value: 'vec3', label: 'Vec3' },
   { value: 'string', label: 'String' },
   { value: 'boolean', label: 'Boolean' },
   { value: 'color', label: 'Color' },
   { value: 'entity', label: 'Entity' },
+  { value: 'asset', label: 'Asset' },
 ];
 
 export const DEFAULT_SCRIPT_TEMPLATE = `// Lifecycle hooks: onStart(), onUpdate(dt), onClick(), onCollision(other)
@@ -79,6 +83,19 @@ function normalizeColor(val: unknown): ColorRGB {
     return [val[0], val[1], val[2]];
   }
   return [1, 1, 1];
+}
+
+function normalizeVec3(val: unknown): Vec3 {
+  if (
+    Array.isArray(val) &&
+    val.length >= 3 &&
+    typeof val[0] === 'number' &&
+    typeof val[1] === 'number' &&
+    typeof val[2] === 'number'
+  ) {
+    return [val[0], val[1], val[2]];
+  }
+  return [0, 0, 0];
 }
 
 interface CodeEditorAreaProps {
@@ -211,6 +228,7 @@ export const ScriptInspector: React.FC<ScriptInspectorProps> = ({
   const playState = useEditorStore((s) => s.playState);
   const entitySummaries = useEditorStore((s) => s.entitySummaries);
   const rootEntityId = useEditorStore((s) => s.rootEntityId);
+  const assets = useAssetStore((s) => s.assets);
   const isReadOnly = playState !== 'edit';
 
   const [scriptNameDraft, setScriptNameDraft] = useState(component.scriptName);
@@ -426,6 +444,88 @@ export const ScriptInspector: React.FC<ScriptInspectorProps> = ({
     );
   };
 
+  const renderAssetPicker = (
+    value: unknown,
+    onSelect: (nextId: string | null) => void,
+    dropIndex: number | null
+  ) => {
+    const selectedId = typeof value === 'string' && value.length > 0 ? value : null;
+    const selectedAsset = selectedId ? assets.find((a) => a.id === selectedId) : undefined;
+    const isDragOver = dropIndex !== null && dragOverIndex === dropIndex;
+
+    return (
+      <div
+        onDragOver={(e) => {
+          if (isReadOnly) return;
+          if (e.dataTransfer.types.includes('application/x-pc-asset')) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'copy';
+            if (dropIndex !== null && dragOverIndex !== dropIndex) {
+              setDragOverIndex(dropIndex);
+            }
+          }
+        }}
+        onDragLeave={() => {
+          if (dropIndex !== null && dragOverIndex === dropIndex) {
+            setDragOverIndex(null);
+          }
+        }}
+        onDrop={(e) => {
+          if (isReadOnly) return;
+          e.preventDefault();
+          setDragOverIndex(null);
+          const raw = e.dataTransfer.getData('application/x-pc-asset');
+          if (!raw) return;
+          try {
+            const parsed = JSON.parse(raw) as { assetId?: string };
+            if (parsed.assetId) {
+              onSelect(parsed.assetId);
+            }
+          } catch {
+            /* ignore malformed asset drag payload */
+          }
+        }}
+        className={`flex items-center gap-1 rounded border px-1.5 py-1 transition-colors ${
+          isDragOver
+            ? 'border-blue-500 bg-blue-500/15'
+            : 'border-[#2f3644] bg-[#12151b]'
+        }`}
+      >
+        <select
+          disabled={isReadOnly}
+          value={selectedId ?? ''}
+          onChange={(e) => onSelect(e.target.value || null)}
+          title="Select or drop an Asset from Asset Browser"
+          className="flex-1 min-w-0 bg-transparent text-[11px] text-gray-200 focus:outline-none truncate"
+        >
+          <option value="" className="bg-[#161922] text-gray-400">
+            Drop asset or select...
+          </option>
+          {selectedId && !selectedAsset && (
+            <option value={selectedId} className="bg-[#161922] text-amber-300">
+              Missing ({selectedId.slice(0, 8)})
+            </option>
+          )}
+          {assets.map((asset) => (
+            <option key={asset.id} value={asset.id} className="bg-[#161922] text-gray-200">
+              {asset.name} ({asset.type})
+            </option>
+          ))}
+        </select>
+        {selectedId && !isReadOnly && (
+          <button
+            type="button"
+            onClick={() => onSelect(null)}
+            title="Clear asset reference"
+            className="text-gray-500 hover:text-gray-200 shrink-0"
+          >
+            <X className="w-3 h-3" />
+          </button>
+        )}
+      </div>
+    );
+  };
+
   const renderAttributeValueEditor = (
     attr: ScriptAttributeValue,
     index: number
@@ -440,6 +540,40 @@ export const ScriptInspector: React.FC<ScriptInspectorProps> = ({
             step={0.1}
             onChange={(next) => handleUpdateAttribute(index, { value: next })}
           />
+        );
+      }
+      case 'vec3': {
+        const vecVal = normalizeVec3(attr.value);
+        return (
+          <div className="grid grid-cols-3 gap-1">
+            <NumberScrubber
+              label="X"
+              labelColorClass="text-rose-400"
+              value={vecVal[0]}
+              step={0.05}
+              onChange={(next) =>
+                handleUpdateAttribute(index, { value: [next, vecVal[1], vecVal[2]] as Vec3 })
+              }
+            />
+            <NumberScrubber
+              label="Y"
+              labelColorClass="text-emerald-400"
+              value={vecVal[1]}
+              step={0.05}
+              onChange={(next) =>
+                handleUpdateAttribute(index, { value: [vecVal[0], next, vecVal[2]] as Vec3 })
+              }
+            />
+            <NumberScrubber
+              label="Z"
+              labelColorClass="text-sky-400"
+              value={vecVal[2]}
+              step={0.05}
+              onChange={(next) =>
+                handleUpdateAttribute(index, { value: [vecVal[0], vecVal[1], next] as Vec3 })
+              }
+            />
+          </div>
         );
       }
       case 'string': {
@@ -501,6 +635,19 @@ export const ScriptInspector: React.FC<ScriptInspectorProps> = ({
               Entity Reference
             </span>
             {renderEntityPicker(
+              attr.value,
+              (nextId) => handleUpdateAttribute(index, { value: nextId }),
+              index
+            )}
+          </div>
+        );
+      case 'asset':
+        return (
+          <div className="space-y-1">
+            <span className="text-[11px] text-gray-400 block">
+              Asset Reference
+            </span>
+            {renderAssetPicker(
               attr.value,
               (nextId) => handleUpdateAttribute(index, { value: nextId }),
               index
@@ -646,6 +793,16 @@ export const ScriptInspector: React.FC<ScriptInspectorProps> = ({
               <div className="space-y-1">
                 <span className="text-[11px] text-gray-400 block">Default</span>
                 {renderEntityPicker(
+                  newAttrDefault,
+                  (nextId) => setNewAttrDefault(nextId),
+                  null
+                )}
+              </div>
+            )}
+            {newAttrType === 'asset' && (
+              <div className="space-y-1">
+                <span className="text-[11px] text-gray-400 block">Default</span>
+                {renderAssetPicker(
                   newAttrDefault,
                   (nextId) => setNewAttrDefault(nextId),
                   null
