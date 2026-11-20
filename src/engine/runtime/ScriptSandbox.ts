@@ -1,5 +1,5 @@
 import * as pc from 'playcanvas';
-import type { ScriptAttributeValue, ScriptComponentData } from '../../types';
+import type { AssetManifestEntry, ScriptAttributeValue, ScriptComponentData } from '../../types';
 import { getEntityMeta } from '../serialization/EntityComponentHelper';
 import type { ConsoleBridge, ScopedConsole } from './ConsoleBridge';
 
@@ -8,6 +8,7 @@ export interface ScriptSandboxOptions {
   sceneRoot: pc.Entity;
   consoleBridge: ConsoleBridge;
   getEntityById: (id: string) => pc.Entity | null;
+  getAssetById?: (id: string) => AssetManifestEntry | null;
   emitEvent?: (eventName: string, payload?: unknown) => void;
 }
 
@@ -57,13 +58,16 @@ return {
 
 function buildAttributesObject(
   attrs: ScriptAttributeValue[],
-  getEntityById: (id: string) => pc.Entity | null
+  getEntityById: (id: string) => pc.Entity | null,
+  getAssetById?: (id: string) => AssetManifestEntry | null
 ): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   for (const attr of attrs) {
     if (!attr.name) continue;
     if (attr.type === 'entity' && typeof attr.value === 'string') {
       result[attr.name] = getEntityById(attr.value);
+    } else if (attr.type === 'asset' && typeof attr.value === 'string') {
+      result[attr.name] = getAssetById ? getAssetById(attr.value) : attr.value;
     } else if (Array.isArray(attr.value)) {
       result[attr.name] = [...attr.value];
     } else {
@@ -78,6 +82,7 @@ export class ScriptSandbox {
   private readonly sceneRoot: pc.Entity;
   private readonly consoleBridge: ConsoleBridge;
   private readonly getEntityById: (id: string) => pc.Entity | null;
+  private readonly getAssetById?: (id: string) => AssetManifestEntry | null;
   private readonly emitEvent: (eventName: string, payload?: unknown) => void;
 
   private instances: ScriptInstance[] = [];
@@ -90,6 +95,7 @@ export class ScriptSandbox {
     this.sceneRoot = options.sceneRoot;
     this.consoleBridge = options.consoleBridge;
     this.getEntityById = options.getEntityById;
+    this.getAssetById = options.getAssetById;
     this.emitEvent = options.emitEvent ?? (() => {});
   }
 
@@ -196,7 +202,11 @@ export class ScriptSandbox {
     const scriptName = scriptData.scriptName?.trim() || 'Script';
     const source = `${entity.name}/${scriptName}`;
     const scopedConsole = this.consoleBridge.createScopedConsole(source);
-    const attributes = buildAttributesObject(scriptData.attributes ?? [], this.getEntityById);
+    const attributes = buildAttributesObject(
+      scriptData.attributes ?? [],
+      this.getEntityById,
+      this.getAssetById
+    );
 
     let hooks: CompiledScriptHooks;
     try {

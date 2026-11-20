@@ -1,5 +1,6 @@
 import * as pc from 'playcanvas';
 import { CHAIRS_LIST, INTERACTABLES_LIST } from '../../data/sceneData';
+import { getEntityMeta } from '../serialization/EntityComponentHelper';
 
 interface StageSurface {
   minX: number;
@@ -74,13 +75,19 @@ export class PlayerControllerRuntime {
   private cameraEntity: pc.Entity | null = null;
 
   private yaw = 180; // facing -Z toward Main Stage
+  private playerYaw = 180;
   private pitch = -12;
   private cameraMode: 'third' | 'first' = 'third';
   private velocityY = 0;
   private grounded = true;
   private isSitting = false;
   private currentSeatId: string | null = null;
+  private activeSeatChair: NearbyPromptData['chair'] | null = null;
+  private lastPromptChair: NearbyPromptData['chair'] | null = null;
   private currentAnimState = '';
+
+  private dynamicChairs: pc.Entity[] = [];
+  private dynamicInteractables: pc.Entity[] = [];
 
   private readonly keys = new Set<string>();
   private isDraggingLook = false;
@@ -105,8 +112,12 @@ export class PlayerControllerRuntime {
     }
 
     const rot = this.playerEntity.getLocalEulerAngles();
+    this.playerYaw = rot.y;
     // Player faces -Z (rot.y = 180°). Camera orbits behind player (+Z) when yaw = 0°.
     this.yaw = ((rot.y - 180) % 360 + 360) % 360;
+
+    this.collectDynamicTargets();
+    this.disablePlayerFrustumCulling(this.playerEntity);
 
     if (this.playerEntity.anim) {
       this.playerEntity.anim.activate = true;
@@ -176,13 +187,19 @@ export class PlayerControllerRuntime {
     let y = pos.y;
     let z = pos.z;
 
+    const walkSpeed = this.getNumberAttr(this.playerEntity, 'walkSpeed', WALK_SPEED);
+    const runSpeed = this.getNumberAttr(this.playerEntity, 'runSpeed', RUN_SPEED);
+    const jumpVelocity = this.getNumberAttr(this.playerEntity, 'jumpVelocity', JUMP_VELOCITY);
+    const gravity = this.getNumberAttr(this.playerEntity, 'gravity', GRAVITY);
+    const turnSpeed = Math.max(0.1, this.getNumberAttr(this.playerEntity, 'turnSpeed', 12));
+
     const len = Math.hypot(forwardInput, rightInput);
     const isMoving = len > 0.05;
     if (isMoving) {
       const nf = forwardInput / Math.max(1, len);
       const nr = rightInput / Math.max(1, len);
       const isRunning = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
-      const speed = isRunning ? RUN_SPEED : WALK_SPEED;
+      const speed = isRunning ? runSpeed : walkSpeed;
 
       const yawRad = (this.yaw * Math.PI) / 180;
       const fwdX = -Math.sin(yawRad);
@@ -217,7 +234,11 @@ export class PlayerControllerRuntime {
       }
 
       const targetYaw = (Math.atan2(fwdX * nf + rgtX * nr, fwdZ * nf + rgtZ * nr) * 180) / Math.PI;
-      this.playerEntity.setLocalEulerAngles(0, targetYaw, 0);
+      let diff = targetYaw - this.playerYaw;
+      while (diff < -180) diff += 360;
+      while (diff > 180) diff -= 360;
+      this.playerYaw += diff * (1 - Math.exp(-turnSpeed * dt));
+      this.playerEntity.setLocalEulerAngles(0, this.playerYaw, 0);
 
       if (this.grounded) {
         this.playAnim(isRunning ? 'Running' : 'Walk_Loop');
@@ -229,14 +250,14 @@ export class PlayerControllerRuntime {
     // Gravity & step-up
     const floorY = groundAt(x, z);
     if (this.grounded && this.keys.has('Space')) {
-      this.velocityY = JUMP_VELOCITY;
+      this.velocityY = jumpVelocity;
       this.grounded = false;
       const isRunning = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
       this.playAnim(isRunning && isMoving ? 'JumpWhileRun' : 'Jumping');
     }
 
     if (!this.grounded) {
-      this.velocityY += GRAVITY * dt;
+      this.velocityY += gravity * dt;
       y += this.velocityY * dt;
       if (y <= floorY) {
         y = floorY;
@@ -247,7 +268,9 @@ export class PlayerControllerRuntime {
       y += (floorY - y) * Math.min(1, dt * 15);
     }
 
-    this.playerEntity.setLocalPosition(x, y, z);
+    if (Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z)) {
+      this.playerEntity.setLocalPosition(x, y, z);
+    }
   }
 
   private updateCameraTransform(alpha: number): void {
@@ -263,7 +286,7 @@ export class PlayerControllerRuntime {
       return;
     }
 
-    const dist = 3.6;
+    const dist = this.getNumberAttr(this.playerEntity, 'cameraDistance', 3.6);
     const horiz = dist * Math.cos(pitchRad);
     const camX = p.x + Math.sin(yawRad) * horiz;
     const camY = Math.max(0.4, p.y + 1.5 - Math.sin(pitchRad) * dist);
@@ -282,10 +305,28 @@ export class PlayerControllerRuntime {
   private updateProximity(): void {
     if (!this.playerEntity) return;
     const p = this.playerEntity.getLocalPosition();
+    const interactRange = this.getNumberAttr(this.playerEntity, 'interactRange', 3.2);
 
-    // 1. Check nearby interactables
+    // 1. Check nearby interactables (dynamic entities first, then static fallback)
     let bestPrompt: NearbyPromptData | null = null;
-    let bestDist = 3.2;
+    let bestDist = interactRange;
+
+    for (const objEntity of this.dynamicInteractables) {
+      if (!objEntity.enabled) continue;
+      const interactId = this.getStringAttr(objEntity, 'interactId', '');
+      if (!interactId) continue;
+      const maxDist = this.getNumberAttr(objEntity, 'interactDistance', interactRange);
+      const pos = objEntity.getPosition();
+      const d = Math.hypot(p.x - pos.x, p.z - pos.z);
+      if (d <= maxDist && d < bestDist) {
+        bestDist = d;
+        bestPrompt = {
+          type: 'object',
+          id: interactId,
+          title: this.getStringAttr(objEntity, 'interactTitle', objEntity.name),
+        };
+      }
+    }
 
     for (const obj of INTERACTABLES_LIST) {
       const dx = p.x - obj.position[0];
@@ -297,28 +338,62 @@ export class PlayerControllerRuntime {
       }
     }
 
-    // 2. Check nearby chairs (CHAIRS_LIST + entities tagged 'chair' / 'Bar_Chair')
+    // 2. Check nearby chairs (dynamic entities with isChair/seatOffset first, then CHAIRS_LIST fallback)
     if (!bestPrompt) {
-      let bestChairDist = 2.0;
-      for (const ch of CHAIRS_LIST) {
-        const d = Math.hypot(p.x - ch.position[0], p.z - ch.position[2]);
-        if (d < bestChairDist) {
+      let bestChairDist = Number.POSITIVE_INFINITY;
+      for (const chairEntity of this.dynamicChairs) {
+        if (!chairEntity.enabled || !this.getBoolAttr(chairEntity, 'isChair', true)) continue;
+        const maxDist = this.getNumberAttr(chairEntity, 'interactDistance', 2.0);
+        const cPos = chairEntity.getPosition();
+        const d = Math.hypot(p.x - cPos.x, p.z - cPos.z);
+        if (d <= maxDist && d < bestChairDist) {
           bestChairDist = d;
+          const seatOffset = this.getVec3Attr(chairEntity, 'seatOffset', [0, 0.83, 0]);
+          const offsetVec = new pc.Vec3(seatOffset[0], seatOffset[1], seatOffset[2]);
+          chairEntity.getRotation().transformVector(offsetVec, offsetVec);
+          const seatYawOffset = this.getNumberAttr(chairEntity, 'seatYawOffset', 0);
+          const seatRotation = ((chairEntity.getEulerAngles().y + seatYawOffset) * Math.PI) / 180;
+          const title = this.getStringAttr(chairEntity, 'sitTitle', chairEntity.name);
+          const id = chairEntity.getGuid();
           bestPrompt = {
             type: 'chair',
-            id: ch.id,
-            title: ch.title,
+            id,
+            title,
             chair: {
-              id: ch.id,
-              title: ch.title,
-              position: ch.position as [number, number, number],
-              seatPosition: ch.seatPosition as [number, number, number],
-              seatRotation: ch.seatRotation,
+              id,
+              title,
+              position: [cPos.x, cPos.y, cPos.z],
+              seatPosition: [cPos.x + offsetVec.x, cPos.y + offsetVec.y, cPos.z + offsetVec.z],
+              seatRotation,
             },
           };
         }
       }
+
+      if (!bestPrompt) {
+        let fallbackChairDist = 2.0;
+        for (const ch of CHAIRS_LIST) {
+          const d = Math.hypot(p.x - ch.position[0], p.z - ch.position[2]);
+          if (d < fallbackChairDist) {
+            fallbackChairDist = d;
+            bestPrompt = {
+              type: 'chair',
+              id: ch.id,
+              title: ch.title,
+              chair: {
+                id: ch.id,
+                title: ch.title,
+                position: ch.position as [number, number, number],
+                seatPosition: ch.seatPosition as [number, number, number],
+                seatRotation: ch.seatRotation,
+              },
+            };
+          }
+        }
+      }
     }
+
+    this.lastPromptChair = bestPrompt?.type === 'chair' ? (bestPrompt.chair ?? null) : null;
 
     const key = bestPrompt ? `${bestPrompt.type}:${bestPrompt.id}` : '';
     if (key !== this.lastPromptKey) {
@@ -370,16 +445,31 @@ export class PlayerControllerRuntime {
       }
       if (this.lastPromptKey.startsWith('chair:')) {
         const chairId = this.lastPromptKey.slice(6);
-        const ch = CHAIRS_LIST.find((c) => c.id === chairId);
+        const ch =
+          this.lastPromptChair ??
+          (() => {
+            const found = CHAIRS_LIST.find((c) => c.id === chairId);
+            return found
+              ? {
+                  id: found.id,
+                  title: found.title,
+                  position: found.position as [number, number, number],
+                  seatPosition: found.seatPosition as [number, number, number],
+                  seatRotation: found.seatRotation,
+                }
+              : null;
+          })();
         if (ch && this.playerEntity) {
           this.isSitting = true;
           this.currentSeatId = ch.id;
+          this.activeSeatChair = ch;
           this.playerEntity.setLocalPosition(
             ch.seatPosition[0],
             ch.seatPosition[1] - 0.35,
             ch.seatPosition[2]
           );
-          this.playerEntity.setLocalEulerAngles(0, (ch.seatRotation * 180) / Math.PI, 0);
+          this.playerYaw = (ch.seatRotation * 180) / Math.PI;
+          this.playerEntity.setLocalEulerAngles(0, this.playerYaw, 0);
           this.playAnim('Crouch_Idle_Loop');
           window.dispatchEvent(
             new CustomEvent('cavannghe:sit', { detail: { sitting: true, chair: ch } })
@@ -428,12 +518,13 @@ export class PlayerControllerRuntime {
 
   private onStandUp = (): void => {
     if (!this.isSitting || !this.playerEntity) return;
-    const ch = CHAIRS_LIST.find((c) => c.id === this.currentSeatId);
+    const ch = this.activeSeatChair ?? CHAIRS_LIST.find((c) => c.id === this.currentSeatId);
     if (ch) {
-      this.playerEntity.setLocalPosition(ch.position[0] + 0.6, 0, ch.position[2]);
+      this.playerEntity.setLocalPosition(ch.position[0] + 0.6, ch.position[1], ch.position[2]);
     }
     this.isSitting = false;
     this.currentSeatId = null;
+    this.activeSeatChair = null;
     this.playAnim('Idle_Loop');
     window.dispatchEvent(new CustomEvent('cavannghe:sit', { detail: { sitting: false, chair: null } }));
   };
@@ -452,6 +543,85 @@ export class PlayerControllerRuntime {
     };
     this.playAnim(map[emote] ?? 'Dance_Loop');
   };
+
+  private collectDynamicTargets(): void {
+    this.dynamicChairs = [];
+    this.dynamicInteractables = [];
+    const visit = (node: pc.GraphNode) => {
+      if (node instanceof pc.Entity) {
+        const script = getEntityMeta(node).script;
+        if (script?.enabled) {
+          const hasChair = script.attributes.some(
+            (a) => (a.name === 'isChair' && Boolean(a.value)) || a.name === 'seatOffset'
+          );
+          if (hasChair || node.tags.has('chair')) {
+            this.dynamicChairs.push(node);
+          }
+          const hasInteractId = script.attributes.some(
+            (a) => a.name === 'interactId' && typeof a.value === 'string' && a.value.trim().length > 0
+          );
+          if (hasInteractId) {
+            this.dynamicInteractables.push(node);
+          }
+        }
+      }
+      for (const child of node.children) {
+        visit(child);
+      }
+    };
+    visit(this.sceneRoot);
+  }
+
+  private getAttrValue(entity: pc.Entity | null, name: string): unknown {
+    if (!entity) return undefined;
+    const script = getEntityMeta(entity).script;
+    if (!script || !script.enabled) return undefined;
+    return script.attributes.find((a) => a.name === name)?.value;
+  }
+
+  private getNumberAttr(entity: pc.Entity | null, name: string, fallback: number): number {
+    const val = this.getAttrValue(entity, name);
+    return typeof val === 'number' && Number.isFinite(val) ? val : fallback;
+  }
+
+  private getStringAttr(entity: pc.Entity | null, name: string, fallback: string): string {
+    const val = this.getAttrValue(entity, name);
+    return typeof val === 'string' && val.trim().length > 0 ? val : fallback;
+  }
+
+  private getBoolAttr(entity: pc.Entity | null, name: string, fallback: boolean): boolean {
+    const val = this.getAttrValue(entity, name);
+    return typeof val === 'boolean' ? val : fallback;
+  }
+
+  private getVec3Attr(
+    entity: pc.Entity | null,
+    name: string,
+    fallback: [number, number, number]
+  ): [number, number, number] {
+    const val = this.getAttrValue(entity, name);
+    if (
+      Array.isArray(val) &&
+      val.length >= 3 &&
+      typeof val[0] === 'number' &&
+      typeof val[1] === 'number' &&
+      typeof val[2] === 'number'
+    ) {
+      return [val[0], val[1], val[2]];
+    }
+    return fallback;
+  }
+
+  private disablePlayerFrustumCulling(node: pc.GraphNode): void {
+    if (node instanceof pc.Entity && node.render) {
+      for (const mi of node.render.meshInstances) {
+        mi.cull = false;
+      }
+    }
+    for (const child of node.children) {
+      this.disablePlayerFrustumCulling(child);
+    }
+  }
 
   private findByTagOrName(root: pc.Entity, tag: string, name: string): pc.Entity | null {
     if (root.tags.has(tag) || root.name === name) return root;
