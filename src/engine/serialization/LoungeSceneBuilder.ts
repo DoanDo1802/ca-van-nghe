@@ -743,6 +743,8 @@ export function enhanceGlbMaterials(
         urlCache?.set(orig, enhanced);
       }
       mi.material = enhanced;
+      // Prevent premature frustum culling on scaled/offset multi-node GLBs (e.g. Acoustic Live Band Gear)
+      mi.cull = false;
     }
   }
 }

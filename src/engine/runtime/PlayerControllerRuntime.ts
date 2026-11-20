@@ -339,56 +339,55 @@ export class PlayerControllerRuntime {
     }
 
     // 2. Check nearby chairs (dynamic entities with isChair/seatOffset first, then CHAIRS_LIST fallback)
-    if (!bestPrompt) {
-      let bestChairDist = Number.POSITIVE_INFINITY;
-      for (const chairEntity of this.dynamicChairs) {
-        if (!chairEntity.enabled || !this.getBoolAttr(chairEntity, 'isChair', true)) continue;
-        const maxDist = this.getNumberAttr(chairEntity, 'interactDistance', 2.0);
-        const cPos = chairEntity.getPosition();
-        const d = Math.hypot(p.x - cPos.x, p.z - cPos.z);
-        if (d <= maxDist && d < bestChairDist) {
-          bestChairDist = d;
-          const seatOffset = this.getVec3Attr(chairEntity, 'seatOffset', [0, 0.83, 0]);
-          const offsetVec = new pc.Vec3(seatOffset[0], seatOffset[1], seatOffset[2]);
-          chairEntity.getRotation().transformVector(offsetVec, offsetVec);
-          const seatYawOffset = this.getNumberAttr(chairEntity, 'seatYawOffset', 0);
-          const seatRotation = ((chairEntity.getEulerAngles().y + seatYawOffset) * Math.PI) / 180;
-          const title = this.getStringAttr(chairEntity, 'sitTitle', chairEntity.name);
-          const id = chairEntity.getGuid();
-          bestPrompt = {
-            type: 'chair',
+    // Compete by distance against interactables so chairs near the bar/tables are never shadowed.
+    let matchedDynamicChair = false;
+    for (const chairEntity of this.dynamicChairs) {
+      if (!chairEntity.enabled || !this.getBoolAttr(chairEntity, 'isChair', true)) continue;
+      const maxDist = this.getNumberAttr(chairEntity, 'interactDistance', 2.0);
+      const cPos = chairEntity.getPosition();
+      const d = Math.hypot(p.x - cPos.x, p.z - cPos.z);
+      if (d <= maxDist && d - 0.25 < bestDist) {
+        matchedDynamicChair = true;
+        bestDist = d - 0.25;
+        const seatOffset = this.getVec3Attr(chairEntity, 'seatOffset', [0, 0.83, 0]);
+        const offsetVec = new pc.Vec3(seatOffset[0], seatOffset[1], seatOffset[2]);
+        chairEntity.getRotation().transformVector(offsetVec, offsetVec);
+        const seatYawOffset = this.getNumberAttr(chairEntity, 'seatYawOffset', 0);
+        const seatRotation = ((chairEntity.getEulerAngles().y + seatYawOffset) * Math.PI) / 180;
+        const title = this.getStringAttr(chairEntity, 'sitTitle', chairEntity.name);
+        const id = chairEntity.getGuid();
+        bestPrompt = {
+          type: 'chair',
+          id,
+          title,
+          chair: {
             id,
             title,
-            chair: {
-              id,
-              title,
-              position: [cPos.x, cPos.y, cPos.z],
-              seatPosition: [cPos.x + offsetVec.x, cPos.y + offsetVec.y, cPos.z + offsetVec.z],
-              seatRotation,
-            },
-          };
-        }
+            position: [cPos.x, cPos.y, cPos.z],
+            seatPosition: [cPos.x + offsetVec.x, cPos.y + offsetVec.y, cPos.z + offsetVec.z],
+            seatRotation,
+          },
+        };
       }
+    }
 
-      if (!bestPrompt) {
-        let fallbackChairDist = 2.0;
-        for (const ch of CHAIRS_LIST) {
-          const d = Math.hypot(p.x - ch.position[0], p.z - ch.position[2]);
-          if (d < fallbackChairDist) {
-            fallbackChairDist = d;
-            bestPrompt = {
-              type: 'chair',
+    if (!matchedDynamicChair) {
+      for (const ch of CHAIRS_LIST) {
+        const d = Math.hypot(p.x - ch.position[0], p.z - ch.position[2]);
+        if (d <= 2.0 && d - 0.25 < bestDist) {
+          bestDist = d - 0.25;
+          bestPrompt = {
+            type: 'chair',
+            id: ch.id,
+            title: ch.title,
+            chair: {
               id: ch.id,
               title: ch.title,
-              chair: {
-                id: ch.id,
-                title: ch.title,
-                position: ch.position as [number, number, number],
-                seatPosition: ch.seatPosition as [number, number, number],
-                seatRotation: ch.seatRotation,
-              },
-            };
-          }
+              position: ch.position as [number, number, number],
+              seatPosition: ch.seatPosition as [number, number, number],
+              seatRotation: ch.seatRotation,
+            },
+          };
         }
       }
     }

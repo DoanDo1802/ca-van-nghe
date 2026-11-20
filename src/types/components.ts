@@ -9,7 +9,12 @@ export type ComponentType =
   | 'rigidbody'
   | 'anim'
   | 'interactive'
-  | 'script';
+  | 'script'
+  | 'characterController'
+  | 'cameraRig'
+  | 'audioSource'
+  | 'interactable'
+  | 'particleSystem';
 
 export interface BaseComponentData {
   id: string;
@@ -156,6 +161,84 @@ export interface ScriptComponentData extends BaseComponentData {
   attributes: ScriptAttributeValue[];
 }
 
+export type CharacterControllerMode = 'third-person' | 'first-person' | 'top-down';
+
+export interface CharacterControllerComponentData extends BaseComponentData {
+  type: 'characterController';
+  mode: CharacterControllerMode;
+  walkSpeed: number;
+  runSpeed: number;
+  jumpForce: number;
+  gravity: number;
+  capsuleRadius: number;
+  capsuleHeight: number;
+  stepOffset: number;
+  eyeHeight: number;
+  mouseSensitivity: number;
+  cameraEntityId: string | null;
+}
+
+export type CameraRigMode = 'follow-orbit' | 'smooth-follow' | 'look-at';
+
+export interface CameraRigComponentData extends BaseComponentData {
+  type: 'cameraRig';
+  targetEntityId: string | null;
+  mode: CameraRigMode;
+  offset: Vec3;
+  damping: number;
+  orbitSensitivity: number;
+  minPitch: number;
+  maxPitch: number;
+  minDistance: number;
+  maxDistance: number;
+  collisionAvoidance: boolean;
+}
+
+export interface AudioSourceComponentData extends BaseComponentData {
+  type: 'audioSource';
+  audioAssetId: string | null;
+  playOnAwake: boolean;
+  loop: boolean;
+  volume: number;
+  pitch: number;
+  spatial: boolean;
+  minDistance: number;
+  maxDistance: number;
+}
+
+export type InteractableType = 'event' | 'seat' | 'collectible';
+
+export interface InteractableComponentData extends BaseComponentData {
+  type: 'interactable';
+  promptText: string;
+  interactionKey: string;
+  radius: number;
+  interactType: InteractableType;
+  seatOffset: Vec3;
+  seatYaw: number;
+  destroyOnCollect: boolean;
+  emitEventName: string;
+}
+
+export type ParticleEmissionShape = 'cone' | 'sphere' | 'box';
+
+export interface ParticleSystemComponentData extends BaseComponentData {
+  type: 'particleSystem';
+  playOnAwake: boolean;
+  loop: boolean;
+  emissionRate: number;
+  maxParticles: number;
+  lifetime: number;
+  startSpeed: number;
+  gravity: number;
+  startSize: number;
+  endSize: number;
+  startColor: ColorRGB;
+  endColor: ColorRGB;
+  spreadAngle: number;
+  shape: ParticleEmissionShape;
+}
+
 export type ComponentData =
   | RenderComponentData
   | LightComponentData
@@ -164,4 +247,9 @@ export type ComponentData =
   | RigidBodyComponentData
   | AnimComponentData
   | InteractiveComponentData
-  | ScriptComponentData;
+  | ScriptComponentData
+  | CharacterControllerComponentData
+  | CameraRigComponentData
+  | AudioSourceComponentData
+  | InteractableComponentData
+  | ParticleSystemComponentData;

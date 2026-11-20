@@ -53,7 +53,7 @@ import {
 } from './editor-world';
 import { EventBus } from './EventBus';
 import { useEditorStore } from '../store/useEditorStore';
-import { ConsoleBridge, InteractionRuntime, ScriptSandbox } from './runtime';
+import { ConsoleBridge, GameplayRuntime, InteractionRuntime, ScriptSandbox } from './runtime';
 import { PlayerControllerRuntime } from './runtime/PlayerControllerRuntime';
 import { configureAmmo, initAmmo, isAmmoLoaded } from './serialization/AmmoLoader';
 import { importCaVanNgheScene } from './serialization/CaVanNgheImporter';
@@ -142,6 +142,7 @@ export class EditorEngine {
   private interactionRuntime: InteractionRuntime | null = null;
   private scriptSandbox: ScriptSandbox | null = null;
   private playerController: PlayerControllerRuntime | null = null;
+  private gameplayRuntime: GameplayRuntime | null = null;
 
   private readonly commandContext: EntityCommandContext = {
     getSceneRoot: () => {
@@ -283,6 +284,7 @@ export class EditorEngine {
         this.tickPlayModeAnimations(dt);
         this.interactionRuntime?.update(dt);
         this.scriptSandbox?.update(dt);
+        this.gameplayRuntime?.update(dt);
         this.playerController?.update(dt);
       }
     };
@@ -489,6 +491,8 @@ export class EditorEngine {
     this.interactionRuntime = null;
     this.scriptSandbox?.destroy();
     this.scriptSandbox = null;
+    this.gameplayRuntime?.destroy();
+    this.gameplayRuntime = null;
     this.playerController?.destroy();
     this.playerController = null;
 
@@ -944,6 +948,7 @@ export class EditorEngine {
           this.app.systems.rigidbody.timeScale = 1;
         }
         this.interactionRuntime?.setPaused(false);
+        this.gameplayRuntime?.setPaused(false);
         this.playState = 'playing';
         this.eventBus.emit('playmode:changed', { state: 'playing' });
         return;
@@ -992,6 +997,7 @@ export class EditorEngine {
 
       this.interactionRuntime?.destroy();
       this.scriptSandbox?.destroy();
+      this.gameplayRuntime?.destroy();
       this.playerController?.destroy();
 
       this.interactionRuntime = new InteractionRuntime({
@@ -1017,10 +1023,26 @@ export class EditorEngine {
       this.playState = 'playing';
       this.interactionRuntime.start();
       this.scriptSandbox.start();
+
       if (this.canvas) {
-        this.playerController = new PlayerControllerRuntime(this.sceneRoot, this.canvas);
-        if (!this.playerController.start()) {
-          this.playerController = null;
+        this.gameplayRuntime = new GameplayRuntime({
+          app: this.app,
+          sceneRoot: this.sceneRoot,
+          canvas: this.canvas,
+          eventBus: this.eventBus,
+          consoleBridge: this.consoleBridge,
+          getEntityById: (id) => this.getEntityById(id),
+          emitCustomEvent: (eventName, payload) =>
+            this.interactionRuntime?.emitCustomEvent(eventName, payload),
+        });
+        this.gameplayRuntime.start();
+
+        // Only activate legacy Ca Van Nghe controller when no generic CharacterController component is present
+        if (!this.gameplayRuntime.hasCharacterControllers()) {
+          this.playerController = new PlayerControllerRuntime(this.sceneRoot, this.canvas);
+          if (!this.playerController.start()) {
+            this.playerController = null;
+          }
         }
       }
       this.eventBus.emit('playmode:changed', { state: 'playing' });
@@ -1042,6 +1064,7 @@ export class EditorEngine {
       this.app.systems.rigidbody.timeScale = 0;
     }
     this.interactionRuntime?.setPaused(true);
+    this.gameplayRuntime?.setPaused(true);
     this.playState = 'paused';
     this.eventBus.emit('playmode:changed', { state: 'paused' });
   }
@@ -1052,6 +1075,7 @@ export class EditorEngine {
     this.tickPlayModeAnimations(dt);
     this.interactionRuntime?.step(dt);
     this.scriptSandbox?.step(dt);
+    this.gameplayRuntime?.step(dt);
     if (this.app.systems.rigidbody && isAmmoLoaded()) {
       this.app.systems.rigidbody.step(dt);
     }
@@ -1066,6 +1090,8 @@ export class EditorEngine {
     this.interactionRuntime = null;
     this.scriptSandbox?.destroy();
     this.scriptSandbox = null;
+    this.gameplayRuntime?.destroy();
+    this.gameplayRuntime = null;
     this.playerController?.destroy();
     this.playerController = null;
 
