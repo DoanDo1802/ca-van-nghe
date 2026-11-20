@@ -91,6 +91,36 @@ function enhanceMeshMaterial(mat, url = '', meshName = '') {
   }
 }
 
+const enhancedMaterialCache = new Map();
+
+function getEnhancedMaterial(mat, url, meshName) {
+  if (!mat) return mat;
+  const key = `${url}::${mat.uuid}`;
+  let cached = enhancedMaterialCache.get(key);
+  if (!cached) {
+    cached = mat.clone();
+    enhanceMeshMaterial(cached, url, meshName);
+    enhancedMaterialCache.set(key, cached);
+  }
+  return cached;
+}
+
+function shouldCastShadow(url = '', castShadowProp = true) {
+  if (!castShadowProp) return false;
+  const u = url.toLowerCase();
+  // Skip shadow casting on ultra-high-poly / small prop GLTFs to keep 60 FPS
+  if (
+    u.includes('bar_props') ||
+    u.includes('floor_lamp') ||
+    u.includes('winestand') ||
+    u.includes('barshelf') ||
+    u.includes('statue')
+  ) {
+    return false;
+  }
+  return true;
+}
+
 export default function Model({
   url,
   position = [0, 0, 0],
@@ -106,24 +136,19 @@ export default function Model({
   const { scene } = useGLTF(url);
   const [hovered, setHovered] = useState(false);
 
-  // Deep clone scene and apply rich architectural materials
+  // Deep clone scene hierarchy and reuse cached enhanced materials across instances
   const clonedScene = useMemo(() => {
     const clone = scene.clone(true);
+    const effectiveCastShadow = shouldCastShadow(url, castShadow);
     clone.traverse((child) => {
       if (child.isMesh) {
-        child.castShadow = castShadow;
+        child.castShadow = effectiveCastShadow;
         child.receiveShadow = receiveShadow;
         if (child.material) {
           if (Array.isArray(child.material)) {
-            child.material = child.material.map((m) => {
-              const cl = m.clone();
-              enhanceMeshMaterial(cl, url, child.name);
-              return cl;
-            });
+            child.material = child.material.map((m) => getEnhancedMaterial(m, url, child.name));
           } else {
-            const cl = child.material.clone();
-            enhanceMeshMaterial(cl, url, child.name);
-            child.material = cl;
+            child.material = getEnhancedMaterial(child.material, url, child.name);
           }
         }
       }

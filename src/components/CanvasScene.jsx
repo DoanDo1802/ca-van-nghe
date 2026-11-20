@@ -9,6 +9,12 @@ import DecoWorld from './3d/DecoWorld';
 import { CHAIRS_LIST, INTERACTABLES_LIST } from '../data/sceneData';
 import { Music } from 'lucide-react';
 
+const _forwardVec = new THREE.Vector3();
+const _rightVec = new THREE.Vector3();
+const _upVec = new THREE.Vector3(0, 1, 0);
+const _moveVec = new THREE.Vector3();
+const _diffVec = new THREE.Vector3();
+
 function DecoCameraController({ isDecoMode, selectedItem, controlsRef, preset = 'god', isTransforming = false }) {
   const { camera } = useThree();
   const prevDecoRef = useRef(false);
@@ -133,36 +139,35 @@ function DecoCameraController({ isDecoMode, selectedItem, controlsRef, preset = 
     if (moveForward !== 0 || moveRight !== 0 || moveUp !== 0) {
       isGliding.current = false;
 
-      // Get camera horizontal forward & right vectors
-      const forwardVec = new THREE.Vector3();
-      camera.getWorldDirection(forwardVec);
-      forwardVec.y = 0;
-      forwardVec.normalize();
+      // Get camera horizontal forward & right vectors (zero-alloc)
+      camera.getWorldDirection(_forwardVec);
+      _forwardVec.y = 0;
+      _forwardVec.normalize();
 
-      const rightVec = new THREE.Vector3();
-      rightVec.crossVectors(forwardVec, new THREE.Vector3(0, 1, 0)).normalize();
+      _rightVec.crossVectors(_forwardVec, _upVec).normalize();
 
       const speed = (keys.current.fast ? 20.0 : 10.0) * delta;
-      const moveVec = new THREE.Vector3()
-        .addScaledVector(forwardVec, moveForward * speed)
-        .addScaledVector(rightVec, moveRight * speed);
-      moveVec.y += moveUp * speed;
+      _moveVec
+        .set(0, 0, 0)
+        .addScaledVector(_forwardVec, moveForward * speed)
+        .addScaledVector(_rightVec, moveRight * speed);
+      _moveVec.y += moveUp * speed;
 
-      controls.target.add(moveVec);
-      camera.position.add(moveVec);
+      controls.target.add(_moveVec);
+      camera.position.add(_moveVec);
     }
 
     // B. Smooth one-time glide to selected item (when not moving manually)
     if (!isTransforming && isGliding.current) {
-      const diff = targetDest.current.clone().sub(controls.target);
-      const distSq = diff.lengthSq();
+      _diffVec.copy(targetDest.current).sub(controls.target);
+      const distSq = _diffVec.lengthSq();
 
       if (distSq > 0.002) {
         const factor = Math.min(1.0, delta * 5.0);
-        const step = diff.multiplyScalar(factor);
+        _diffVec.multiplyScalar(factor);
 
-        controls.target.add(step);
-        camera.position.add(step);
+        controls.target.add(_diffVec);
+        camera.position.add(_diffVec);
       } else {
         isGliding.current = false;
       }
@@ -260,7 +265,7 @@ export default function CanvasScene({
     >
       <Canvas
         shadows
-        dpr={[1, 1.25]}
+        dpr={[1, 1.15]}
         camera={{ position: [0, 4.5, 12.0], fov: 50, near: 0.2, far: 90 }}
         gl={{
           antialias: true,
@@ -272,6 +277,7 @@ export default function CanvasScene({
           stencil: false
         }}
         onCreated={({ gl }) => {
+          gl.shadowMap.type = THREE.PCFShadowMap;
           gl.domElement.addEventListener('webglcontextlost', (e) => {
             e.preventDefault();
             console.warn('WebGL context lost. Restoring...');

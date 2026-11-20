@@ -130,10 +130,10 @@ function wireMovingHeads(model, host) {
     const color = glow && glow.emissive && glow.emissive.getHex() !== 0
       ? glow.emissive.clone()
       : new THREE.Color('#ffd2a8');
-    // Cap real-time SpotLights at 3 for high FPS while keeping all parcan housings & emissive lenses animated
+    // Cap real-time SpotLights at 2 for high FPS while keeping all parcan housings & emissive lenses animated
     let spot = null;
     let target = null;
-    if (i % 4 === 0 && spotCount < 3) {
+    if (i % 4 === 0 && spotCount < 2) {
       spotCount += 1;
       spot = new THREE.SpotLight(color, 28, 11, 0.58, 0.82, 2);
       target = new THREE.Object3D();
@@ -242,8 +242,8 @@ export default function LiveStageSet({
 
   useFrame(({ clock }) => {
     if (!host.current) return;
-    host.current.updateWorldMatrix(true, false);
     if (builtFor.current !== clonedScene) {
+      host.current.updateWorldMatrix(true, false);
       rig.current.forEach((fixture) => {
         if (fixture.spot) fixture.spot.removeFromParent();
         if (fixture.target) fixture.target.removeFromParent();
@@ -260,7 +260,7 @@ export default function LiveStageSet({
       _pitch.setFromAxisAngle(_axisX, nod * 0.18);
       fixture.node.quaternion.copy(_yaw).multiply(fixture.base).multiply(_pitch);
       if (fixture.spot && fixture.target) {
-        fixture.node.updateWorldMatrix(true, false);
+        fixture.node.updateMatrixWorld();
         fixture.node.getWorldPosition(_pos);
         _aim.set(
           fixture.front ? 16.4 + nod * 0.4 : 15.75 - nod * 0.35,

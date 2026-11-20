@@ -129,7 +129,7 @@ export default function MainStageDressing() {
           position={[x, fresnelY, -8.15]}
           phase={i * 0.9}
           color={colors[i]}
-          hasLight={i === 1 || i === 3}
+          hasLight={i === 2}
         />
       ))}
     </group>

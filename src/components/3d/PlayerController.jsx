@@ -355,9 +355,9 @@ export default function PlayerController({
       targetPitch.current += dy * sens;
 
       if (cameraMode === 'first') {
-        targetPitch.current = THREE.MathUtils.clamp(targetPitch.current, -1.2, 1.2);
+        targetPitch.current = THREE.MathUtils.clamp(targetPitch.current, -1.45, 1.45);
       } else {
-        targetPitch.current = THREE.MathUtils.clamp(targetPitch.current, -0.15, 1.15);
+        targetPitch.current = THREE.MathUtils.clamp(targetPitch.current, -0.90, 1.25);
       }
     };
     const onPointerUp = () => { isDragging.current = false; };
