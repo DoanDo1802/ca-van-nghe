@@ -53,7 +53,15 @@ import {
 } from './editor-world';
 import { EventBus } from './EventBus';
 import { useEditorStore } from '../store/useEditorStore';
-import { ConsoleBridge, GameplayRuntime, InteractionRuntime, ScriptSandbox } from './runtime';
+import {
+  ConsoleBridge,
+  GameplayRuntime,
+  InteractionRuntime,
+  RemotePlayerPool,
+  ScriptSandbox,
+  StageAudioManager,
+  type StageMediaState,
+} from './runtime';
 import { PlayerControllerRuntime } from './runtime/PlayerControllerRuntime';
 import { configureAmmo, initAmmo, isAmmoLoaded } from './serialization/AmmoLoader';
 import { importCaVanNgheScene } from './serialization/CaVanNgheImporter';
@@ -143,6 +151,8 @@ export class EditorEngine {
   private scriptSandbox: ScriptSandbox | null = null;
   private playerController: PlayerControllerRuntime | null = null;
   private gameplayRuntime: GameplayRuntime | null = null;
+  private stageAudioManager: StageAudioManager | null = null;
+  private remotePlayerPool: RemotePlayerPool | null = null;
 
   private readonly commandContext: EntityCommandContext = {
     getSceneRoot: () => {
@@ -213,7 +223,7 @@ export class EditorEngine {
       keyboard: new pc.Keyboard(window),
       graphicsDeviceOptions: {
         antialias: true,
-        alpha: false,
+        alpha: true,
         powerPreference: 'high-performance',
       },
     });
@@ -286,6 +296,8 @@ export class EditorEngine {
         this.scriptSandbox?.update(dt);
         this.gameplayRuntime?.update(dt);
         this.playerController?.update(dt);
+        this.remotePlayerPool?.update(dt);
+        this.stageAudioManager?.update();
       }
     };
     app.on('update', this.appUpdateHandler);
@@ -495,6 +507,10 @@ export class EditorEngine {
     this.gameplayRuntime = null;
     this.playerController?.destroy();
     this.playerController = null;
+    this.remotePlayerPool?.destroy();
+    this.remotePlayerPool = null;
+    this.stageAudioManager?.destroy();
+    this.stageAudioManager = null;
 
     this.gizmoController?.destroy();
     this.gizmoController = null;
@@ -1045,6 +1061,14 @@ export class EditorEngine {
           }
         }
       }
+
+      this.stageAudioManager?.destroy();
+      this.stageAudioManager = new StageAudioManager(this.app, this.sceneRoot);
+      this.stageAudioManager.start();
+
+      this.remotePlayerPool?.destroy();
+      this.remotePlayerPool = new RemotePlayerPool(this.app, this.sceneRoot);
+
       this.eventBus.emit('playmode:changed', { state: 'playing' });
     } catch (err) {
       this.consoleBridge.error('Failed to start Play Mode:', err);
@@ -1094,6 +1118,10 @@ export class EditorEngine {
     this.gameplayRuntime = null;
     this.playerController?.destroy();
     this.playerController = null;
+    this.remotePlayerPool?.destroy();
+    this.remotePlayerPool = null;
+    this.stageAudioManager?.destroy();
+    this.stageAudioManager = null;
 
     this.app.timeScale = 1;
     if (this.app.systems.rigidbody && isAmmoLoaded()) {
@@ -1160,6 +1188,49 @@ export class EditorEngine {
 
   getPlayState(): PlayModeState {
     return this.playState;
+  }
+
+  getStageAudioState(): StageMediaState | null {
+    return this.stageAudioManager?.getState() ?? null;
+  }
+
+  setStageMedia(url: string, title?: string): void {
+    this.stageAudioManager?.setMedia(url, title);
+  }
+
+  setStageYouTube(videoId: string, title?: string): void {
+    this.stageAudioManager?.setYouTube(videoId, title);
+  }
+
+  setStageYouTubeQuality(quality: string): void {
+    this.stageAudioManager?.setYouTubeQuality(quality);
+  }
+
+  getRenderResolutionScale(): number {
+    return this.app?.graphicsDevice?.maxPixelRatio ?? (window.devicePixelRatio || 1);
+  }
+
+  setRenderResolutionScale(scale: number): void {
+    if (!this.app?.graphicsDevice) return;
+    const clamped = Math.max(0.5, Math.min(2, scale));
+    this.app.graphicsDevice.maxPixelRatio = clamped;
+    this.app.resizeCanvas();
+  }
+
+  setStagePlaying(playing: boolean): void {
+    this.stageAudioManager?.setPlaying(playing);
+  }
+
+  setStageVolume(volume: number): void {
+    this.stageAudioManager?.setVolume(volume);
+  }
+
+  setStageMuted(muted: boolean): void {
+    this.stageAudioManager?.setMuted(muted);
+  }
+
+  setStageScreenOn(on: boolean): void {
+    this.stageAudioManager?.setScreenOn(on);
   }
 
   setNightMode(isNight: boolean): void {

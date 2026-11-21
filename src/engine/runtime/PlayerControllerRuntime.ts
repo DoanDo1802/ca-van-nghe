@@ -1,5 +1,6 @@
 import * as pc from 'playcanvas';
 import { CHAIRS_LIST, INTERACTABLES_LIST } from '../../data/sceneData';
+import { MultiplayerManager } from '../../network/MultiplayerManager';
 import { getEntityMeta } from '../serialization/EntityComponentHelper';
 
 interface StageSurface {
@@ -87,6 +88,8 @@ export class PlayerControllerRuntime {
   private currentAnimState = '';
 
   private dynamicChairs: pc.Entity[] = [];
+  private lastNetPos = new pc.Vec3(0, 0, 7);
+  private hasLastNetPos = false;
   private dynamicInteractables: pc.Entity[] = [];
 
   private readonly keys = new Set<string>();
@@ -150,6 +153,29 @@ export class PlayerControllerRuntime {
 
     this.updateCameraTransform(1 - Math.exp(-12 * clampedDt));
     this.updateProximity();
+
+    const pos = this.playerEntity.getLocalPosition();
+    let vx = 0;
+    let vz = 0;
+    if (this.hasLastNetPos && clampedDt > 0.001) {
+      vx = (pos.x - this.lastNetPos.x) / clampedDt;
+      vz = (pos.z - this.lastNetPos.z) / clampedDt;
+    }
+    this.lastNetPos.copy(pos);
+    this.hasLastNetPos = true;
+
+    MultiplayerManager.getInstance().sendLocalPlayerState({
+      x: pos.x,
+      y: pos.y,
+      z: pos.z,
+      vx,
+      vz,
+      yaw: this.playerYaw,
+      anim: this.currentAnimState || 'Idle_Loop',
+      emote: null,
+      isSitting: this.isSitting,
+      chairId: this.isSitting ? this.currentSeatId : null,
+    });
   }
 
   destroy(): void {
@@ -459,6 +485,9 @@ export class PlayerControllerRuntime {
               : null;
           })();
         if (ch && this.playerEntity) {
+          if (MultiplayerManager.getInstance().isChairOccupiedByOther(ch.id)) {
+            return;
+          }
           this.isSitting = true;
           this.currentSeatId = ch.id;
           this.activeSeatChair = ch;
