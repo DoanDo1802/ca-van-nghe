@@ -1,6 +1,7 @@
 import * as pc from 'playcanvas';
 import { CHAIRS_LIST, INTERACTABLES_LIST } from '../../data/sceneData';
 import { getEntityMeta } from '../serialization/EntityComponentHelper';
+import { KaraokeStageController } from './KaraokeStageController';
 
 interface StageSurface {
   minX: number;
@@ -98,10 +99,12 @@ export class PlayerControllerRuntime {
   private destroyed = false;
 
   private readonly tempPos = new pc.Vec3();
+  private readonly karaoke: KaraokeStageController;
 
   constructor(sceneRoot: pc.Entity, canvas: HTMLCanvasElement) {
     this.sceneRoot = sceneRoot;
     this.canvas = canvas;
+    this.karaoke = new KaraokeStageController(sceneRoot);
   }
 
   start(): boolean {
@@ -135,6 +138,9 @@ export class PlayerControllerRuntime {
     window.addEventListener('cavannghe:toggle-camera', this.onToggleCamera);
     window.addEventListener('cavannghe:stand-up', this.onStandUp);
     window.addEventListener('cavannghe:emote', this.onEmote as EventListener);
+    window.addEventListener('cavannghe:karaoke-exit', this.onKaraokeExit);
+    window.addEventListener('cavannghe:karaoke-style', this.onKaraokeStyle as EventListener);
+    pc.Application.getApplication()?.on('postUpdate', this.onPostUpdate);
 
     this.updateCameraTransform(1);
     return true;
@@ -144,7 +150,10 @@ export class PlayerControllerRuntime {
     if (this.destroyed || !this.playerEntity || !this.cameraEntity) return;
     const clampedDt = Math.min(dt, 0.05);
 
-    if (!this.isSitting) {
+    if (this.karaoke.isActive()) {
+      const animName = this.karaoke.update(clampedDt);
+      this.playAnim(animName);
+    } else if (!this.isSitting) {
       this.updateMovement(clampedDt);
     }
 
@@ -154,6 +163,8 @@ export class PlayerControllerRuntime {
 
   destroy(): void {
     this.destroyed = true;
+    pc.Application.getApplication()?.off('postUpdate', this.onPostUpdate);
+    this.karaoke.destroy();
     window.removeEventListener('keydown', this.onKeyDown);
     window.removeEventListener('keyup', this.onKeyUp);
     this.canvas.removeEventListener('mousedown', this.onMouseDown);
@@ -163,6 +174,8 @@ export class PlayerControllerRuntime {
     window.removeEventListener('cavannghe:toggle-camera', this.onToggleCamera);
     window.removeEventListener('cavannghe:stand-up', this.onStandUp);
     window.removeEventListener('cavannghe:emote', this.onEmote as EventListener);
+    window.removeEventListener('cavannghe:karaoke-exit', this.onKaraokeExit);
+    window.removeEventListener('cavannghe:karaoke-style', this.onKaraokeStyle as EventListener);
     this.keys.clear();
     this.emitProximity(null);
   }
@@ -304,6 +317,13 @@ export class PlayerControllerRuntime {
 
   private updateProximity(): void {
     if (!this.playerEntity) return;
+    if (this.karaoke.isActive()) {
+      if (this.lastPromptKey !== '') {
+        this.lastPromptKey = '';
+        this.emitProximity(null);
+      }
+      return;
+    }
     const p = this.playerEntity.getLocalPosition();
     const interactRange = this.getNumberAttr(this.playerEntity, 'interactRange', 3.2);
 
@@ -393,6 +413,15 @@ export class PlayerControllerRuntime {
       }
     }
 
+    // 3. Right Red-Curtain Stage Karaoke Zone
+    if (!bestPrompt && this.karaoke.isOnRightStage(p.x, p.y, p.z)) {
+      bestPrompt = {
+        type: 'object',
+        id: 'karaoke_stage',
+        title: 'Sân Khấu Rèm Đỏ — Cầm Mic Hát Karaoke',
+      };
+    }
+
     this.lastPromptChair = bestPrompt?.type === 'chair' ? (bestPrompt.chair ?? null) : null;
 
     const key = bestPrompt ? `${bestPrompt.type}:${bestPrompt.id}` : '';
@@ -439,8 +468,16 @@ export class PlayerControllerRuntime {
     }
 
     if (e.code === 'KeyE') {
+      if (this.karaoke.isActive()) {
+        this.exitKaraoke();
+        return;
+      }
       if (this.isSitting) {
         this.onStandUp();
+        return;
+      }
+      if (this.lastPromptKey === 'object:karaoke_stage' && this.playerEntity) {
+        this.enterKaraoke();
         return;
       }
       if (this.lastPromptKey.startsWith('chair:')) {
@@ -527,6 +564,34 @@ export class PlayerControllerRuntime {
     this.activeSeatChair = null;
     this.playAnim('Idle_Loop');
     window.dispatchEvent(new CustomEvent('cavannghe:sit', { detail: { sitting: false, chair: null } }));
+  };
+
+  private onPostUpdate = (): void => {
+    this.karaoke.applyArmPose();
+  };
+
+  private enterKaraoke(): void {
+    if (!this.playerEntity) return;
+    const view = this.karaoke.enter(this.playerEntity);
+    this.playerYaw = view.playerYaw;
+    this.yaw = view.camYaw;
+    this.pitch = view.camPitch;
+    this.playAnim('Idle_Talking_Loop');
+  }
+
+  private exitKaraoke(): void {
+    this.karaoke.exit();
+    this.playAnim('Idle_Loop');
+  }
+
+  private onKaraokeExit = (): void => {
+    this.exitKaraoke();
+  };
+
+  private onKaraokeStyle = (e: CustomEvent<'chill' | 'dance'>): void => {
+    if (e.detail === 'chill' || e.detail === 'dance') {
+      this.karaoke.setStyle(e.detail);
+    }
   };
 
   private onEmote = (e: CustomEvent<string | null>): void => {

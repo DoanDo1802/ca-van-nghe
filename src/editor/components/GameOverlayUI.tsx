@@ -6,6 +6,7 @@ import MenuDrawer from '../../components/MenuDrawer';
 import ReservationModal from '../../components/ReservationModal';
 import StageScreenModal from '../../components/StageScreenModal';
 import SettingsModal from '../../components/SettingsModal';
+import { KaraokeOverlay } from './KaraokeOverlay';
 import { INTERACTIVE_OBJECTS } from '../../data/sceneData';
 import { loungeAudio } from '../../utils/audio';
 import { EditorEngine } from '../../engine/EditorEngine';
@@ -26,6 +27,7 @@ export const GameOverlayUI: React.FC = () => {
   const [isStageVideoMuted, setIsStageVideoMuted] = useState(false);
   const [isScreenOn, setIsScreenOn] = useState(true);
   const [activeEmote, setActiveEmote] = useState<string | null>(null);
+  const [isKaraokeOpen, setIsKaraokeOpen] = useState(false);
 
   useEffect(() => {
     const onProximity = (e: Event) => {
@@ -46,6 +48,10 @@ export const GameOverlayUI: React.FC = () => {
     const onCamMode = (e: Event) => {
       setCameraMode((e as CustomEvent<'third' | 'first'>).detail);
     };
+    const onKaraoke = (e: Event) => {
+      const detail = (e as CustomEvent<{ active: boolean }>).detail;
+      setIsKaraokeOpen(Boolean(detail?.active));
+    };
     const onKeyDown = (e: KeyboardEvent) => {
       const tag = (document.activeElement?.tagName ?? '').toLowerCase();
       if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
@@ -62,6 +68,7 @@ export const GameOverlayUI: React.FC = () => {
     window.addEventListener('cavannghe:interact', onInteract);
     window.addEventListener('cavannghe:sit', onSit);
     window.addEventListener('cavannghe:camera-mode', onCamMode);
+    window.addEventListener('cavannghe:karaoke', onKaraoke);
     window.addEventListener('keydown', onKeyDown);
 
     return () => {
@@ -69,6 +76,7 @@ export const GameOverlayUI: React.FC = () => {
       window.removeEventListener('cavannghe:interact', onInteract);
       window.removeEventListener('cavannghe:sit', onSit);
       window.removeEventListener('cavannghe:camera-mode', onCamMode);
+      window.removeEventListener('cavannghe:karaoke', onKaraoke);
       window.removeEventListener('keydown', onKeyDown);
     };
   }, []);
@@ -92,7 +100,9 @@ export const GameOverlayUI: React.FC = () => {
       return;
     }
     if (nearbyPrompt?.type === 'object') {
-      if (nearbyPrompt.id === 'stage_screen') {
+      if (nearbyPrompt.id === 'karaoke_stage') {
+        window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyE' }));
+      } else if (nearbyPrompt.id === 'stage_screen') {
         setIsStageModalOpen(true);
       } else {
         setSelectedObjectId(nearbyPrompt.id);
@@ -127,6 +137,7 @@ export const GameOverlayUI: React.FC = () => {
           onTriggerInteract={handleTriggerInteract}
           cameraMode={cameraMode}
           isDecoMode={false}
+          hideHeader={isKaraokeOpen}
         />
 
         <MobileControls
@@ -134,6 +145,11 @@ export const GameOverlayUI: React.FC = () => {
             window.dispatchEvent(new CustomEvent('cavannghe:mobile-move', { detail: vec }))
           }
           onAction={handleTriggerInteract}
+        />
+
+        <KaraokeOverlay
+          isOpen={isKaraokeOpen}
+          onExit={() => window.dispatchEvent(new CustomEvent('cavannghe:karaoke-exit'))}
         />
 
         {interactiveItem && (

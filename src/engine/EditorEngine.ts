@@ -382,23 +382,31 @@ export class EditorEngine {
   }
 
   private async syncUpdatedCharacterAsset(): Promise<void> {
+    const syncNames = ['Character.glb', 'MicStand.glb', 'Microphone.glb'];
     try {
       const assets = await AssetRepository.listAssets();
-      const charAsset = assets.find(
-        (a) => a.name === 'Character.glb' && a.folderPath === '/CaVanNghe'
-      );
-      if (!charAsset) return;
+      for (const name of syncNames) {
+        const url = `/models/${name}`;
+        const existing = assets.find(
+          (a) => a.name === name && a.folderPath === '/CaVanNghe'
+        );
 
-      const head = await fetch('/models/Character.glb', { method: 'HEAD' });
-      const contentLen = Number(head.headers.get('content-length') || 0);
-      if (contentLen > 0 && contentLen === charAsset.sizeBytes) return;
+        const head = await fetch(url, { method: 'HEAD' });
+        const contentLen = Number(head.headers.get('content-length') || 0);
+        if (existing && contentLen > 0 && contentLen === existing.sizeBytes) continue;
 
-      const res = await fetch('/models/Character.glb');
-      if (!res.ok) return;
-      const buf = await res.arrayBuffer();
-      if (buf.byteLength !== charAsset.sizeBytes) {
-        await AssetRepository.updateAssetBlob(charAsset.id, buf);
-        clearGlbAssetBufferCache(charAsset.id);
+        const res = await fetch(url);
+        if (!res.ok) continue;
+        const buf = await res.arrayBuffer();
+        if (existing) {
+          if (buf.byteLength !== existing.sizeBytes) {
+            await AssetRepository.updateAssetBlob(existing.id, buf);
+            clearGlbAssetBufferCache(existing.id);
+          }
+        } else {
+          const file = new File([buf], name, { type: 'model/gltf-binary' });
+          await AssetRepository.importFile(file, '/CaVanNghe');
+        }
       }
     } catch {
       /* Ignore offline/network errors during startup asset sync */

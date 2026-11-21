@@ -165,6 +165,24 @@ export const DECO_CATALOG = [
     defaultScale: [0.15, 0.15, 0.15],
     defaultY: 0.36,
     icon: '🥁'
+  },
+  {
+    id: 'mic_stand',
+    name: 'Chân Micro Sân Khấu (1.28m)',
+    category: 'decor',
+    url: '/models/MicStand.glb',
+    defaultScale: [1, 1, 1],
+    defaultY: 0.36,
+    icon: '🎙️'
+  },
+  {
+    id: 'microphone',
+    name: 'Micro Cầm Tay (0.22m)',
+    category: 'props',
+    url: '/models/Microphone.glb',
+    defaultScale: [1, 1, 1],
+    defaultY: 1.0,
+    icon: '🎤'
   }
 ];
 

@@ -56,6 +56,8 @@ const EXTRA_STAGE_MODELS = [
   '/models/fresnel-led.glb',
   '/models/every_other_gig_ever.glb',
   '/models/Character.glb',
+  '/models/MicStand.glb',
+  '/models/Microphone.glb',
 ];
 
 function extractFilenameFromUrl(url: string): string {
