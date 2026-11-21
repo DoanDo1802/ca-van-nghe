@@ -234,12 +234,13 @@ export class MultiplayerManager {
     }
 
     const now = performance.now();
+    if (now - this.lastBroadcastTime < BROADCAST_INTERVAL_MS) {
+      return;
+    }
+
     const sig = `${state.x.toFixed(2)},${state.y.toFixed(2)},${state.z.toFixed(2)},${state.yaw.toFixed(1)},${state.anim},${state.emote ?? ''},${state.isSitting ? 1 : 0},${state.chairId ?? ''}`;
 
     if (sig === this.lastSentSig && now - this.lastBroadcastTime < 1500) {
-      return;
-    }
-    if (now - this.lastBroadcastTime < BROADCAST_INTERVAL_MS) {
       return;
     }
 
@@ -250,12 +251,12 @@ export class MultiplayerManager {
     const payload: RemotePlayerState = {
       id: this.localPlayerId,
       name: this.localPlayerName,
-      x: Number(state.x.toFixed(3)),
-      y: Number(state.y.toFixed(3)),
-      z: Number(state.z.toFixed(3)),
-      vx: Number((state.vx ?? 0).toFixed(2)),
-      vz: Number((state.vz ?? 0).toFixed(2)),
-      yaw: Number(state.yaw.toFixed(2)),
+      x: Math.round(state.x * 1000) / 1000,
+      y: Math.round(state.y * 1000) / 1000,
+      z: Math.round(state.z * 1000) / 1000,
+      vx: Math.round((state.vx ?? 0) * 100) / 100,
+      vz: Math.round((state.vz ?? 0) * 100) / 100,
+      yaw: Math.round(state.yaw * 100) / 100,
       anim: state.anim,
       emote: state.emote,
       isSitting: state.isSitting,

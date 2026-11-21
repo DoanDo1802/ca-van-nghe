@@ -59,6 +59,7 @@ export class RemotePlayerPool {
   private avatars = new Map<string, RemoteAvatarInstance>();
   private spawningIds = new Set<string>();
   private charBufferPromise: Promise<ArrayBuffer | null> | null = null;
+  private cachedActiveCamera: pc.Entity | null = null;
   private destroyed = false;
   private lastNameplateSig = '';
 
@@ -114,11 +115,22 @@ export class RemotePlayerPool {
       }
     }
 
+    if (this.avatars.size === 0) {
+      if (this.lastNameplateSig !== '') {
+        this.lastNameplateSig = '';
+        window.dispatchEvent(
+          new CustomEvent<NameplateEntry[]>('cavannghe:remote-nameplates', { detail: [] })
+        );
+      }
+      return;
+    }
+
     // 3. Evaluate Snapshot Interpolation Buffer + smooth micro-damping at 60fps
     const clampedDt = Math.min(dt, 0.05);
     const microAlpha = 1 - Math.exp(-26 * clampedDt);
     const cam = this.findActiveCamera();
     const nameplates: NameplateEntry[] = [];
+    let sig = '';
 
     for (const avatar of this.avatars.values()) {
       this.sampleSnapshots(avatar, renderTime);
@@ -147,20 +159,22 @@ export class RemotePlayerPool {
         );
         cam.camera.worldToScreen(_headWorld, _headScreen);
         if (_headScreen.z > 0.2 && _headScreen.z < 45) {
+          const sx = Math.round(_headScreen.x);
+          const sy = Math.round(_headScreen.y);
+          const isHost = avatar.id === hostId;
           nameplates.push({
             id: avatar.id,
             name: avatar.name,
-            x: Math.round(_headScreen.x),
-            y: Math.round(_headScreen.y),
-            isHost: avatar.id === hostId,
+            x: sx,
+            y: sy,
+            isHost,
           });
+          if (sig) sig += '|';
+          sig += `${avatar.id}:${sx},${sy},${isHost ? 1 : 0}`;
         }
       }
     }
 
-    const sig = nameplates
-      .map((n) => `${n.id}:${n.x},${n.y},${n.isHost ? 1 : 0}`)
-      .join('|');
     if (sig !== this.lastNameplateSig) {
       this.lastNameplateSig = sig;
       window.dispatchEvent(
@@ -359,6 +373,10 @@ export class RemotePlayerPool {
   }
 
   private findActiveCamera(): pc.Entity | null {
+    const cached = this.cachedActiveCamera;
+    if (cached && cached.parent && cached.enabled && cached.camera?.enabled) {
+      return cached;
+    }
     let fallback: pc.Entity | null = null;
     const walk = (node: pc.Entity): pc.Entity | null => {
       if (node.camera && node.enabled) {
@@ -373,6 +391,8 @@ export class RemotePlayerPool {
       }
       return null;
     };
-    return walk(this.sceneRoot) ?? fallback;
+    const resolved = walk(this.sceneRoot) ?? fallback;
+    this.cachedActiveCamera = resolved;
+    return resolved;
   }
 }

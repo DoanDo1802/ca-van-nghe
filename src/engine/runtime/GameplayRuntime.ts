@@ -65,6 +65,7 @@ interface ParticleEmitterState {
   data: ParticleSystemComponentData;
   container: pc.Entity;
   pool: ParticleUnit[];
+  freePool: ParticleUnit[];
   spawnAcc: number;
   elapsed: number;
 }
@@ -95,8 +96,19 @@ export class GameplayRuntime {
   private lastPointerX = 0;
   private lastPointerY = 0;
   private activePromptEntityId: string | null = null;
+  private cachedDefaultCamera: pc.Entity | null = null;
   private paused = false;
   private destroyed = false;
+
+  // Scratch vectors to avoid per-frame allocations
+  private readonly _hcDir = new pc.Vec3();
+  private readonly _hcOrigin = new pc.Vec3();
+  private readonly _hcEnd = new pc.Vec3();
+  private readonly _groundStart = new pc.Vec3();
+  private readonly _groundEnd = new pc.Vec3();
+  private readonly _camLookTarget = new pc.Vec3();
+  private readonly _camDesiredPos = new pc.Vec3();
+  private readonly _camCurrentPos = new pc.Vec3();
 
   constructor(options: GameplayRuntimeOptions) {
     this.app = options.app;
@@ -190,6 +202,7 @@ export class GameplayRuntime {
     this.characters = [];
     this.cameraRigs = [];
     this.interactables = [];
+    this.cachedDefaultCamera = null;
   }
 
   private collectComponents(root: pc.Entity): void {
@@ -263,14 +276,25 @@ export class GameplayRuntime {
   }
 
   private findDefaultGameCamera(): pc.Entity | null {
+    if (
+      this.cachedDefaultCamera &&
+      this.cachedDefaultCamera.parent &&
+      this.cachedDefaultCamera.camera?.enabled
+    ) {
+      return this.cachedDefaultCamera;
+    }
     const stack: pc.Entity[] = [this.sceneRoot];
     while (stack.length > 0) {
       const e = stack.pop()!;
-      if (e.camera && e.camera.enabled) return e;
+      if (e.camera && e.camera.enabled) {
+        this.cachedDefaultCamera = e;
+        return e;
+      }
       for (const child of e.children) {
         if (child instanceof pc.Entity) stack.push(child);
       }
     }
+    this.cachedDefaultCamera = null;
     return null;
   }
 
@@ -282,6 +306,7 @@ export class GameplayRuntime {
       data,
       container,
       pool: [],
+      freePool: [],
       spawnAcc: 0,
       elapsed: 0,
     });
@@ -482,27 +507,27 @@ export class GameplayRuntime {
     const rbSys = this.app.systems.rigidbody;
     if (!rbSys || !isAmmoLoaded()) return false;
 
-    const dir = new pc.Vec3(dx, 0, dz);
-    const dist = dir.length();
+    this._hcDir.set(dx, 0, dz);
+    const dist = this._hcDir.length();
     if (dist < 0.0001) return false;
-    dir.normalize();
+    this._hcDir.normalize();
 
-    const origin = new pc.Vec3(pos.x, pos.y + stepOffset + 0.15, pos.z);
-    const end = new pc.Vec3(
-      origin.x + dir.x * (dist + radius),
-      origin.y,
-      origin.z + dir.z * (dist + radius)
+    this._hcOrigin.set(pos.x, pos.y + stepOffset + 0.15, pos.z);
+    this._hcEnd.set(
+      this._hcOrigin.x + this._hcDir.x * (dist + radius),
+      this._hcOrigin.y,
+      this._hcOrigin.z + this._hcDir.z * (dist + radius)
     );
-    const hit = rbSys.raycastFirst(origin, end);
+    const hit = rbSys.raycastFirst(this._hcOrigin, this._hcEnd);
     return Boolean(hit && hit.entity && !getEntityMeta(hit.entity).characterController);
   }
 
   private sampleGroundY(x: number, fromY: number, z: number): number {
     const rbSys = this.app.systems.rigidbody;
     if (rbSys && isAmmoLoaded()) {
-      const start = new pc.Vec3(x, fromY + 0.5, z);
-      const end = new pc.Vec3(x, fromY - 25, z);
-      const hit = rbSys.raycastFirst(start, end);
+      this._groundStart.set(x, fromY + 0.5, z);
+      this._groundEnd.set(x, fromY - 25, z);
+      const hit = rbSys.raycastFirst(this._groundStart, this._groundEnd);
       if (hit && hit.entity && !getEntityMeta(hit.entity).characterController) {
         return hit.point.y;
       }
@@ -545,14 +570,13 @@ export class GameplayRuntime {
       if (!target) continue;
 
       const targetPos = target.getPosition();
-      const lookTarget = new pc.Vec3(targetPos.x, targetPos.y + 1.2, targetPos.z);
-      let desiredPos: pc.Vec3;
+      this._camLookTarget.set(targetPos.x, targetPos.y + 1.2, targetPos.z);
 
       if (rig.data.mode === 'look-at') {
-        rig.entity.lookAt(lookTarget);
+        rig.entity.lookAt(this._camLookTarget);
         continue;
       } else if (rig.data.mode === 'smooth-follow') {
-        desiredPos = new pc.Vec3(
+        this._camDesiredPos.set(
           targetPos.x + rig.data.offset[0],
           targetPos.y + rig.data.offset[1],
           targetPos.z + rig.data.offset[2]
@@ -562,25 +586,25 @@ export class GameplayRuntime {
         const yawRad = (rig.yaw * Math.PI) / 180;
         const pitchRad = (rig.pitch * Math.PI) / 180;
         const cosP = Math.cos(pitchRad);
-        desiredPos = new pc.Vec3(
-          lookTarget.x + Math.sin(yawRad) * cosP * rig.distance,
-          lookTarget.y - Math.sin(pitchRad) * rig.distance,
-          lookTarget.z + Math.cos(yawRad) * cosP * rig.distance
+        this._camDesiredPos.set(
+          this._camLookTarget.x + Math.sin(yawRad) * cosP * rig.distance,
+          this._camLookTarget.y - Math.sin(pitchRad) * rig.distance,
+          this._camLookTarget.z + Math.cos(yawRad) * cosP * rig.distance
         );
       }
 
       if (rig.data.collisionAvoidance && this.app.systems.rigidbody && isAmmoLoaded()) {
-        const hit = this.app.systems.rigidbody.raycastFirst(lookTarget, desiredPos);
+        const hit = this.app.systems.rigidbody.raycastFirst(this._camLookTarget, this._camDesiredPos);
         if (hit && hit.entity !== target && hit.entity !== rig.entity) {
-          desiredPos.lerp(lookTarget, hit.point, 0.9);
+          this._camDesiredPos.lerp(this._camLookTarget, hit.point, 0.9);
         }
       }
 
-      const currentPos = rig.entity.getPosition().clone();
+      this._camCurrentPos.copy(rig.entity.getPosition());
       const alpha = rig.data.damping <= 0 ? 1 : 1 - Math.exp(-rig.data.damping * dt);
-      currentPos.lerp(currentPos, desiredPos, alpha);
-      rig.entity.setPosition(currentPos);
-      rig.entity.lookAt(lookTarget);
+      this._camCurrentPos.lerp(this._camCurrentPos, this._camDesiredPos, alpha);
+      rig.entity.setPosition(this._camCurrentPos);
+      rig.entity.lookAt(this._camLookTarget);
     }
   }
 
@@ -591,25 +615,27 @@ export class GameplayRuntime {
     if (!actor) return;
 
     const actorPos = actor.getPosition();
-    let nearest: { entity: pc.Entity; data: InteractableComponentData; dist: number } | null = null;
+    let nearestItem: { entity: pc.Entity; data: InteractableComponentData } | null = null;
+    let nearestDist = Infinity;
 
     for (const item of this.interactables) {
       if (!item.entity.enabled) continue;
       const d = actorPos.distance(item.entity.getPosition());
-      if (d <= item.data.radius && (!nearest || d < nearest.dist)) {
-        nearest = { ...item, dist: d };
+      if (d <= item.data.radius && d < nearestDist) {
+        nearestDist = d;
+        nearestItem = item;
       }
     }
 
-    const nextId = nearest ? nearest.entity.getGuid() : null;
+    const nextId = nearestItem ? nearestItem.entity.getGuid() : null;
     if (nextId !== this.activePromptEntityId) {
       this.activePromptEntityId = nextId;
-      if (nearest) {
+      if (nearestItem) {
         this.eventBus.emit('gameplay:prompt-changed', {
-          entityId: nearest.entity.getGuid(),
-          entityName: nearest.entity.name,
-          promptText: nearest.data.promptText,
-          keyCode: nearest.data.interactionKey,
+          entityId: nearestItem.entity.getGuid(),
+          entityName: nearestItem.entity.name,
+          promptText: nearestItem.data.promptText,
+          keyCode: nearestItem.data.interactionKey,
         });
       } else {
         this.eventBus.emit('gameplay:prompt-changed', null);
@@ -678,7 +704,8 @@ export class GameplayRuntime {
         const p = emitter.pool[i];
         p.age += dt;
         if (p.age >= p.lifetime) {
-          p.entity.destroy();
+          p.entity.enabled = false;
+          emitter.freePool.push(p);
           emitter.pool.splice(i, 1);
           continue;
         }
@@ -704,24 +731,42 @@ export class GameplayRuntime {
   private spawnParticle(emitter: ParticleEmitterState): void {
     const d = emitter.data;
     const origin = emitter.entity.getPosition();
-    const mat = new pc.StandardMaterial();
-    mat.diffuse = new pc.Color(d.startColor[0], d.startColor[1], d.startColor[2]);
-    mat.emissive = new pc.Color(d.startColor[0] * 0.6, d.startColor[1] * 0.6, d.startColor[2] * 0.6);
-    mat.blendType = pc.BLEND_NORMAL;
-    mat.opacity = 1;
-    mat.update();
-    this.particleMaterials.push(mat);
+    let unit = emitter.freePool.pop();
 
-    const pEntity = new pc.Entity('__particle');
-    pEntity.addComponent('render', {
-      type: 'sphere',
-      material: mat,
-      castShadows: false,
-      receiveShadows: false,
-    });
-    pEntity.setPosition(origin.x, origin.y, origin.z);
-    pEntity.setLocalScale(d.startSize, d.startSize, d.startSize);
-    emitter.container.addChild(pEntity);
+    if (unit) {
+      unit.mat.diffuse.set(d.startColor[0], d.startColor[1], d.startColor[2]);
+      unit.mat.emissive.set(d.startColor[0] * 0.6, d.startColor[1] * 0.6, d.startColor[2] * 0.6);
+      unit.mat.opacity = 1;
+      unit.mat.update();
+      unit.entity.enabled = true;
+    } else {
+      const mat = new pc.StandardMaterial();
+      mat.diffuse = new pc.Color(d.startColor[0], d.startColor[1], d.startColor[2]);
+      mat.emissive = new pc.Color(d.startColor[0] * 0.6, d.startColor[1] * 0.6, d.startColor[2] * 0.6);
+      mat.blendType = pc.BLEND_NORMAL;
+      mat.opacity = 1;
+      mat.update();
+      this.particleMaterials.push(mat);
+
+      const pEntity = new pc.Entity('__particle');
+      pEntity.addComponent('render', {
+        type: 'sphere',
+        material: mat,
+        castShadows: false,
+        receiveShadows: false,
+      });
+      emitter.container.addChild(pEntity);
+      unit = {
+        entity: pEntity,
+        mat,
+        vel: new pc.Vec3(),
+        age: 0,
+        lifetime: Math.max(0.1, d.lifetime),
+      };
+    }
+
+    unit.entity.setPosition(origin.x, origin.y, origin.z);
+    unit.entity.setLocalScale(d.startSize, d.startSize, d.startSize);
 
     const spreadRad = (d.spreadAngle * Math.PI) / 180;
     let vx = 0;
@@ -735,7 +780,7 @@ export class GameplayRuntime {
       vy = Math.cos(phi) * d.startSpeed;
       vz = Math.sin(phi) * Math.sin(theta) * d.startSpeed;
     } else if (d.shape === 'box') {
-      pEntity.setPosition(
+      unit.entity.setPosition(
         origin.x + (Math.random() - 0.5) * 0.8,
         origin.y,
         origin.z + (Math.random() - 0.5) * 0.8
@@ -751,13 +796,10 @@ export class GameplayRuntime {
       vz = Math.sin(tilt) * Math.sin(angle) * d.startSpeed;
     }
 
-    emitter.pool.push({
-      entity: pEntity,
-      mat,
-      vel: new pc.Vec3(vx, vy, vz),
-      age: 0,
-      lifetime: Math.max(0.1, d.lifetime),
-    });
+    unit.vel.set(vx, vy, vz);
+    unit.age = 0;
+    unit.lifetime = Math.max(0.1, d.lifetime);
+    emitter.pool.push(unit);
   }
 
   private onKeyDown = (e: KeyboardEvent): void => {

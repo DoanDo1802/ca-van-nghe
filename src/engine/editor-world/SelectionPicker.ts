@@ -3,6 +3,8 @@ import * as pc from 'playcanvas';
 const HIGHLIGHT_COLOR = new pc.Color(1, 0.65, 0.1, 1);
 const DROP_GHOST_COLOR = new pc.Color(0.25, 0.78, 1.0, 0.95);
 const GROUND_PLANE = new pc.Plane(new pc.Vec3(0, 1, 0), 0);
+const FALLBACK_HALF_EXTENTS = new pc.Vec3(0.25, 0.25, 0.25);
+const GHOST_HALF_EXTENTS = new pc.Vec3(0.5, 0.5, 0.5);
 const SCENE_GROUP_FOLDERS = new Set([
   'Environment_Shell',
   'Walls',
@@ -23,6 +25,19 @@ export class SelectionPicker {
   private highlightedEntities: pc.Entity[] = [];
   private dropGhostPos: pc.Vec3 | null = null;
   private destroyed = false;
+
+  // Reusable scratch buffers to avoid per-frame allocations
+  private readonly wirePositions: number[] = [];
+  private readonly wireColors: number[] = [];
+  private readonly scratchAabb = new pc.BoundingBox();
+  private readonly scratchGhostCenter = new pc.Vec3();
+  private readonly scratchNear = new pc.Vec3();
+  private readonly scratchFar = new pc.Vec3();
+  private readonly scratchDir = new pc.Vec3();
+  private readonly scratchRay = new pc.Ray();
+  private readonly scratchHitPoint = new pc.Vec3();
+  private readonly scratchClosestHit = new pc.Vec3();
+  private readonly scratchGroundHit = new pc.Vec3();
 
   constructor(
     app: pc.Application,
@@ -88,14 +103,13 @@ export class SelectionPicker {
   public raycastDropPoint(canvasX: number, canvasY: number): pc.Vec3 {
     if (this.destroyed) return new pc.Vec3(0, 0, 0);
 
-    const near = this.camera.screenToWorld(canvasX, canvasY, this.camera.nearClip);
-    const far = this.camera.screenToWorld(canvasX, canvasY, this.camera.farClip);
-    const dir = far.clone().sub(near).normalize();
-    const ray = new pc.Ray(near, dir);
+    const near = this.camera.screenToWorld(canvasX, canvasY, this.camera.nearClip, this.scratchNear);
+    const far = this.camera.screenToWorld(canvasX, canvasY, this.camera.farClip, this.scratchFar);
+    const dir = this.scratchDir.sub2(far, near).normalize();
+    this.scratchRay.set(near, dir);
 
     let closestDistSq = Infinity;
-    let closestHit: pc.Vec3 | null = null;
-    const hitPoint = new pc.Vec3();
+    let hasHit = false;
 
     const visit = (node: pc.GraphNode) => {
       if (node instanceof pc.Entity && node !== this.sceneRoot) {
@@ -103,11 +117,12 @@ export class SelectionPicker {
         const render = node.render;
         if (render && render.enabled && render.meshInstances) {
           for (const mi of render.meshInstances) {
-            if (mi.aabb && mi.aabb.intersectsRay(ray, hitPoint)) {
-              const distSq = near.distanceSq(hitPoint);
+            if (mi.aabb && mi.aabb.intersectsRay(this.scratchRay, this.scratchHitPoint)) {
+              const distSq = near.distanceSq(this.scratchHitPoint);
               if (distSq < closestDistSq) {
                 closestDistSq = distSq;
-                closestHit = hitPoint.clone();
+                this.scratchClosestHit.copy(this.scratchHitPoint);
+                hasHit = true;
               }
             }
           }
@@ -120,13 +135,12 @@ export class SelectionPicker {
 
     visit(this.sceneRoot);
 
-    if (closestHit) {
-      return closestHit;
+    if (hasHit) {
+      return this.scratchClosestHit.clone();
     }
 
-    const groundHit = new pc.Vec3();
-    if (GROUND_PLANE.intersectsRay(ray, groundHit)) {
-      return groundHit;
+    if (GROUND_PLANE.intersectsRay(this.scratchRay, this.scratchGroundHit)) {
+      return this.scratchGroundHit.clone();
     }
 
     return near.clone().add(dir.mulScalar(6));
@@ -179,8 +193,7 @@ export class SelectionPicker {
     return cursor === this.sceneRoot ? resolved : null;
   }
 
-  private computeEntityAabb(entity: pc.Entity): pc.BoundingBox {
-    const box = new pc.BoundingBox();
+  private computeEntityAabb(entity: pc.Entity, outBox: pc.BoundingBox): pc.BoundingBox {
     let hasMesh = false;
 
     const visit = (node: pc.GraphNode) => {
@@ -191,10 +204,10 @@ export class SelectionPicker {
         for (const mi of render.meshInstances) {
           if (!mi.aabb) continue;
           if (!hasMesh) {
-            box.copy(mi.aabb);
+            outBox.copy(mi.aabb);
             hasMesh = true;
           } else {
-            box.add(mi.aabb);
+            outBox.add(mi.aabb);
           }
         }
       }
@@ -207,79 +220,77 @@ export class SelectionPicker {
     visit(entity);
 
     if (hasMesh) {
-      return box;
+      return outBox;
     }
 
-    const pos = entity.getPosition();
-    return new pc.BoundingBox(pos.clone(), new pc.Vec3(0.25, 0.25, 0.25));
+    outBox.center.copy(entity.getPosition());
+    outBox.halfExtents.copy(FALLBACK_HALF_EXTENTS);
+    return outBox;
   }
 
-  private appendWireframeBox(
-    aabb: pc.BoundingBox,
-    color: pc.Color,
-    positions: pc.Vec3[],
-    colors: pc.Color[]
-  ): void {
+  private appendWireframeBox(aabb: pc.BoundingBox, color: pc.Color): void {
     const min = aabb.getMin();
     const max = aabb.getMax();
+    const x0 = min.x;
+    const y0 = min.y;
+    const z0 = min.z;
+    const x1 = max.x;
+    const y1 = max.y;
+    const z1 = max.z;
 
-    const p000 = new pc.Vec3(min.x, min.y, min.z);
-    const p100 = new pc.Vec3(max.x, min.y, min.z);
-    const p010 = new pc.Vec3(min.x, max.y, min.z);
-    const p110 = new pc.Vec3(max.x, max.y, min.z);
-    const p001 = new pc.Vec3(min.x, min.y, max.z);
-    const p101 = new pc.Vec3(max.x, min.y, max.z);
-    const p011 = new pc.Vec3(min.x, max.y, max.z);
-    const p111 = new pc.Vec3(max.x, max.y, max.z);
-
-    const edges: [pc.Vec3, pc.Vec3][] = [
+    // 12 edges = 24 vertices (flat xyz)
+    this.wirePositions.push(
       // Bottom face
-      [p000, p100],
-      [p100, p101],
-      [p101, p001],
-      [p001, p000],
+      x0, y0, z0, x1, y0, z0,
+      x1, y0, z0, x1, y0, z1,
+      x1, y0, z1, x0, y0, z1,
+      x0, y0, z1, x0, y0, z0,
       // Top face
-      [p010, p110],
-      [p110, p111],
-      [p111, p011],
-      [p011, p010],
+      x0, y1, z0, x1, y1, z0,
+      x1, y1, z0, x1, y1, z1,
+      x1, y1, z1, x0, y1, z1,
+      x0, y1, z1, x0, y1, z0,
       // Vertical edges
-      [p000, p010],
-      [p100, p110],
-      [p101, p111],
-      [p001, p011],
-    ];
+      x0, y0, z0, x0, y1, z0,
+      x1, y0, z0, x1, y1, z0,
+      x1, y0, z1, x1, y1, z1,
+      x0, y0, z1, x0, y1, z1
+    );
 
-    for (const [a, b] of edges) {
-      positions.push(a, b);
-      colors.push(color, color);
+    const r = color.r;
+    const g = color.g;
+    const b = color.b;
+    const a = color.a;
+    for (let i = 0; i < 24; i++) {
+      this.wireColors.push(r, g, b, a);
     }
   }
 
   private onUpdate = (): void => {
     if (this.destroyed || (this.highlightedEntities.length === 0 && !this.dropGhostPos)) return;
 
-    const positions: pc.Vec3[] = [];
-    const colors: pc.Color[] = [];
+    this.wirePositions.length = 0;
+    this.wireColors.length = 0;
 
     for (const entity of this.highlightedEntities) {
       if (!entity.parent || !entity.enabled) continue;
-      const aabb = this.computeEntityAabb(entity);
-      this.appendWireframeBox(aabb, HIGHLIGHT_COLOR, positions, colors);
+      this.computeEntityAabb(entity, this.scratchAabb);
+      this.appendWireframeBox(this.scratchAabb, HIGHLIGHT_COLOR);
     }
 
     if (this.dropGhostPos) {
-      const ghostCenter = new pc.Vec3(
+      this.scratchGhostCenter.set(
         this.dropGhostPos.x,
         this.dropGhostPos.y + 0.5,
         this.dropGhostPos.z
       );
-      const ghostAabb = new pc.BoundingBox(ghostCenter, new pc.Vec3(0.5, 0.5, 0.5));
-      this.appendWireframeBox(ghostAabb, DROP_GHOST_COLOR, positions, colors);
+      this.scratchAabb.center.copy(this.scratchGhostCenter);
+      this.scratchAabb.halfExtents.copy(GHOST_HALF_EXTENTS);
+      this.appendWireframeBox(this.scratchAabb, DROP_GHOST_COLOR);
     }
 
-    if (positions.length > 0) {
-      this.app.drawLines(positions, colors, false, this.editorLayer);
+    if (this.wirePositions.length > 0) {
+      this.app.drawLineArrays(this.wirePositions, this.wireColors, false, this.editorLayer);
     }
   };
 }

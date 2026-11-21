@@ -124,6 +124,9 @@ export class EditorEngine {
   private resizeObserver: ResizeObserver | null = null;
   private trackedMaterials = new Set<pc.StandardMaterial>();
   private glbDestroyCallbacks: Array<() => void> = [];
+  private entityGuidCache = new Map<string, pc.Entity>();
+  private readonly playModeClipSpeeds = new Map<string, number>();
+  private readonly playModeDisabledClips = new Set<string>();
   private selectedEntityIds: string[] = [];
   private activeTool: TransformTool = 'move';
   private coordSpace: CoordinateSpace = 'world';
@@ -580,7 +583,17 @@ export class EditorEngine {
   getEntityById(id: string): pc.Entity | null {
     if (!this.sceneRoot) return null;
     if (this.sceneRoot.getGuid() === id) return this.sceneRoot;
-    return (this.sceneRoot.findByGuid(id) as pc.Entity | null) ?? null;
+    const cached = this.entityGuidCache.get(id);
+    if (cached && cached.parent) {
+      return cached;
+    }
+    const found = (this.sceneRoot.findByGuid(id) as pc.Entity | null) ?? null;
+    if (found) {
+      this.entityGuidCache.set(id, found);
+    } else if (cached) {
+      this.entityGuidCache.delete(id);
+    }
+    return found;
   }
 
   createPrimitive(type: PrimitiveType, parentId?: string): string {
@@ -1744,8 +1757,20 @@ export class EditorEngine {
   private tickPlayModeAnimations(dt: number): void {
     if (!this.sceneRoot || dt <= 0) return;
 
-    const clipSpeeds = new Map<string, number>();
-    const explicitlyDisabledClips = new Set<string>();
+    const clips = Object.values(this.animationClips);
+    let hasActiveClip = false;
+    for (let i = 0; i < clips.length; i++) {
+      if (clips[i].tracks.length > 0) {
+        hasActiveClip = true;
+        break;
+      }
+    }
+    if (!hasActiveClip) return;
+
+    const clipSpeeds = this.playModeClipSpeeds;
+    const explicitlyDisabledClips = this.playModeDisabledClips;
+    clipSpeeds.clear();
+    explicitlyDisabledClips.clear();
 
     const visit = (node: pc.GraphNode) => {
       if (node instanceof pc.Entity && node !== this.sceneRoot) {
@@ -1769,14 +1794,15 @@ export class EditorEngine {
     };
     visit(this.sceneRoot);
 
-    for (const [clipId, clip] of Object.entries(this.animationClips)) {
+    for (let i = 0; i < clips.length; i++) {
+      const clip = clips[i];
       if (clip.tracks.length === 0) continue;
-      if (explicitlyDisabledClips.has(clipId) && !clipSpeeds.has(clipId)) continue;
+      if (explicitlyDisabledClips.has(clip.id) && !clipSpeeds.has(clip.id)) continue;
 
-      const speed = clipSpeeds.get(clipId) ?? 1;
-      const prevTime = this.playModeClipTimes.get(clipId) ?? 0;
+      const speed = clipSpeeds.get(clip.id) ?? 1;
+      const prevTime = this.playModeClipTimes.get(clip.id) ?? 0;
       const nextTime = prevTime + dt * speed;
-      this.playModeClipTimes.set(clipId, nextTime);
+      this.playModeClipTimes.set(clip.id, nextTime);
 
       evaluateClipAtTime(clip, nextTime, (entityId) => {
         const entity = this.getEntityById(entityId);
@@ -1790,6 +1816,7 @@ export class EditorEngine {
     this.sceneGeneration++;
 
     this.pendingScrubOldTransform.clear();
+    this.entityGuidCache.clear();
 
     for (const mat of this.trackedMaterials) {
       mat.destroy();
@@ -1852,6 +1879,7 @@ export class EditorEngine {
 
   private emitHierarchyChanged(): void {
     if (!this.sceneRoot) return;
+    this.entityGuidCache.clear();
     this.eventBus.emit('hierarchy:changed', { rootId: this.sceneRoot.getGuid() });
   }
 

@@ -160,6 +160,9 @@ export class StageAudioManager {
   private destroyed = false;
   private pendingGestureResume = false;
   private lastEmittedYtVolume = -1;
+  private lastScreenProjectionSig = '';
+  private lastUploadedVideoTime = -1;
+  private cachedActiveCamera: pc.Entity | null = null;
 
   constructor(app: pc.Application, sceneRoot: pc.Entity) {
     this.app = app;
@@ -368,7 +371,7 @@ export class StageAudioManager {
   update(): void {
     if (this.destroyed) return;
 
-    // Upload current video frame to LED Screen Panel texture
+    // Upload current video frame to LED Screen Panel texture only when playing or frame time changed
     if (
       this.state.sourceType === 'media' &&
       !this.state.domVideoFallback &&
@@ -379,7 +382,11 @@ export class StageAudioManager {
       this.videoTexture &&
       this.videoEl.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
     ) {
-      this.videoTexture.setSource(this.videoEl);
+      const curTime = this.videoEl.currentTime;
+      if (!this.videoEl.paused || curTime !== this.lastUploadedVideoTime) {
+        this.lastUploadedVideoTime = curTime;
+        this.videoTexture.setSource(this.videoEl);
+      }
     }
 
     const cam = this.findActiveCamera();
@@ -678,13 +685,20 @@ export class StageAudioManager {
     }
   };
 
+  private dispatchProjectionIfChanged(visible: boolean, matrix3d: string): void {
+    const sig = visible && matrix3d ? matrix3d : 'hidden';
+    if (sig === this.lastScreenProjectionSig) return;
+    this.lastScreenProjectionSig = sig;
+    window.dispatchEvent(
+      new CustomEvent<ScreenProjectionData>('cavannghe:screen-projection', {
+        detail: { visible, matrix3d },
+      })
+    );
+  }
+
   private emitScreenProjection(cam: pc.Entity | null): void {
     if (!this.state.isScreenOn || !this.screenEntity || !cam?.camera) {
-      window.dispatchEvent(
-        new CustomEvent<ScreenProjectionData>('cavannghe:screen-projection', {
-          detail: { visible: false, matrix3d: '' },
-        })
-      );
+      this.dispatchProjectionIfChanged(false, '');
       return;
     }
 
@@ -692,11 +706,7 @@ export class StageAudioManager {
     _screenPos.copy(this.screenEntity.getPosition());
     // Screen faces +Z; hide if camera is behind the LED wall
     if (camPos.z <= _screenPos.z) {
-      window.dispatchEvent(
-        new CustomEvent<ScreenProjectionData>('cavannghe:screen-projection', {
-          detail: { visible: false, matrix3d: '' },
-        })
-      );
+      this.dispatchProjectionIfChanged(false, '');
       return;
     }
 
@@ -712,11 +722,7 @@ export class StageAudioManager {
     cam.camera.worldToScreen(_c3, _s3);
 
     if (_s0.z <= 0.1 || _s1.z <= 0.1 || _s2.z <= 0.1 || _s3.z <= 0.1) {
-      window.dispatchEvent(
-        new CustomEvent<ScreenProjectionData>('cavannghe:screen-projection', {
-          detail: { visible: false, matrix3d: '' },
-        })
-      );
+      this.dispatchProjectionIfChanged(false, '');
       return;
     }
 
@@ -733,14 +739,7 @@ export class StageAudioManager {
       _s3.y
     );
 
-    window.dispatchEvent(
-      new CustomEvent<ScreenProjectionData>('cavannghe:screen-projection', {
-        detail: {
-          visible: Boolean(matrix3d),
-          matrix3d: matrix3d ?? '',
-        },
-      })
-    );
+    this.dispatchProjectionIfChanged(Boolean(matrix3d), matrix3d ?? '');
   }
 
   private computeYouTubeSpatialVolume(cam: pc.Entity | null): number {
@@ -824,6 +823,10 @@ export class StageAudioManager {
   }
 
   private findActiveCamera(): pc.Entity | null {
+    const cached = this.cachedActiveCamera;
+    if (cached && cached.parent && cached.enabled && cached.camera?.enabled) {
+      return cached;
+    }
     let fallback: pc.Entity | null = null;
     const walk = (node: pc.Entity): pc.Entity | null => {
       if (node.camera && node.enabled) {
@@ -838,7 +841,9 @@ export class StageAudioManager {
       }
       return null;
     };
-    return walk(this.sceneRoot) ?? fallback;
+    const resolved = walk(this.sceneRoot) ?? fallback;
+    this.cachedActiveCamera = resolved;
+    return resolved;
   }
 
   private findEntityByName(name: string): pc.Entity | null {

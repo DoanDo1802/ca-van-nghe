@@ -396,8 +396,8 @@ export class PlayerControllerRuntime {
         matchedDynamicChair = true;
         bestDist = d - 0.25;
         const seatOffset = this.getVec3Attr(chairEntity, 'seatOffset', [0, 0.83, 0]);
-        const offsetVec = new pc.Vec3(seatOffset[0], seatOffset[1], seatOffset[2]);
-        chairEntity.getRotation().transformVector(offsetVec, offsetVec);
+        this.tempSeatOffset.set(seatOffset[0], seatOffset[1], seatOffset[2]);
+        chairEntity.getRotation().transformVector(this.tempSeatOffset, this.tempSeatOffset);
         const seatYawOffset = this.getNumberAttr(chairEntity, 'seatYawOffset', 0);
         const seatRotation = ((chairEntity.getEulerAngles().y + seatYawOffset) * Math.PI) / 180;
         const title = this.getStringAttr(chairEntity, 'sitTitle', chairEntity.name);
@@ -410,7 +410,11 @@ export class PlayerControllerRuntime {
             id,
             title,
             position: [cPos.x, cPos.y, cPos.z],
-            seatPosition: [cPos.x + offsetVec.x, cPos.y + offsetVec.y, cPos.z + offsetVec.z],
+            seatPosition: [
+              cPos.x + this.tempSeatOffset.x,
+              cPos.y + this.tempSeatOffset.y,
+              cPos.z + this.tempSeatOffset.z,
+            ],
             seatRotation,
           },
         };
