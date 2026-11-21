@@ -95,6 +95,8 @@ class KaraokeAudioEngine {
   private musicAnalyser: AnalyserNode | null = null;
   private micAnalyser: AnalyserNode | null = null;
   private micGain: GainNode | null = null;
+  private micWarmthEq: BiquadFilterNode | null = null;
+  private micPresenceEq: BiquadFilterNode | null = null;
   private micWetGain: GainNode | null = null;
   private micDelayGain: GainNode | null = null;
   private micNodes: AudioNode[] = [];
@@ -121,11 +123,20 @@ class KaraokeAudioEngine {
       const AC = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       this.ctx = new AC({ latencyHint: 'interactive' });
       this.masterGain = this.ctx.createGain();
-      this.masterGain.gain.value = 0.95;
-      this.masterGain.connect(this.ctx.destination);
+      this.masterGain.gain.value = 1.0;
+
+      // Protective master limiter so boosted vocals never clip
+      const limiter = this.ctx.createDynamicsCompressor();
+      limiter.threshold.value = -2;
+      limiter.knee.value = 0;
+      limiter.ratio.value = 14;
+      limiter.attack.value = 0.002;
+      limiter.release.value = 0.08;
+      this.masterGain.connect(limiter);
+      limiter.connect(this.ctx.destination);
 
       this.musicGain = this.ctx.createGain();
-      this.musicGain.gain.value = 0.55;
+      this.musicGain.gain.value = 0.30;
       this.musicAnalyser = this.ctx.createAnalyser();
       this.musicAnalyser.fftSize = 128;
       this.musicGain.connect(this.musicAnalyser);
@@ -154,17 +165,44 @@ class KaraokeAudioEngine {
     return impulse;
   }
 
-  async enableMic(echoAmount = 0.55, micSensitivity = 2.2): Promise<boolean> {
+  async listInputDevices(): Promise<MediaDeviceInfo[]> {
+    if (!navigator.mediaDevices?.enumerateDevices) return [];
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      return devices.filter((d) => d.kind === 'audioinput');
+    } catch {
+      return [];
+    }
+  }
+
+  async enableMic(options: {
+    deviceId?: string;
+    echoCancellation?: boolean;
+    echoAmount?: number;
+    micSensitivity?: number;
+    bassDb?: number;
+    trebleDb?: number;
+  } = {}): Promise<boolean> {
+    const {
+      deviceId,
+      echoCancellation = true,
+      echoAmount = 0.55,
+      micSensitivity = 3.4,
+      bassDb = 3.5,
+      trebleDb = 4.5,
+    } = options;
     try {
       const ctx = this.ensureContext();
-      if (this.micStream) return true;
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: false,
-          autoGainControl: false,
-        },
-      });
+      if (this.micStream) {
+        this.disableMic();
+      }
+      const audioConstraints: MediaTrackConstraints = {
+        echoCancellation,
+        noiseSuppression: false,
+        autoGainControl: false,
+        ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
+      };
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
       this.micStream = stream;
       this.micSource = ctx.createMediaStreamSource(stream);
 
@@ -181,13 +219,15 @@ class KaraokeAudioEngine {
       warmth.type = 'peaking';
       warmth.frequency.value = 220;
       warmth.Q.value = 1.0;
-      warmth.gain.value = 3.5;
+      warmth.gain.value = bassDb;
+      this.micWarmthEq = warmth;
 
       const presence = ctx.createBiquadFilter();
       presence.type = 'peaking';
       presence.frequency.value = 3200;
       presence.Q.value = 1.1;
-      presence.gain.value = 4.5;
+      presence.gain.value = trebleDb;
+      this.micPresenceEq = presence;
 
       // 3. Vocal Compressor (evens out quiet & loud singing, prevents clipping)
       const comp = ctx.createDynamicsCompressor();
@@ -201,9 +241,13 @@ class KaraokeAudioEngine {
       this.micAnalyser.fftSize = 256;
       this.micAnalyser.smoothingTimeConstant = 0.75;
 
-      // 4. Studio Vocal Chain: Dry + Warm Hall Reverb + Stereo Karaoke Echo
+      // 4. Studio Vocal Chain: Make-up Boost + Dry + Warm Hall Reverb + Stereo Karaoke Echo
+      const makeup = ctx.createGain();
+      makeup.gain.value = 2.0;
+      comp.connect(makeup);
+
       const dry = ctx.createGain();
-      dry.gain.value = 0.92;
+      dry.gain.value = 1.05;
 
       const convolver = ctx.createConvolver();
       convolver.buffer = this.createReverbImpulse(ctx, 1.65, 2.5);
@@ -229,21 +273,21 @@ class KaraokeAudioEngine {
       this.micGain.connect(comp);
       comp.connect(this.micAnalyser);
 
-      comp.connect(dry);
+      makeup.connect(dry);
       dry.connect(this.masterGain!);
 
-      comp.connect(convolver);
+      makeup.connect(convolver);
       convolver.connect(wet);
       wet.connect(this.masterGain!);
 
-      comp.connect(delay);
+      makeup.connect(delay);
       delay.connect(delayFilter);
       delayFilter.connect(delayFeedback);
       delayFeedback.connect(delay);
       delayFilter.connect(delayOut);
       delayOut.connect(this.masterGain!);
 
-      this.micNodes = [hp, warmth, presence, comp, dry, convolver, wet, delay, delayFilter, delayFeedback, delayOut];
+      this.micNodes = [hp, warmth, presence, comp, makeup, dry, convolver, wet, delay, delayFilter, delayFeedback, delayOut];
       return true;
     } catch {
       return false;
@@ -269,6 +313,8 @@ class KaraokeAudioEngine {
       } catch {}
     }
     this.micNodes = [];
+    this.micWarmthEq = null;
+    this.micPresenceEq = null;
     this.micWetGain = null;
     this.micDelayGain = null;
     if (this.micStream) {
@@ -286,13 +332,18 @@ class KaraokeAudioEngine {
   }
 
   setMicVolume(v: number): void {
-    if (this.micGain) this.micGain.gain.value = Math.max(0.2, Math.min(4.5, v));
+    if (this.micGain) this.micGain.gain.value = Math.max(0.2, Math.min(7.0, v));
   }
 
   setEchoAmount(v: number): void {
     const clamped = Math.max(0, Math.min(1, v));
     if (this.micWetGain) this.micWetGain.gain.value = clamped * 0.9;
     if (this.micDelayGain) this.micDelayGain.gain.value = clamped * 0.5;
+  }
+
+  setToneEQ(bassDb: number, trebleDb: number): void {
+    if (this.micWarmthEq) this.micWarmthEq.gain.value = Math.max(-8, Math.min(10, bassDb));
+    if (this.micPresenceEq) this.micPresenceEq.gain.value = Math.max(-8, Math.min(10, trebleDb));
   }
 
   loadCustomFile(file: File): string {

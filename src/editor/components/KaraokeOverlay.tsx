@@ -11,6 +11,7 @@ import {
   Play,
   Plus,
   Search,
+  SlidersHorizontal,
   Sparkles,
   Trash2,
   Upload,
@@ -55,12 +56,30 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
   const [isFilePlaying, setIsFilePlaying] = useState(false);
   const [micEnabled, setMicEnabled] = useState(false);
   const [micError, setMicError] = useState<string | null>(null);
-  const [micGain, setMicGain] = useState(2.2);
+  const [isMixerOpen, setIsMixerOpen] = useState(false);
+  const [inputDevices, setInputDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedDeviceId, setSelectedDeviceId] = useState('');
+  const [echoCancellation, setEchoCancellation] = useState(true);
+  const [micGain, setMicGain] = useState(3.4);
   const [echoAmount, setEchoAmount] = useState(0.55);
+  const [bassDb, setBassDb] = useState(3.5);
+  const [trebleDb, setTrebleDb] = useState(4.5);
+  const [activePreset, setActivePreset] = useState<'acoustic' | 'lounge' | 'stage' | null>('lounge');
+  const [musicVolume, setMusicVolume] = useState(35);
   const [style, setStyle] = useState<'chill' | 'dance'>('chill');
   const [micLevel, setMicLevel] = useState(0);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const ytIframeRef = useRef<HTMLIFrameElement>(null);
+
+  const applyYoutubeVolume = (vol: number) => {
+    const win = ytIframeRef.current?.contentWindow;
+    if (!win) return;
+    win.postMessage(
+      JSON.stringify({ event: 'command', func: 'setVolume', args: [Math.round(vol)] }),
+      '*'
+    );
+  };
 
   useEffect(() => {
     if (!isOpen) {
@@ -196,12 +215,59 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
       setMicEnabled(false);
       return;
     }
-    const ok = await karaokeAudio.enableMic(echoAmount, micGain);
+    const ok = await karaokeAudio.enableMic({
+      deviceId: selectedDeviceId || undefined,
+      echoCancellation,
+      echoAmount,
+      micSensitivity: micGain,
+      bassDb,
+      trebleDb,
+    });
     if (ok) {
       setMicEnabled(true);
+      const list = await karaokeAudio.listInputDevices();
+      setInputDevices(list);
+      if (!selectedDeviceId && list[0]?.deviceId) {
+        setSelectedDeviceId(list[0].deviceId);
+      }
     } else {
       setMicError('Chưa cấp quyền Micro trên trình duyệt');
     }
+  };
+
+  const restartMicWith = async (overrides: {
+    deviceId?: string;
+    echoCancellation?: boolean;
+  }) => {
+    if (!micEnabled) return;
+    const ok = await karaokeAudio.enableMic({
+      deviceId: (overrides.deviceId ?? selectedDeviceId) || undefined,
+      echoCancellation: overrides.echoCancellation ?? echoCancellation,
+      echoAmount,
+      micSensitivity: micGain,
+      bassDb,
+      trebleDb,
+    });
+    if (!ok) {
+      setMicError('Không thể chuyển sang thiết bị micro này');
+    }
+  };
+
+  const applyPreset = (preset: 'acoustic' | 'lounge' | 'stage') => {
+    const cfg =
+      preset === 'acoustic'
+        ? { gain: 3.0, echo: 0.25, bass: 2.5, treble: 3.0 }
+        : preset === 'lounge'
+          ? { gain: 3.6, echo: 0.55, bass: 3.5, treble: 4.5 }
+          : { gain: 4.2, echo: 0.78, bass: 4.5, treble: 5.5 };
+    setActivePreset(preset);
+    setMicGain(cfg.gain);
+    setEchoAmount(cfg.echo);
+    setBassDb(cfg.bass);
+    setTrebleDb(cfg.treble);
+    karaokeAudio.setMicVolume(cfg.gain);
+    karaokeAudio.setEchoAmount(cfg.echo);
+    karaokeAudio.setToneEQ(cfg.bass, cfg.treble);
   };
 
   const handleToggleStyle = () => {
@@ -263,12 +329,18 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
               </div>
             </div>
             <iframe
+              ref={ytIframeRef}
               key={youtubeVideoId}
               className="w-full aspect-video"
-              src={`https://www.youtube.com/embed/${youtubeVideoId}?autoplay=1&rel=0&modestbranding=1`}
+              src={`https://www.youtube.com/embed/${youtubeVideoId}?autoplay=1&rel=0&modestbranding=1&enablejsapi=1`}
               title="YouTube Karaoke Player"
               allow="autoplay; encrypted-media; picture-in-picture"
               allowFullScreen
+              onLoad={() => {
+                applyYoutubeVolume(musicVolume);
+                window.setTimeout(() => applyYoutubeVolume(musicVolume), 600);
+                window.setTimeout(() => applyYoutubeVolume(musicVolume), 1500);
+              }}
             />
           </div>
         ) : customFileName ? (
@@ -294,99 +366,284 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
           <div />
         )}
 
-        <div className="pointer-events-auto flex flex-wrap items-center justify-end gap-2">
-          <button
-            onClick={() => setIsPickerOpen((p) => !p)}
-            className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold backdrop-blur-xl border transition shadow-lg ${
-              isPickerOpen
-                ? 'bg-red-600 text-white border-red-400/50'
-                : 'bg-neutral-950/80 hover:bg-neutral-900 text-white border-white/15'
-            }`}
-          >
-            <Search className="w-3.5 h-3.5" />
-            Chọn bài hát
-            {queue.length > 0 && (
-              <span className="ml-0.5 px-1.5 rounded-full bg-white/20 text-[10px]">
-                {queue.length}
-              </span>
-            )}
-          </button>
+        <div className="pointer-events-auto relative flex flex-col items-end">
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <button
+              onClick={() => setIsPickerOpen((p) => !p)}
+              className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold backdrop-blur-xl border transition shadow-lg ${
+                isPickerOpen
+                  ? 'bg-red-600 text-white border-red-400/50'
+                  : 'bg-neutral-950/80 hover:bg-neutral-900 text-white border-white/15'
+              }`}
+            >
+              <Search className="w-3.5 h-3.5" />
+              Chọn bài hát
+              {queue.length > 0 && (
+                <span className="ml-0.5 px-1.5 rounded-full bg-white/20 text-[10px]">
+                  {queue.length}
+                </span>
+              )}
+            </button>
 
-          <button
-            onClick={handleToggleMic}
-            title={micError ?? 'Bật Micro thật với hiệu ứng Echo'}
-            className={`inline-flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold backdrop-blur-xl border transition shadow-lg ${
-              micEnabled
-                ? 'bg-emerald-600/85 text-white border-emerald-400/50'
-                : 'bg-neutral-950/80 hover:bg-neutral-900 text-neutral-200 border-white/15'
-            }`}
-          >
-            {micEnabled ? <Mic className="w-3.5 h-3.5" /> : <MicOff className="w-3.5 h-3.5" />}
-            <span>{micEnabled ? 'Mic Bật' : 'Mic'}</span>
-            {micEnabled && (
-              <span className="w-8 h-1.5 rounded-full bg-black/40 overflow-hidden">
-                <span
-                  className="block h-full bg-emerald-200 transition-[width] duration-75"
-                  style={{ width: `${Math.round(micLevel * 100)}%` }}
-                />
-              </span>
-            )}
-          </button>
+            <button
+              onClick={handleToggleMic}
+              title={micError ?? 'Bật Micro thật với hiệu ứng Echo'}
+              className={`inline-flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold backdrop-blur-xl border transition shadow-lg ${
+                micEnabled
+                  ? 'bg-emerald-600/85 text-white border-emerald-400/50'
+                  : 'bg-neutral-950/80 hover:bg-neutral-900 text-neutral-200 border-white/15'
+              }`}
+            >
+              {micEnabled ? <Mic className="w-3.5 h-3.5" /> : <MicOff className="w-3.5 h-3.5" />}
+              <span>{micEnabled ? 'Mic Bật' : 'Mic'}</span>
+              {micEnabled && (
+                <span className="w-8 h-1.5 rounded-full bg-black/40 overflow-hidden">
+                  <span
+                    className="block h-full bg-emerald-200 transition-[width] duration-75"
+                    style={{ width: `${Math.round(micLevel * 100)}%` }}
+                  />
+                </span>
+              )}
+            </button>
 
-          <button
-            onClick={handleToggleStyle}
-            className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold backdrop-blur-xl border transition shadow-lg ${
-              style === 'dance'
-                ? 'bg-fuchsia-600/80 text-white border-fuchsia-400/50'
-                : 'bg-neutral-950/80 hover:bg-neutral-900 text-neutral-200 border-white/15'
-            }`}
-          >
-            <Sparkles className="w-3.5 h-3.5" />
-            {style === 'dance' ? 'Phiêu' : 'Nhẹ'}
-          </button>
+            <button
+              onClick={handleToggleStyle}
+              className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold backdrop-blur-xl border transition shadow-lg ${
+                style === 'dance'
+                  ? 'bg-fuchsia-600/80 text-white border-fuchsia-400/50'
+                  : 'bg-neutral-950/80 hover:bg-neutral-900 text-neutral-200 border-white/15'
+              }`}
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              {style === 'dance' ? 'Phiêu' : 'Nhẹ'}
+            </button>
 
-          <button
-            onClick={onExit}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-neutral-950/80 hover:bg-rose-600/85 text-neutral-200 hover:text-white border border-white/15 text-xs font-semibold backdrop-blur-xl transition shadow-lg"
-          >
-            <LogOut className="w-3.5 h-3.5" />
-            Xuống (E)
-          </button>
+            <button
+              onClick={() => {
+                setIsMixerOpen((o) => {
+                  const next = !o;
+                  if (next) {
+                    void karaokeAudio.listInputDevices().then(setInputDevices);
+                  }
+                  return next;
+                });
+              }}
+              title="Cài đặt đầu vào & Âm thanh Mic"
+              className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold backdrop-blur-xl border transition shadow-lg ${
+                isMixerOpen
+                  ? 'bg-amber-500 text-stone-950 border-amber-300'
+                  : 'bg-neutral-950/80 hover:bg-neutral-900 text-neutral-200 border-white/15'
+              }`}
+            >
+              <SlidersHorizontal className="w-3.5 h-3.5" />
+              Âm thanh
+            </button>
 
-          {micEnabled && (
-            <div className="w-full flex items-center justify-end gap-3 px-3 py-1.5 rounded-xl bg-neutral-950/80 backdrop-blur-xl border border-emerald-400/25 text-[11px] text-neutral-200">
-              <label className="flex items-center gap-1.5">
-                <span className="text-emerald-300">Độ nhạy</span>
-                <input
-                  type="range"
-                  min={0.8}
-                  max={4.0}
-                  step={0.1}
-                  value={micGain}
+            <button
+              onClick={onExit}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-neutral-950/80 hover:bg-rose-600/85 text-neutral-200 hover:text-white border border-white/15 text-xs font-semibold backdrop-blur-xl transition shadow-lg"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              Xuống (E)
+            </button>
+          </div>
+
+          {isMixerOpen && (
+            <div className="absolute right-0 top-full mt-2 z-40 w-80 rounded-2xl bg-[#121212]/95 backdrop-blur-2xl border border-white/15 shadow-2xl p-3.5 text-xs text-neutral-200 space-y-3">
+              <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                <span className="font-semibold text-white flex items-center gap-1.5">
+                  <SlidersHorizontal className="w-3.5 h-3.5 text-amber-400" />
+                  Cài đặt Micro & Âm thanh
+                </span>
+                <button
+                  onClick={() => setIsMixerOpen(false)}
+                  className="text-neutral-400 hover:text-white"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              {/* Input Device Selector */}
+              <div className="space-y-1">
+                <label className="text-[11px] text-neutral-400">Đầu vào Micro</label>
+                <select
+                  value={selectedDeviceId}
                   onChange={(e) => {
-                    const v = parseFloat(e.target.value);
-                    setMicGain(v);
-                    karaokeAudio.setMicVolume(v);
+                    const id = e.target.value;
+                    setSelectedDeviceId(id);
+                    void restartMicWith({ deviceId: id });
                   }}
-                  className="w-16 accent-emerald-400"
-                />
-              </label>
-              <label className="flex items-center gap-1.5">
-                <span className="text-amber-300">Echo</span>
-                <input
-                  type="range"
-                  min={0}
-                  max={1}
-                  step={0.05}
-                  value={echoAmount}
-                  onChange={(e) => {
-                    const v = parseFloat(e.target.value);
-                    setEchoAmount(v);
-                    karaokeAudio.setEchoAmount(v);
+                  className="w-full bg-[#1e1e1e] border border-white/15 rounded-lg px-2.5 py-1.5 text-xs text-white outline-none focus:border-amber-400"
+                >
+                  {inputDevices.length === 0 ? (
+                    <option value="">Mặc định hệ thống (Bật Mic để quét)</option>
+                  ) : (
+                    inputDevices.map((d, idx) => (
+                      <option key={d.deviceId || idx} value={d.deviceId}>
+                        {d.label || `Micro ${idx + 1}`}
+                      </option>
+                    ))
+                  )}
+                </select>
+              </div>
+
+              {/* Monitoring Mode: Headphones Studio vs Speaker Anti-Howl */}
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => {
+                    setEchoCancellation(false);
+                    void restartMicWith({ echoCancellation: false });
                   }}
-                  className="w-16 accent-amber-400"
-                />
-              </label>
+                  className={`flex-1 py-1.5 rounded-lg text-[11px] font-medium border transition ${
+                    !echoCancellation
+                      ? 'bg-emerald-500/25 text-emerald-200 border-emerald-400/40'
+                      : 'bg-white/5 text-neutral-300 border-white/10 hover:bg-white/10'
+                  }`}
+                >
+                  Tai nghe (Studio)
+                </button>
+                <button
+                  onClick={() => {
+                    setEchoCancellation(true);
+                    void restartMicWith({ echoCancellation: true });
+                  }}
+                  className={`flex-1 py-1.5 rounded-lg text-[11px] font-medium border transition ${
+                    echoCancellation
+                      ? 'bg-amber-500/25 text-amber-200 border-amber-400/40'
+                      : 'bg-white/5 text-neutral-300 border-white/10 hover:bg-white/10'
+                  }`}
+                >
+                  Loa ngoài (Chống hú)
+                </button>
+              </div>
+
+              {/* 3 Quick Presets */}
+              <div className="flex items-center gap-1.5">
+                {(
+                  [
+                    { id: 'acoustic', label: 'Acoustic Mộc' },
+                    { id: 'lounge', label: 'Phòng Trà' },
+                    { id: 'stage', label: 'Sân Khấu' },
+                  ] as const
+                ).map((p) => (
+                  <button
+                    key={p.id}
+                    onClick={() => applyPreset(p.id)}
+                    className={`flex-1 py-1 rounded-lg border text-[11px] font-medium transition ${
+                      activePreset === p.id
+                        ? 'bg-amber-500 text-stone-950 border-amber-300'
+                        : 'bg-white/5 hover:bg-white/15 border-white/10 text-neutral-200'
+                    }`}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Focused Mixer Sliders */}
+              <div className="space-y-2 pt-1 border-t border-white/10 text-[11px]">
+                <label className="flex items-center justify-between gap-2">
+                  <span className="text-sky-300 w-20">Nhạc nền</span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    step={5}
+                    value={musicVolume}
+                    onChange={(e) => {
+                      const v = parseFloat(e.target.value);
+                      setMusicVolume(v);
+                      applyYoutubeVolume(v);
+                      karaokeAudio.setMusicVolume(v / 100);
+                    }}
+                    className="flex-1 accent-sky-400"
+                  />
+                  <span className="w-9 text-right font-mono">{musicVolume}%</span>
+                </label>
+
+                <label className="flex items-center justify-between gap-2">
+                  <span className="text-emerald-300 w-20">Âm lượng Mic</span>
+                  <input
+                    type="range"
+                    min={1.0}
+                    max={6.5}
+                    step={0.2}
+                    value={micGain}
+                    onChange={(e) => {
+                      const v = parseFloat(e.target.value);
+                      setActivePreset(null);
+                      setMicGain(v);
+                      karaokeAudio.setMicVolume(v);
+                    }}
+                    className="flex-1 accent-emerald-400"
+                  />
+                  <span className="w-9 text-right font-mono">{micGain.toFixed(1)}x</span>
+                </label>
+
+                <label className="flex items-center justify-between gap-2">
+                  <span className="text-amber-300 w-20">Echo / Vang</span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    value={echoAmount}
+                    onChange={(e) => {
+                      const v = parseFloat(e.target.value);
+                      setActivePreset(null);
+                      setEchoAmount(v);
+                      karaokeAudio.setEchoAmount(v);
+                    }}
+                    className="flex-1 accent-amber-400"
+                  />
+                  <span className="w-9 text-right font-mono">{Math.round(echoAmount * 100)}%</span>
+                </label>
+
+                <div className="grid grid-cols-2 gap-2 pt-0.5">
+                  <label className="flex flex-col gap-1">
+                    <span className="flex justify-between text-neutral-400">
+                      <span>Bass (Ấm)</span>
+                      <span className="font-mono text-neutral-200">{bassDb > 0 ? `+${bassDb}` : bassDb}dB</span>
+                    </span>
+                    <input
+                      type="range"
+                      min={-6}
+                      max={8}
+                      step={0.5}
+                      value={bassDb}
+                      onChange={(e) => {
+                        const v = parseFloat(e.target.value);
+                        setActivePreset(null);
+                        setBassDb(v);
+                        karaokeAudio.setToneEQ(v, trebleDb);
+                      }}
+                      className="w-full accent-amber-400"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="flex justify-between text-neutral-400">
+                      <span>Treble (Sáng)</span>
+                      <span className="font-mono text-neutral-200">{trebleDb > 0 ? `+${trebleDb}` : trebleDb}dB</span>
+                    </span>
+                    <input
+                      type="range"
+                      min={-6}
+                      max={8}
+                      step={0.5}
+                      value={trebleDb}
+                      onChange={(e) => {
+                        const v = parseFloat(e.target.value);
+                        setActivePreset(null);
+                        setTrebleDb(v);
+                        karaokeAudio.setToneEQ(bassDb, v);
+                      }}
+                      className="w-full accent-amber-400"
+                    />
+                  </label>
+                </div>
+              </div>
+
+              {micError && <p className="text-[11px] text-rose-300">{micError}</p>}
             </div>
           )}
         </div>
