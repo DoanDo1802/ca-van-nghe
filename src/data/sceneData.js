@@ -5,10 +5,7 @@ export const CHAIRS_LIST = [
   { id: 'bar_stool_3', title: 'Ghế Quầy Bar 3', position: [-8.8, 0,  0.0], seatPosition: [-8.8, 0.83,  0.0], seatRotation: -Math.PI / 2 },
   { id: 'bar_stool_4', title: 'Ghế Quầy Bar 4', position: [-8.8, 0,  1.5], seatPosition: [-8.8, 0.83,  1.5], seatRotation: -Math.PI / 2 },
   { id: 'bar_stool_5', title: 'Ghế Quầy Bar 5', position: [-8.8, 0,  3.0], seatPosition: [-8.8, 0.83,  3.0], seatRotation: -Math.PI / 2 },
-  { id: 'bar_stool_6', title: 'Ghế Quầy Bar 6', position: [-8.8, 0,  4.5], seatPosition: [-8.8, 0.83,  4.5], seatRotation: -Math.PI / 2 },
-
-  // --- Live Acoustic Stage Drum Stool (Right Stage, facing lounge center) ---
-  { id: 'drum_stool', title: 'Ghế Trống Ban Nhạc Acoustic', position: [15.55, 0.36, 3], seatPosition: [15.55, 0.85, 3], seatRotation: -Math.PI / 2 }
+  { id: 'bar_stool_6', title: 'Ghế Quầy Bar 6', position: [-8.8, 0,  4.5], seatPosition: [-8.8, 0.83,  4.5], seatRotation: -Math.PI / 2 }
 ];
 
 export const INTERACTABLES_LIST = [

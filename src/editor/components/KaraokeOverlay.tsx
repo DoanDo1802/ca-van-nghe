@@ -222,7 +222,7 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
   };
 
   return (
-    <div className="absolute inset-0 pointer-events-none flex flex-col justify-between p-3 sm:p-5 z-30">
+    <div className="fixed inset-0 pointer-events-none flex flex-col justify-between p-3 sm:p-5 z-30">
       {/* Top Bar: Player + Stage Pill Controls */}
       <div className="flex items-start justify-between gap-3">
         {/* Live YouTube Karaoke Video Player */}

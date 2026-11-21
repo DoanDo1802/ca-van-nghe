@@ -770,12 +770,16 @@ export function hideGigRoomShell(gigRoot: pc.Entity): void {
         matName.includes('mannequin') ||
         matName.includes('crate') ||
         matName.includes('ceiling_hangers') ||
+        matName.includes('mic') ||
+        matName.includes('cable') ||
         lowerName.includes('wall') ||
         lowerName.includes('ceiling') ||
         lowerName.includes('bound') ||
         lowerName.includes('table') ||
         lowerName.includes('mannequin') ||
         lowerName.includes('crate') ||
+        lowerName.includes('mic') ||
+        lowerName.includes('cable') ||
         (lowerName.includes('floor') && !lowerName.includes('stage floor'));
 
       if (isDioramaShell) {
