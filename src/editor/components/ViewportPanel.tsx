@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { EditorEngine } from '../../engine/EditorEngine';
 import { useEditorStore } from '../../store/useEditorStore';
 import { GameOverlayUI } from './GameOverlayUI';
+import { YouTubeStagePlayer } from '../../components/YouTubeStagePlayer';
 
 export type CameraSnapView = 'top' | 'front' | 'right' | 'iso';
 
@@ -128,11 +129,14 @@ export const ViewportPanel: React.FC<ViewportPanelProps> = ({ onViewportResize }
       onDrop={handleDrop}
       className="relative w-full h-full bg-[#0d1016] overflow-hidden"
     >
+      {/* YouTube 3D TV layer behind transparent WebGL canvas */}
+      {playState !== 'edit' && <YouTubeStagePlayer />}
+
       <canvas
         ref={canvasRef}
         tabIndex={0}
         onContextMenu={(e) => e.preventDefault()}
-        className="w-full h-full block outline-none"
+        className="relative z-[1] w-full h-full block outline-none"
       />
 
       {/* Top-left Scene label */}

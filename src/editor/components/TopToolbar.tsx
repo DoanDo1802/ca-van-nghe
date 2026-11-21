@@ -545,8 +545,23 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({ viewportSize }) => {
         </button>
       </div>
 
-      {/* Right: Legacy Reference / Standalone Play / Web Game Badge / Viewport Resolution */}
+      {/* Right: Build Player / Standalone Play / Legacy Reference / Viewport Resolution */}
       <div className="flex items-center gap-2 shrink-0">
+        <button
+          type="button"
+          onClick={() => {
+            void handleExportBundle();
+            useConsoleStore.getState().addLog({
+              level: 'log',
+              source: 'Build',
+              message: 'Đã xuất Web Bundle (.json). Chạy "npm run build:player" để build bản Player tách riêng ra thư mục dist-player/.',
+            });
+          }}
+          title="Xuất Scene Bundle cho bản Player độc lập (kết hợp npm run build:player)"
+          className="px-2 py-0.5 rounded bg-purple-500/15 border border-purple-500/30 text-purple-300 hover:bg-purple-500/25 text-[11px] font-medium transition-colors"
+        >
+          Build Player
+        </button>
         <a
           href="?play=1"
           target="_blank"
