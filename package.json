@@ -6,11 +6,13 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:player": "vite build --config vite.player.config.js",
     "preview": "vite preview"
   },
   "dependencies": {
     "@react-three/drei": "^9.114.0",
     "@react-three/fiber": "^8.17.10",
+    "@supabase/supabase-js": "^2.119.2",
     "canvas-confetti": "^1.9.4",
     "clsx": "^2.1.1",
     "idb": "^8.0.4",

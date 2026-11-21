@@ -202,6 +202,26 @@ export function serializeEntity(entity: pc.Entity, editorLayerId?: number): Enti
     components.push(structuredClone(meta.script));
   }
 
+  if (meta.characterController) {
+    components.push(structuredClone(meta.characterController));
+  }
+
+  if (meta.cameraRig) {
+    components.push(structuredClone(meta.cameraRig));
+  }
+
+  if (meta.audioSource) {
+    components.push(structuredClone(meta.audioSource));
+  }
+
+  if (meta.interactable) {
+    components.push(structuredClone(meta.interactable));
+  }
+
+  if (meta.particleSystem) {
+    components.push(structuredClone(meta.particleSystem));
+  }
+
   const hasGlbMeshAsset = Boolean(meta.render?.meshAssetId);
   const children: EntityData[] = [];
   for (const childNode of entity.children) {

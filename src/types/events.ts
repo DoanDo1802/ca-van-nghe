@@ -36,6 +36,12 @@ export interface EditorEventMap {
   };
   'asset:imported': { asset: AssetManifestEntry };
   'console:message': ConsoleLogPayload;
+  'gameplay:prompt-changed': {
+    entityId: string;
+    entityName: string;
+    promptText: string;
+    keyCode: string;
+  } | null;
 }
 
 export type EventHandler<T> = (payload: T) => void;

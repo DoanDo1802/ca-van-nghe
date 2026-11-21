@@ -1,13 +1,18 @@
 import * as pc from 'playcanvas';
 import type {
   AnimComponentData,
+  AudioSourceComponentData,
   CameraComponentData,
+  CameraRigComponentData,
+  CharacterControllerComponentData,
   CollisionComponentData,
   ComponentData,
   ComponentType,
+  InteractableComponentData,
   InteractiveComponentData,
   LightComponentData,
   MaterialOverrideData,
+  ParticleSystemComponentData,
   RenderComponentData,
   RigidBodyComponentData,
   ScriptComponentData,
@@ -34,6 +39,11 @@ export interface EntityEditorMeta {
   };
   interactive?: InteractiveComponentData;
   script?: ScriptComponentData;
+  characterController?: CharacterControllerComponentData;
+  cameraRig?: CameraRigComponentData;
+  audioSource?: AudioSourceComponentData;
+  interactable?: InteractableComponentData;
+  particleSystem?: ParticleSystemComponentData;
 }
 
 const ENTITY_META_KEY = '__editorMeta';
@@ -166,6 +176,86 @@ export function createDefaultComponentData(
         code: 'export function onStart(entity) {\n  // Called when Play Mode starts\n}\n\nexport function onUpdate(entity, dt) {\n  // Called every frame\n}\n',
         attributes: [],
       };
+    case 'characterController':
+      return {
+        id,
+        type: 'characterController',
+        enabled: true,
+        mode: 'third-person',
+        walkSpeed: 4.5,
+        runSpeed: 7.5,
+        jumpForce: 6.2,
+        gravity: -18.0,
+        capsuleRadius: 0.32,
+        capsuleHeight: 1.75,
+        stepOffset: 0.38,
+        eyeHeight: 1.6,
+        mouseSensitivity: 0.25,
+        cameraEntityId: null,
+      };
+    case 'cameraRig':
+      return {
+        id,
+        type: 'cameraRig',
+        enabled: true,
+        targetEntityId: null,
+        mode: 'follow-orbit',
+        offset: [0, 2.2, -5.0],
+        damping: 8,
+        orbitSensitivity: 0.25,
+        minPitch: -60,
+        maxPitch: 75,
+        minDistance: 1.5,
+        maxDistance: 15,
+        collisionAvoidance: true,
+      };
+    case 'audioSource':
+      return {
+        id,
+        type: 'audioSource',
+        enabled: true,
+        audioAssetId: null,
+        playOnAwake: true,
+        loop: false,
+        volume: 0.8,
+        pitch: 1.0,
+        spatial: false,
+        minDistance: 2,
+        maxDistance: 25,
+      };
+    case 'interactable':
+      return {
+        id,
+        type: 'interactable',
+        enabled: true,
+        promptText: 'Tương tác',
+        interactionKey: 'KeyE',
+        radius: 2.5,
+        interactType: 'event',
+        seatOffset: [0, 0.45, 0],
+        seatYaw: 0,
+        destroyOnCollect: true,
+        emitEventName: 'interact',
+      };
+    case 'particleSystem':
+      return {
+        id,
+        type: 'particleSystem',
+        enabled: true,
+        playOnAwake: true,
+        loop: true,
+        emissionRate: 20,
+        maxParticles: 100,
+        lifetime: 1.5,
+        startSpeed: 2.0,
+        gravity: -1.0,
+        startSize: 0.25,
+        endSize: 0.05,
+        startColor: [1, 0.55, 0.1],
+        endColor: [0.2, 0.2, 0.2],
+        spreadAngle: 25,
+        shape: 'cone',
+      };
   }
 }
 
@@ -245,6 +335,26 @@ export function applyComponentDataToEntity(
     }
     case 'script': {
       meta.script = structuredClone(data);
+      break;
+    }
+    case 'characterController': {
+      meta.characterController = structuredClone(data);
+      break;
+    }
+    case 'cameraRig': {
+      meta.cameraRig = structuredClone(data);
+      break;
+    }
+    case 'audioSource': {
+      meta.audioSource = structuredClone(data);
+      break;
+    }
+    case 'interactable': {
+      meta.interactable = structuredClone(data);
+      break;
+    }
+    case 'particleSystem': {
+      meta.particleSystem = structuredClone(data);
       break;
     }
   }
@@ -482,6 +592,21 @@ export function removeComponentByType(entity: pc.Entity, type: ComponentType): v
       break;
     case 'script':
       delete meta.script;
+      break;
+    case 'characterController':
+      delete meta.characterController;
+      break;
+    case 'cameraRig':
+      delete meta.cameraRig;
+      break;
+    case 'audioSource':
+      delete meta.audioSource;
+      break;
+    case 'interactable':
+      delete meta.interactable;
+      break;
+    case 'particleSystem':
+      delete meta.particleSystem;
       break;
   }
 }

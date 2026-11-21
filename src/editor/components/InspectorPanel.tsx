@@ -6,11 +6,16 @@ import {
   ChevronRight,
   Code,
   Film,
+  Gamepad2,
+  Hand,
   Plus,
   Sliders,
+  Sparkles,
   Sun,
   Tag,
   Trash2,
+  Video,
+  Volume2,
   X,
   Zap,
 } from 'lucide-react';
@@ -24,10 +29,15 @@ import type {
   Vec3,
 } from '../../types';
 import { AnimInspector } from './inspector/AnimInspector';
+import { AudioSourceInspector } from './inspector/AudioSourceInspector';
 import { CameraInspector } from './inspector/CameraInspector';
+import { CameraRigInspector } from './inspector/CameraRigInspector';
+import { CharacterControllerInspector } from './inspector/CharacterControllerInspector';
+import { InteractableInspector } from './inspector/InteractableInspector';
 import { InteractiveInspector } from './inspector/InteractiveInspector';
 import { LightInspector } from './inspector/LightInspector';
 import { NumberScrubber } from './inspector/NumberScrubber';
+import { ParticleSystemInspector } from './inspector/ParticleSystemInspector';
 import { CollisionInspector, RigidBodyInspector } from './inspector/PhysicsInspector';
 import { RenderInspector } from './inspector/RenderInspector';
 import { ScriptInspector } from './inspector/ScriptInspector';
@@ -36,6 +46,11 @@ const ADDABLE_COMPONENTS: Array<{ type: ComponentType; label: string }> = [
   { type: 'render', label: 'Render' },
   { type: 'light', label: 'Light' },
   { type: 'camera', label: 'Camera' },
+  { type: 'cameraRig', label: 'Camera Rig (Follow/Orbit)' },
+  { type: 'characterController', label: 'Character Controller' },
+  { type: 'interactable', label: 'Interactable Prompt' },
+  { type: 'audioSource', label: 'Audio Source' },
+  { type: 'particleSystem', label: 'Particle System' },
   { type: 'collision', label: 'Collision' },
   { type: 'rigidbody', label: 'RigidBody' },
   { type: 'anim', label: 'Animation' },
@@ -47,6 +62,11 @@ const COMPONENT_LABELS: Record<ComponentType, string> = {
   render: 'Render',
   light: 'Light',
   camera: 'Camera',
+  cameraRig: 'Camera Rig',
+  characterController: 'Character Controller',
+  interactable: 'Interactable',
+  audioSource: 'Audio Source',
+  particleSystem: 'Particle System',
   collision: 'Collision',
   rigidbody: 'RigidBody',
   anim: 'Animation',
@@ -62,6 +82,16 @@ function renderComponentIcon(type: ComponentType): React.ReactNode {
       return <Sun className="w-3.5 h-3.5 text-amber-400" />;
     case 'camera':
       return <Camera className="w-3.5 h-3.5 text-emerald-400" />;
+    case 'cameraRig':
+      return <Video className="w-3.5 h-3.5 text-teal-400" />;
+    case 'characterController':
+      return <Gamepad2 className="w-3.5 h-3.5 text-indigo-400" />;
+    case 'interactable':
+      return <Hand className="w-3.5 h-3.5 text-lime-400" />;
+    case 'audioSource':
+      return <Volume2 className="w-3.5 h-3.5 text-violet-400" />;
+    case 'particleSystem':
+      return <Sparkles className="w-3.5 h-3.5 text-orange-400" />;
     case 'anim':
       return <Film className="w-3.5 h-3.5 text-pink-400" />;
     case 'interactive':
@@ -190,6 +220,16 @@ export const InspectorPanel: React.FC = () => {
         return <InteractiveInspector entityId={entityData.id} component={comp} />;
       case 'script':
         return <ScriptInspector entityId={entityData.id} component={comp} />;
+      case 'characterController':
+        return <CharacterControllerInspector component={comp} onUpdate={onUpdate} />;
+      case 'cameraRig':
+        return <CameraRigInspector component={comp} onUpdate={onUpdate} />;
+      case 'audioSource':
+        return <AudioSourceInspector component={comp} onUpdate={onUpdate} />;
+      case 'interactable':
+        return <InteractableInspector component={comp} onUpdate={onUpdate} />;
+      case 'particleSystem':
+        return <ParticleSystemInspector component={comp} onUpdate={onUpdate} />;
       default: {
         const fallbackType = (comp as ComponentData).type;
         return (

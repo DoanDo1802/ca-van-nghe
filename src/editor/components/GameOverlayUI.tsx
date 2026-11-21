@@ -7,9 +7,12 @@ import ReservationModal from '../../components/ReservationModal';
 import StageScreenModal from '../../components/StageScreenModal';
 import SettingsModal from '../../components/SettingsModal';
 import { KaraokeOverlay } from './KaraokeOverlay';
+import { RemoteNameplates } from '../../components/RemoteNameplates';
+import { MultiplayerManager, type RoomStatusSnapshot } from '../../network/MultiplayerManager';
 import { INTERACTIVE_OBJECTS } from '../../data/sceneData';
 import { loungeAudio } from '../../utils/audio';
 import { EditorEngine } from '../../engine/EditorEngine';
+import type { StageMediaState } from '../../engine/runtime';
 import type { NearbyPromptData } from '../../engine/runtime/PlayerControllerRuntime';
 
 export const GameOverlayUI: React.FC = () => {
@@ -23,11 +26,20 @@ export const GameOverlayUI: React.FC = () => {
   const [isReservationOpen, setIsReservationOpen] = useState(false);
   const [isStageModalOpen, setIsStageModalOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [stageVideoId, setStageVideoId] = useState('lTRiuFIWV54');
+  const [stageSourceType, setStageSourceType] = useState<'media' | 'youtube'>('media');
+  const [stageYoutubeId, setStageYoutubeId] = useState<string | null>(null);
+  const [youtubeQuality, setYoutubeQuality] = useState('hd720');
+  const [renderScale, setRenderScale] = useState(1);
+  const [stageMediaUrl, setStageMediaUrl] = useState('/media/bello-ballo.mp4');
+  const [stageMediaTitle, setStageMediaTitle] = useState('Live Acoustic Session — Bello Ballo');
+  const [isStagePlaying, setIsStagePlaying] = useState(true);
+  const [stageVolume, setStageVolume] = useState(0.8);
   const [isStageVideoMuted, setIsStageVideoMuted] = useState(false);
   const [isScreenOn, setIsScreenOn] = useState(true);
   const [activeEmote, setActiveEmote] = useState<string | null>(null);
   const [isKaraokeOpen, setIsKaraokeOpen] = useState(false);
+  const [isRoomHost, setIsRoomHost] = useState(() => MultiplayerManager.getInstance().isHost());
+  const [stageErrorToast, setStageErrorToast] = useState<string | null>(null);
 
   useEffect(() => {
     const onProximity = (e: Event) => {
@@ -64,11 +76,38 @@ export const GameOverlayUI: React.FC = () => {
       }
     };
 
+    const onStageAudioChanged = (e: Event) => {
+      const detail = (e as CustomEvent<StageMediaState>).detail;
+      if (!detail) return;
+      setStageSourceType(detail.sourceType);
+      setStageYoutubeId(detail.youtubeVideoId);
+      setYoutubeQuality(detail.youtubeQuality || 'hd720');
+      setStageMediaUrl(detail.mediaUrl);
+      setStageMediaTitle(detail.title);
+      setIsStagePlaying(detail.isPlaying);
+      setStageVolume(detail.volume);
+      setIsStageVideoMuted(detail.isMuted);
+      setIsScreenOn(detail.isScreenOn);
+    };
+
+    const onStageError = (e: Event) => {
+      const msg = (e as CustomEvent<string>).detail;
+      if (msg) setStageErrorToast(msg);
+    };
+
+    const onRoomStatus = (e: Event) => {
+      const detail = (e as CustomEvent<RoomStatusSnapshot>).detail;
+      if (detail) setIsRoomHost(detail.isHost);
+    };
+
     window.addEventListener('cavannghe:proximity', onProximity);
     window.addEventListener('cavannghe:interact', onInteract);
     window.addEventListener('cavannghe:sit', onSit);
     window.addEventListener('cavannghe:camera-mode', onCamMode);
     window.addEventListener('cavannghe:karaoke', onKaraoke);
+    window.addEventListener('cavannghe:stage-audio-changed', onStageAudioChanged);
+    window.addEventListener('cavannghe:stage-media-error', onStageError);
+    window.addEventListener('cavannghe:room-status', onRoomStatus);
     window.addEventListener('keydown', onKeyDown);
 
     return () => {
@@ -77,6 +116,9 @@ export const GameOverlayUI: React.FC = () => {
       window.removeEventListener('cavannghe:sit', onSit);
       window.removeEventListener('cavannghe:camera-mode', onCamMode);
       window.removeEventListener('cavannghe:karaoke', onKaraoke);
+      window.removeEventListener('cavannghe:stage-audio-changed', onStageAudioChanged);
+      window.removeEventListener('cavannghe:stage-media-error', onStageError);
+      window.removeEventListener('cavannghe:room-status', onRoomStatus);
       window.removeEventListener('keydown', onKeyDown);
     };
   }, []);
@@ -129,7 +171,8 @@ export const GameOverlayUI: React.FC = () => {
 
   return (
     <div className="absolute inset-0 pointer-events-none z-20">
-      <div className="pointer-events-auto">
+      <RemoteNameplates />
+      <div className="relative z-10 pointer-events-auto">
         <NavigationHUD
           onOpenSettings={() => setIsSettingsOpen(true)}
           nearbyPrompt={nearbyPrompt}
@@ -177,12 +220,63 @@ export const GameOverlayUI: React.FC = () => {
         <StageScreenModal
           isOpen={isStageModalOpen}
           onClose={() => setIsStageModalOpen(false)}
-          currentVideoId={stageVideoId}
-          onChangeVideo={(id: string) => setStageVideoId(id)}
+          spatialMode
+          isHost={isRoomHost}
+          onResyncStage={() => MultiplayerManager.getInstance().requestStageResync()}
+          sourceType={stageSourceType}
+          currentVideoId={stageYoutubeId ?? ''}
+          currentMediaUrl={stageMediaUrl}
+          currentMediaTitle={stageMediaTitle}
+          youtubeQuality={youtubeQuality}
+          onChangeYouTubeQuality={(q: string) => {
+            setYoutubeQuality(q);
+            EditorEngine.getInstance().setStageYouTubeQuality(q);
+          }}
+          renderScale={renderScale}
+          onChangeRenderScale={(scale: number) => {
+            setRenderScale(scale);
+            EditorEngine.getInstance().setRenderResolutionScale(scale);
+          }}
+          isPlaying={isStagePlaying}
+          onTogglePlay={() => {
+            const next = !isStagePlaying;
+            setIsStagePlaying(next);
+            EditorEngine.getInstance().setStagePlaying(next);
+          }}
+          volume={stageVolume}
+          onVolumeChange={(v: number) => {
+            setStageVolume(v);
+            EditorEngine.getInstance().setStageVolume(v);
+          }}
+          onChangeMedia={(url: string, title?: string) => {
+            setStageSourceType('media');
+            setStageYoutubeId(null);
+            setStageMediaUrl(url);
+            if (title) setStageMediaTitle(title);
+            setIsStagePlaying(true);
+            setIsScreenOn(true);
+            EditorEngine.getInstance().setStageMedia(url, title);
+          }}
+          onChangeYouTube={(videoId: string, title?: string) => {
+            setStageSourceType('youtube');
+            setStageYoutubeId(videoId);
+            if (title) setStageMediaTitle(title);
+            setIsStagePlaying(true);
+            setIsScreenOn(true);
+            EditorEngine.getInstance().setStageYouTube(videoId, title);
+          }}
           isMuted={isStageVideoMuted}
-          onToggleMute={() => setIsStageVideoMuted((prev) => !prev)}
+          onToggleMute={() => {
+            const next = !isStageVideoMuted;
+            setIsStageVideoMuted(next);
+            EditorEngine.getInstance().setStageMuted(next);
+          }}
           isScreenOn={isScreenOn}
-          onToggleScreen={() => setIsScreenOn((prev) => !prev)}
+          onToggleScreen={() => {
+            const next = !isScreenOn;
+            setIsScreenOn(next);
+            EditorEngine.getInstance().setStageScreenOn(next);
+          }}
         />
 
         <SettingsModal
@@ -196,9 +290,17 @@ export const GameOverlayUI: React.FC = () => {
           isDecoMode={false}
           onToggleDecoMode={() => {}}
           isScreenOn={isScreenOn}
-          onToggleScreen={() => setIsScreenOn((prev) => !prev)}
+          onToggleScreen={() => {
+            const next = !isScreenOn;
+            setIsScreenOn(next);
+            EditorEngine.getInstance().setStageScreenOn(next);
+          }}
           isStageVideoMuted={isStageVideoMuted}
-          onToggleStageMute={() => setIsStageVideoMuted((prev) => !prev)}
+          onToggleStageMute={() => {
+            const next = !isStageVideoMuted;
+            setIsStageVideoMuted(next);
+            EditorEngine.getInstance().setStageMuted(next);
+          }}
           onOpenStageScreenModal={() => setIsStageModalOpen(true)}
           isNightMode={isNightMode}
           onToggleNightMode={handleToggleNight}
@@ -210,6 +312,18 @@ export const GameOverlayUI: React.FC = () => {
           activeEmote={activeEmote}
           onTriggerEmote={handleTriggerEmote}
         />
+
+        {stageErrorToast && (
+          <div className="fixed bottom-6 right-6 z-[110] max-w-sm px-4 py-3 rounded-xl bg-rose-950/95 border border-rose-500/40 text-rose-100 text-xs shadow-2xl backdrop-blur-md flex items-start gap-3">
+            <div className="flex-1 leading-relaxed">{stageErrorToast}</div>
+            <button
+              onClick={() => setStageErrorToast(null)}
+              className="text-rose-300 hover:text-white font-bold px-1"
+            >
+              ✕
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

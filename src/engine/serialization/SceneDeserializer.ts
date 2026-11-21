@@ -341,19 +341,18 @@ export async function restoreGlbEntities(
       hideGigRoomShell(entity);
     }
 
-    if (entity.tags.has('player')) {
-      const disableCull = (node: pc.GraphNode) => {
-        if (node instanceof pc.Entity && node.render) {
-          for (const mi of node.render.meshInstances) {
-            mi.cull = false;
-          }
+    // Prevent premature frustum culling on scaled/skinned/multi-node GLBs (player, band stage, props)
+    const disableCull = (node: pc.GraphNode) => {
+      if (node instanceof pc.Entity && node.render) {
+        for (const mi of node.render.meshInstances) {
+          mi.cull = false;
         }
-        for (const child of node.children) {
-          disableCull(child);
-        }
-      };
-      disableCull(entity);
-    }
+      }
+      for (const child of node.children) {
+        disableCull(child);
+      }
+    };
+    disableCull(entity);
 
     loaded.entity.destroy();
     restoredAny = true;

@@ -1,7 +1,8 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { EditorEngine } from '../../engine/EditorEngine';
 import { useEditorStore } from '../../store/useEditorStore';
 import { GameOverlayUI } from './GameOverlayUI';
+import { YouTubeStagePlayer } from '../../components/YouTubeStagePlayer';
 
 export type CameraSnapView = 'top' | 'front' | 'right' | 'iso';
 
@@ -26,6 +27,18 @@ export const ViewportPanel: React.FC<ViewportPanelProps> = ({ onViewportResize }
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineReady = useEditorStore((s) => s.engineReady);
   const playState = useEditorStore((s) => s.playState);
+  const [genericPrompt, setGenericPrompt] = useState<{
+    entityName: string;
+    promptText: string;
+    keyCode: string;
+  } | null>(null);
+
+  useEffect(() => {
+    const engine = EditorEngine.getInstance();
+    return engine.eventBus.on('gameplay:prompt-changed', (payload) => {
+      setGenericPrompt(payload);
+    });
+  }, []);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -116,11 +129,14 @@ export const ViewportPanel: React.FC<ViewportPanelProps> = ({ onViewportResize }
       onDrop={handleDrop}
       className="relative w-full h-full bg-[#0d1016] overflow-hidden"
     >
+      {/* YouTube 3D TV layer behind transparent WebGL canvas */}
+      {playState !== 'edit' && <YouTubeStagePlayer />}
+
       <canvas
         ref={canvasRef}
         tabIndex={0}
         onContextMenu={(e) => e.preventDefault()}
-        className="w-full h-full block outline-none"
+        className="relative z-[1] w-full h-full block outline-none"
       />
 
       {/* Top-left Scene label */}
@@ -224,6 +240,16 @@ export const ViewportPanel: React.FC<ViewportPanelProps> = ({ onViewportResize }
       {playState === 'edit' && (
         <div className="pointer-events-none absolute bottom-2 left-2.5 px-2 py-0.5 rounded bg-[#141821]/75 border border-[#2b313d]/70 text-[10px] text-gray-400">
           RMB+WASD Fly · Alt+LMB Orbit · MMB Pan · Scroll Zoom · F Focus
+        </div>
+      )}
+
+      {/* Generic Interactable Prompt */}
+      {playState !== 'edit' && genericPrompt && (
+        <div className="pointer-events-none absolute bottom-16 left-1/2 -translate-x-1/2 px-3.5 py-1.5 rounded-full bg-[#141821]/90 border border-emerald-500/40 text-xs text-gray-100 shadow-lg backdrop-blur-sm flex items-center gap-2">
+          <span className="px-1.5 py-0.5 rounded bg-emerald-500/25 text-emerald-300 font-mono font-semibold text-[11px]">
+            {genericPrompt.keyCode.replace('Key', '')}
+          </span>
+          <span>{genericPrompt.promptText}</span>
         </div>
       )}
 
