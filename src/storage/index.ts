@@ -14,8 +14,13 @@ export {
   loadProject,
   listProjects,
   deleteProject,
+  saveSceneDraft,
+  loadSceneDraft,
+  deleteSceneDraft,
   saveAutoDraft,
   loadAutoDraft,
+  setLastActiveSceneId,
+  getLastActiveSceneId,
   ProjectRepository,
   type ProjectSummary,
 } from './ProjectRepository';
@@ -34,10 +39,13 @@ export {
 
 export {
   BUNDLE_FORMAT,
+  MULTI_BUNDLE_FORMAT,
   BUNDLE_VERSION,
   exportStandaloneBundle,
+  exportMultiSceneBundle,
   importStandaloneBundle,
   BundleExporter,
   type EmbeddedBundleAsset,
   type StandaloneBundle,
+  type MultiSceneStandaloneBundle,
 } from './BundleExporter';

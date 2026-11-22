@@ -13,6 +13,7 @@ export interface ResourceTracker {
   materials: Set<pc.StandardMaterial>;
   textures: Set<pc.Texture>;
   meshes: Set<pc.Mesh>;
+  cleanups: Set<() => void>;
 }
 
 export function createResourceTracker(): ResourceTracker {
@@ -20,10 +21,16 @@ export function createResourceTracker(): ResourceTracker {
     materials: new Set<pc.StandardMaterial>(),
     textures: new Set<pc.Texture>(),
     meshes: new Set<pc.Mesh>(),
+    cleanups: new Set<() => void>(),
   };
 }
 
 export function destroyTrackedResources(tracker: ResourceTracker): void {
+  for (const cleanup of tracker.cleanups) {
+    cleanup();
+  }
+  tracker.cleanups.clear();
+
   for (const mat of tracker.materials) {
     mat.destroy();
   }
@@ -88,6 +95,9 @@ export function deserializeEntity(
   const trackTexture = (tex: pc.Texture) => {
     tracker.textures.add(tex);
   };
+  const trackCleanup = (fn: () => void) => {
+    tracker.cleanups.add(fn);
+  };
 
   for (const comp of data.components) {
     applyComponentDataToEntity(entity, comp, trackMaterial);
@@ -95,7 +105,14 @@ export function deserializeEntity(
       const presetId =
         comp.material.loungeMaterialId ?? inferLoungeMaterialIdByEntityName(entity.name);
       if (presetId) {
-        applyLoungeMaterialPreset(app, entity, presetId, trackTexture, trackMaterial);
+        applyLoungeMaterialPreset(
+          app,
+          entity,
+          presetId,
+          trackTexture,
+          trackMaterial,
+          trackCleanup
+        );
       }
     }
   }
@@ -130,7 +147,7 @@ export function deserializeScene(
   app.scene.exposure =
     typeof settings.exposure === 'number'
       ? settings.exposure
-      : schema.metadata?.id === 'ca-van-nghe-lounge'
+      : schema.metadata?.id?.startsWith('ca-van-nghe-')
         ? 1.1
         : 1.0;
 
@@ -206,6 +223,7 @@ export function clearGlbAssetBufferCache(assetId?: string): void {
 export interface RestoreGlbOptions {
   registerDestroy?: (destroyFn: () => void) => void;
   shouldAbort?: () => boolean;
+  onProgress?: (loadedCount: number, totalCount: number, assetName: string) => void;
 }
 
 /**
@@ -236,6 +254,7 @@ export async function restoreGlbEntities(
   if (targets.length === 0) return false;
 
   let restoredAny = false;
+  let completedCount = 0;
   for (const { entity, assetId } of targets) {
     if (options?.shouldAbort?.()) return restoredAny;
 
@@ -244,11 +263,17 @@ export async function restoreGlbEntities(
       const manifest = await AssetRepository.getAssetManifest(assetId);
       if (options?.shouldAbort?.()) return restoredAny;
       if (!manifest || (manifest.type !== 'glb' && manifest.type !== 'gltf')) {
+        completedCount++;
+        options?.onProgress?.(completedCount, targets.length, manifest?.name ?? 'asset');
         continue;
       }
       const buffer = await AssetRepository.getAssetBlob(manifest.indexedDbKey);
       if (options?.shouldAbort?.()) return restoredAny;
-      if (!buffer) continue;
+      if (!buffer) {
+        completedCount++;
+        options?.onProgress?.(completedCount, targets.length, manifest.name);
+        continue;
+      }
       cached = { buffer, name: manifest.name };
       glbAssetBufferCache.set(assetId, cached);
     }
@@ -356,6 +381,8 @@ export async function restoreGlbEntities(
 
     loaded.entity.destroy();
     restoredAny = true;
+    completedCount++;
+    options?.onProgress?.(completedCount, targets.length, cached.name);
   }
 
   return restoredAny;

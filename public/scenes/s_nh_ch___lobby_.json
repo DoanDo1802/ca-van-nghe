@@ -1,0 +1,5270 @@
+{
+  "version": "1.0.0",
+  "metadata": {
+    "id": "ca-van-nghe-lobby",
+    "name": "Sảnh Chờ (Lobby)",
+    "createdAt": "2026-11-22T10:52:33.125Z",
+    "updatedAt": "2026-11-22T10:52:33.125Z"
+  },
+  "assets": [],
+  "settings": {
+    "ambientColor": [
+      0.28,
+      0.25,
+      0.22
+    ],
+    "exposure": 1.1,
+    "skyboxColor": [
+      0.11,
+      0.12,
+      0.14,
+      1
+    ],
+    "gravity": [
+      0,
+      -9.81,
+      0
+    ],
+    "activeCameraEntityId": null
+  },
+  "scene": {
+    "id": "9063954a-ff47-424c-8c80-8165fa0f10e0",
+    "name": "Lobby_Scene",
+    "enabled": true,
+    "tags": [],
+    "transform": {
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ]
+    },
+    "components": [],
+    "children": [
+      {
+        "id": "5d8f46c2-dd67-42ce-beca-2f9ff4afda3b",
+        "name": "Environment_Shell",
+        "enabled": true,
+        "tags": [],
+        "transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "components": [],
+        "children": [
+          {
+            "id": "1b6a3bfc-db2c-4e5d-876f-4cc087bca55b",
+            "name": "Lobby Floor",
+            "enabled": true,
+            "tags": [],
+            "transform": {
+              "position": [
+                0,
+                -0.001,
+                0
+              ],
+              "rotation": [
+                0,
+                0,
+                0
+              ],
+              "scale": [
+                26,
+                1,
+                22
+              ]
+            },
+            "components": [
+              {
+                "id": "d79bbefc-b36f-4b0c-9557-e4ec64dc0542",
+                "type": "render",
+                "enabled": true,
+                "meshType": "plane",
+                "meshAssetId": null,
+                "castShadows": false,
+                "receiveShadows": true,
+                "material": {
+                  "diffuseColor": [
+                    0.85,
+                    0.8,
+                    0.75
+                  ],
+                  "metalness": 0.02,
+                  "gloss": 0.35,
+                  "emissiveColor": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "emissiveIntensity": 1,
+                  "opacity": 1,
+                  "useLighting": true,
+                  "loungeMaterialId": "lounge:floorWood",
+                  "diffuseMapAssetId": null,
+                  "normalMapAssetId": null,
+                  "metalnessMapAssetId": null
+                }
+              },
+              {
+                "id": "13996908-f07d-4626-abcd-21f6bf6332fa",
+                "type": "collision",
+                "enabled": true,
+                "shape": "box",
+                "halfExtents": [
+                  13,
+                  0.05,
+                  11
+                ],
+                "radius": 0.5,
+                "height": 2,
+                "meshAssetId": null,
+                "isTrigger": false
+              },
+              {
+                "id": "d960ec0f-834b-4b20-a2e3-eb765af88d32",
+                "type": "rigidbody",
+                "enabled": true,
+                "bodyType": "static",
+                "mass": 0,
+                "friction": 0.8,
+                "restitution": 0.1,
+                "linearDamping": 0,
+                "angularDamping": 0,
+                "linearFactor": [
+                  1,
+                  1,
+                  1
+                ],
+                "angularFactor": [
+                  1,
+                  1,
+                  1
+                ]
+              }
+            ],
+            "children": []
+          },
+          {
+            "id": "2b5e51fd-62fe-4632-8a39-9377afb622c5",
+            "name": "Red_Velvet_Runner",
+            "enabled": true,
+            "tags": [],
+            "transform": {
+              "position": [
+                0,
+                0,
+                0
+              ],
+              "rotation": [
+                0,
+                0,
+                0
+              ],
+              "scale": [
+                1,
+                1,
+                1
+              ]
+            },
+            "components": [],
+            "children": [
+              {
+                "id": "ce34cafc-bf50-48df-afc3-860273609e74",
+                "name": "Center Velvet Stem",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    0,
+                    0.006,
+                    2
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    2.4,
+                    0.004,
+                    12
+                  ]
+                },
+                "components": [
+                  {
+                    "id": "46dc11be-3cbc-4bdd-8258-4da87fe77331",
+                    "type": "render",
+                    "enabled": true,
+                    "meshType": "box",
+                    "meshAssetId": null,
+                    "castShadows": false,
+                    "receiveShadows": true,
+                    "material": {
+                      "diffuseColor": [
+                        0.345,
+                        0.063,
+                        0.118
+                      ],
+                      "metalness": 0,
+                      "gloss": 0.04,
+                      "emissiveColor": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "emissiveIntensity": 1,
+                      "opacity": 1,
+                      "useLighting": true,
+                      "diffuseMapAssetId": null,
+                      "normalMapAssetId": null,
+                      "metalnessMapAssetId": null
+                    }
+                  }
+                ],
+                "children": []
+              },
+              {
+                "id": "ac1da867-4c26-4202-9afc-a244d41c4c0d",
+                "name": "Center Brass Left",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    -1.24,
+                    0.007,
+                    2
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    0.08,
+                    0.004,
+                    12
+                  ]
+                },
+                "components": [
+                  {
+                    "id": "eccbd413-5dcd-4d82-accf-27a701cba22f",
+                    "type": "render",
+                    "enabled": true,
+                    "meshType": "box",
+                    "meshAssetId": null,
+                    "castShadows": false,
+                    "receiveShadows": true,
+                    "material": {
+                      "diffuseColor": [
+                        0.831,
+                        0.686,
+                        0.216
+                      ],
+                      "metalness": 0.7,
+                      "gloss": 0.6,
+                      "emissiveColor": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "emissiveIntensity": 1,
+                      "opacity": 1,
+                      "useLighting": true,
+                      "diffuseMapAssetId": null,
+                      "normalMapAssetId": null,
+                      "metalnessMapAssetId": null
+                    }
+                  }
+                ],
+                "children": []
+              },
+              {
+                "id": "17374c32-23fc-4c37-9f26-e4507fa21786",
+                "name": "Center Brass Right",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    1.24,
+                    0.007,
+                    2
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    0.08,
+                    0.004,
+                    12
+                  ]
+                },
+                "components": [
+                  {
+                    "id": "66ab0a4c-2336-4f37-ae5e-251807a35453",
+                    "type": "render",
+                    "enabled": true,
+                    "meshType": "box",
+                    "meshAssetId": null,
+                    "castShadows": false,
+                    "receiveShadows": true,
+                    "material": {
+                      "diffuseColor": [
+                        0.831,
+                        0.686,
+                        0.216
+                      ],
+                      "metalness": 0.7,
+                      "gloss": 0.6,
+                      "emissiveColor": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "emissiveIntensity": 1,
+                      "opacity": 1,
+                      "useLighting": true,
+                      "diffuseMapAssetId": null,
+                      "normalMapAssetId": null,
+                      "metalnessMapAssetId": null
+                    }
+                  }
+                ],
+                "children": []
+              },
+              {
+                "id": "9e6701a1-45f6-4470-b19c-2f810dec25ac",
+                "name": "Cross Velvet Branch",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    0,
+                    0.006,
+                    -4.4
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    11.4,
+                    0.004,
+                    2
+                  ]
+                },
+                "components": [
+                  {
+                    "id": "7ff80a37-64ba-4747-8476-adde28ab5edf",
+                    "type": "render",
+                    "enabled": true,
+                    "meshType": "box",
+                    "meshAssetId": null,
+                    "castShadows": false,
+                    "receiveShadows": true,
+                    "material": {
+                      "diffuseColor": [
+                        0.345,
+                        0.063,
+                        0.118
+                      ],
+                      "metalness": 0,
+                      "gloss": 0.04,
+                      "emissiveColor": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "emissiveIntensity": 1,
+                      "opacity": 1,
+                      "useLighting": true,
+                      "diffuseMapAssetId": null,
+                      "normalMapAssetId": null,
+                      "metalnessMapAssetId": null
+                    }
+                  }
+                ],
+                "children": []
+              },
+              {
+                "id": "e79d5095-3849-4756-b6a6-855a1e59e4be",
+                "name": "Left Door Velvet",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    -4.5,
+                    0.006,
+                    -7.2
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    2.2,
+                    0.004,
+                    6.2
+                  ]
+                },
+                "components": [
+                  {
+                    "id": "46181b19-9aac-45dc-a453-cb594a5b87b0",
+                    "type": "render",
+                    "enabled": true,
+                    "meshType": "box",
+                    "meshAssetId": null,
+                    "castShadows": false,
+                    "receiveShadows": true,
+                    "material": {
+                      "diffuseColor": [
+                        0.345,
+                        0.063,
+                        0.118
+                      ],
+                      "metalness": 0,
+                      "gloss": 0.04,
+                      "emissiveColor": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "emissiveIntensity": 1,
+                      "opacity": 1,
+                      "useLighting": true,
+                      "diffuseMapAssetId": null,
+                      "normalMapAssetId": null,
+                      "metalnessMapAssetId": null
+                    }
+                  }
+                ],
+                "children": []
+              },
+              {
+                "id": "67cf06aa-5609-4121-86aa-e3c30f4275fe",
+                "name": "Right Door Velvet",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    4.5,
+                    0.006,
+                    -7.2
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    2.2,
+                    0.004,
+                    6.2
+                  ]
+                },
+                "components": [
+                  {
+                    "id": "af360d69-a6d3-4f22-ad18-7c31ad728861",
+                    "type": "render",
+                    "enabled": true,
+                    "meshType": "box",
+                    "meshAssetId": null,
+                    "castShadows": false,
+                    "receiveShadows": true,
+                    "material": {
+                      "diffuseColor": [
+                        0.345,
+                        0.063,
+                        0.118
+                      ],
+                      "metalness": 0,
+                      "gloss": 0.04,
+                      "emissiveColor": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "emissiveIntensity": 1,
+                      "opacity": 1,
+                      "useLighting": true,
+                      "diffuseMapAssetId": null,
+                      "normalMapAssetId": null,
+                      "metalnessMapAssetId": null
+                    }
+                  }
+                ],
+                "children": []
+              }
+            ]
+          },
+          {
+            "id": "4c86010b-81b1-4217-923b-b2a9b8d5e3c7",
+            "name": "Walls",
+            "enabled": true,
+            "tags": [],
+            "transform": {
+              "position": [
+                0,
+                0,
+                0
+              ],
+              "rotation": [
+                0,
+                0,
+                0
+              ],
+              "scale": [
+                1,
+                1,
+                1
+              ]
+            },
+            "components": [],
+            "children": [
+              {
+                "id": "1d016459-3f05-49be-bd1f-0c3277aadc23",
+                "name": "Wall North (Back)",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    0,
+                    3.5,
+                    -10.9
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    26,
+                    7,
+                    0.2
+                  ]
+                },
+                "components": [
+                  {
+                    "id": "9f2dbbb7-0856-481d-86da-1b447d5f9a09",
+                    "type": "render",
+                    "enabled": true,
+                    "meshType": "box",
+                    "meshAssetId": null,
+                    "castShadows": false,
+                    "receiveShadows": true,
+                    "material": {
+                      "diffuseColor": [
+                        0.95,
+                        0.95,
+                        0.95
+                      ],
+                      "metalness": 0.06,
+                      "gloss": 0.12,
+                      "emissiveColor": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "emissiveIntensity": 1,
+                      "opacity": 1,
+                      "useLighting": true,
+                      "loungeMaterialId": "lounge:brickWall:12:2.5",
+                      "diffuseMapAssetId": null,
+                      "normalMapAssetId": null,
+                      "metalnessMapAssetId": null
+                    }
+                  },
+                  {
+                    "id": "5c669f49-92e5-4d18-b1b7-d1a07db643bb",
+                    "type": "collision",
+                    "enabled": true,
+                    "shape": "box",
+                    "halfExtents": [
+                      13,
+                      3.5,
+                      0.1
+                    ],
+                    "radius": 0.5,
+                    "height": 2,
+                    "meshAssetId": null,
+                    "isTrigger": false
+                  },
+                  {
+                    "id": "1260fd1c-77c5-4eea-a86e-fc6a31ca1350",
+                    "type": "rigidbody",
+                    "enabled": true,
+                    "bodyType": "static",
+                    "mass": 0,
+                    "friction": 0.8,
+                    "restitution": 0.1,
+                    "linearDamping": 0,
+                    "angularDamping": 0,
+                    "linearFactor": [
+                      1,
+                      1,
+                      1
+                    ],
+                    "angularFactor": [
+                      1,
+                      1,
+                      1
+                    ]
+                  }
+                ],
+                "children": []
+              },
+              {
+                "id": "c63fab12-9564-4996-8870-d7e555c3a772",
+                "name": "Wall South",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    0,
+                    3.5,
+                    10.9
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    26,
+                    7,
+                    0.2
+                  ]
+                },
+                "components": [
+                  {
+                    "id": "773019ac-ba9b-493f-a4b9-bac8e68c1112",
+                    "type": "render",
+                    "enabled": true,
+                    "meshType": "box",
+                    "meshAssetId": null,
+                    "castShadows": false,
+                    "receiveShadows": true,
+                    "material": {
+                      "diffuseColor": [
+                        0.95,
+                        0.95,
+                        0.95
+                      ],
+                      "metalness": 0.06,
+                      "gloss": 0.12,
+                      "emissiveColor": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "emissiveIntensity": 1,
+                      "opacity": 1,
+                      "useLighting": true,
+                      "loungeMaterialId": "lounge:brickWall:12:2.5",
+                      "diffuseMapAssetId": null,
+                      "normalMapAssetId": null,
+                      "metalnessMapAssetId": null
+                    }
+                  },
+                  {
+                    "id": "943cb417-1106-4886-9e92-71d3d66ec931",
+                    "type": "collision",
+                    "enabled": true,
+                    "shape": "box",
+                    "halfExtents": [
+                      13,
+                      3.5,
+                      0.1
+                    ],
+                    "radius": 0.5,
+                    "height": 2,
+                    "meshAssetId": null,
+                    "isTrigger": false
+                  },
+                  {
+                    "id": "e741e243-9cff-405c-b3b1-b5ae3c4174a9",
+                    "type": "rigidbody",
+                    "enabled": true,
+                    "bodyType": "static",
+                    "mass": 0,
+                    "friction": 0.8,
+                    "restitution": 0.1,
+                    "linearDamping": 0,
+                    "angularDamping": 0,
+                    "linearFactor": [
+                      1,
+                      1,
+                      1
+                    ],
+                    "angularFactor": [
+                      1,
+                      1,
+                      1
+                    ]
+                  }
+                ],
+                "children": []
+              },
+              {
+                "id": "a02900f2-c248-4788-8856-72141ae5715f",
+                "name": "Wall West",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    -12.9,
+                    3.5,
+                    0
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    0.2,
+                    7,
+                    22
+                  ]
+                },
+                "components": [
+                  {
+                    "id": "d81215aa-45d2-47a4-86e0-16c875afae69",
+                    "type": "render",
+                    "enabled": true,
+                    "meshType": "box",
+                    "meshAssetId": null,
+                    "castShadows": false,
+                    "receiveShadows": true,
+                    "material": {
+                      "diffuseColor": [
+                        0.95,
+                        0.95,
+                        0.95
+                      ],
+                      "metalness": 0.06,
+                      "gloss": 0.12,
+                      "emissiveColor": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "emissiveIntensity": 1,
+                      "opacity": 1,
+                      "useLighting": true,
+                      "loungeMaterialId": "lounge:brickWall:11:2.5",
+                      "diffuseMapAssetId": null,
+                      "normalMapAssetId": null,
+                      "metalnessMapAssetId": null
+                    }
+                  },
+                  {
+                    "id": "fb4d48ac-2626-4861-b53a-7f97128c7ecd",
+                    "type": "collision",
+                    "enabled": true,
+                    "shape": "box",
+                    "halfExtents": [
+                      0.1,
+                      3.5,
+                      11
+                    ],
+                    "radius": 0.5,
+                    "height": 2,
+                    "meshAssetId": null,
+                    "isTrigger": false
+                  },
+                  {
+                    "id": "ad81fc28-016a-4797-a91c-e2ef2679b74e",
+                    "type": "rigidbody",
+                    "enabled": true,
+                    "bodyType": "static",
+                    "mass": 0,
+                    "friction": 0.8,
+                    "restitution": 0.1,
+                    "linearDamping": 0,
+                    "angularDamping": 0,
+                    "linearFactor": [
+                      1,
+                      1,
+                      1
+                    ],
+                    "angularFactor": [
+                      1,
+                      1,
+                      1
+                    ]
+                  }
+                ],
+                "children": []
+              },
+              {
+                "id": "3ed74fd4-20c4-4b2f-b1fe-b60ad2393556",
+                "name": "Wall East",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    12.9,
+                    3.5,
+                    0
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    0.2,
+                    7,
+                    22
+                  ]
+                },
+                "components": [
+                  {
+                    "id": "452368be-b4a9-4323-ba25-d8d71e407e52",
+                    "type": "render",
+                    "enabled": true,
+                    "meshType": "box",
+                    "meshAssetId": null,
+                    "castShadows": false,
+                    "receiveShadows": true,
+                    "material": {
+                      "diffuseColor": [
+                        0.95,
+                        0.95,
+                        0.95
+                      ],
+                      "metalness": 0.06,
+                      "gloss": 0.12,
+                      "emissiveColor": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "emissiveIntensity": 1,
+                      "opacity": 1,
+                      "useLighting": true,
+                      "loungeMaterialId": "lounge:brickWall:11:2.5",
+                      "diffuseMapAssetId": null,
+                      "normalMapAssetId": null,
+                      "metalnessMapAssetId": null
+                    }
+                  },
+                  {
+                    "id": "48ecf646-f4c6-4cf7-ac15-3edd464fddb4",
+                    "type": "collision",
+                    "enabled": true,
+                    "shape": "box",
+                    "halfExtents": [
+                      0.1,
+                      3.5,
+                      11
+                    ],
+                    "radius": 0.5,
+                    "height": 2,
+                    "meshAssetId": null,
+                    "isTrigger": false
+                  },
+                  {
+                    "id": "12612c7b-9345-4778-9195-accff5391c4b",
+                    "type": "rigidbody",
+                    "enabled": true,
+                    "bodyType": "static",
+                    "mass": 0,
+                    "friction": 0.8,
+                    "restitution": 0.1,
+                    "linearDamping": 0,
+                    "angularDamping": 0,
+                    "linearFactor": [
+                      1,
+                      1,
+                      1
+                    ],
+                    "angularFactor": [
+                      1,
+                      1,
+                      1
+                    ]
+                  }
+                ],
+                "children": []
+              },
+              {
+                "id": "f800bb2a-94c3-4c2d-949e-b02c666f1dea",
+                "name": "Baseboard North",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    0,
+                    0.11,
+                    -10.78
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    25.6,
+                    0.22,
+                    0.05
+                  ]
+                },
+                "components": [
+                  {
+                    "id": "2f30acf4-7d36-4d9b-986e-eebee11aaf33",
+                    "type": "render",
+                    "enabled": true,
+                    "meshType": "box",
+                    "meshAssetId": null,
+                    "castShadows": false,
+                    "receiveShadows": true,
+                    "material": {
+                      "diffuseColor": [
+                        0.149,
+                        0.11,
+                        0.086
+                      ],
+                      "metalness": 0.02,
+                      "gloss": 0.28,
+                      "emissiveColor": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "emissiveIntensity": 1,
+                      "opacity": 1,
+                      "useLighting": true,
+                      "diffuseMapAssetId": null,
+                      "normalMapAssetId": null,
+                      "metalnessMapAssetId": null
+                    }
+                  }
+                ],
+                "children": []
+              },
+              {
+                "id": "83c72716-db03-4d6f-b05d-71de28be81f5",
+                "name": "Baseboard South",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    0,
+                    0.11,
+                    10.78
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    25.6,
+                    0.22,
+                    0.05
+                  ]
+                },
+                "components": [
+                  {
+                    "id": "db1da13b-ef73-491b-9f6e-2f2b9dd26a4e",
+                    "type": "render",
+                    "enabled": true,
+                    "meshType": "box",
+                    "meshAssetId": null,
+                    "castShadows": false,
+                    "receiveShadows": true,
+                    "material": {
+                      "diffuseColor": [
+                        0.149,
+                        0.11,
+                        0.086
+                      ],
+                      "metalness": 0.02,
+                      "gloss": 0.28,
+                      "emissiveColor": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "emissiveIntensity": 1,
+                      "opacity": 1,
+                      "useLighting": true,
+                      "diffuseMapAssetId": null,
+                      "normalMapAssetId": null,
+                      "metalnessMapAssetId": null
+                    }
+                  }
+                ],
+                "children": []
+              },
+              {
+                "id": "4692fbcc-16ac-485a-adb5-68598cf2cfd6",
+                "name": "Baseboard West",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    -12.78,
+                    0.11,
+                    0
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    0.05,
+                    0.22,
+                    21.6
+                  ]
+                },
+                "components": [
+                  {
+                    "id": "3df45c27-b878-4688-8547-64bd2e071f65",
+                    "type": "render",
+                    "enabled": true,
+                    "meshType": "box",
+                    "meshAssetId": null,
+                    "castShadows": false,
+                    "receiveShadows": true,
+                    "material": {
+                      "diffuseColor": [
+                        0.149,
+                        0.11,
+                        0.086
+                      ],
+                      "metalness": 0.02,
+                      "gloss": 0.28,
+                      "emissiveColor": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "emissiveIntensity": 1,
+                      "opacity": 1,
+                      "useLighting": true,
+                      "diffuseMapAssetId": null,
+                      "normalMapAssetId": null,
+                      "metalnessMapAssetId": null
+                    }
+                  }
+                ],
+                "children": []
+              },
+              {
+                "id": "36004f6b-2051-4fb3-959e-884bab53f4e8",
+                "name": "Baseboard East",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    12.78,
+                    0.11,
+                    0
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    0.05,
+                    0.22,
+                    21.6
+                  ]
+                },
+                "components": [
+                  {
+                    "id": "0ada184e-af2c-421c-a904-84a65b737f3e",
+                    "type": "render",
+                    "enabled": true,
+                    "meshType": "box",
+                    "meshAssetId": null,
+                    "castShadows": false,
+                    "receiveShadows": true,
+                    "material": {
+                      "diffuseColor": [
+                        0.149,
+                        0.11,
+                        0.086
+                      ],
+                      "metalness": 0.02,
+                      "gloss": 0.28,
+                      "emissiveColor": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "emissiveIntensity": 1,
+                      "opacity": 1,
+                      "useLighting": true,
+                      "diffuseMapAssetId": null,
+                      "normalMapAssetId": null,
+                      "metalnessMapAssetId": null
+                    }
+                  }
+                ],
+                "children": []
+              }
+            ]
+          },
+          {
+            "id": "79899734-1fcd-4b47-8f78-e816e8ef5925",
+            "name": "Ceiling_Coffered",
+            "enabled": true,
+            "tags": [],
+            "transform": {
+              "position": [
+                0,
+                0,
+                0
+              ],
+              "rotation": [
+                0,
+                0,
+                0
+              ],
+              "scale": [
+                1,
+                1,
+                1
+              ]
+            },
+            "components": [],
+            "children": [
+              {
+                "id": "0e33904d-23f0-4dd6-9226-088fe553f473",
+                "name": "Ceiling Slab",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    0,
+                    7.05,
+                    0
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    26,
+                    0.1,
+                    22
+                  ]
+                },
+                "components": [
+                  {
+                    "id": "9d29c7e9-5a8a-4ddf-a678-c573e7f23c99",
+                    "type": "render",
+                    "enabled": true,
+                    "meshType": "box",
+                    "meshAssetId": null,
+                    "castShadows": false,
+                    "receiveShadows": true,
+                    "material": {
+                      "diffuseColor": [
+                        0.071,
+                        0.059,
+                        0.055
+                      ],
+                      "metalness": 0.05,
+                      "gloss": 0.15,
+                      "emissiveColor": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "emissiveIntensity": 1,
+                      "opacity": 1,
+                      "useLighting": true,
+                      "diffuseMapAssetId": null,
+                      "normalMapAssetId": null,
+                      "metalnessMapAssetId": null
+                    }
+                  }
+                ],
+                "children": []
+              },
+              {
+                "id": "687ecfaa-9cf8-4469-846e-27d166f4eb1a",
+                "name": "Beam Long -8",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    -8,
+                    6.82,
+                    0
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    0.35,
+                    0.36,
+                    22
+                  ]
+                },
+                "components": [
+                  {
+                    "id": "8e1a099a-9d11-4265-9f42-0eb7f42a444b",
+                    "type": "render",
+                    "enabled": true,
+                    "meshType": "box",
+                    "meshAssetId": null,
+                    "castShadows": true,
+                    "receiveShadows": true,
+                    "material": {
+                      "diffuseColor": [
+                        0.133,
+                        0.094,
+                        0.075
+                      ],
+                      "metalness": 0.02,
+                      "gloss": 0.22,
+                      "emissiveColor": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "emissiveIntensity": 1,
+                      "opacity": 1,
+                      "useLighting": true,
+                      "diffuseMapAssetId": null,
+                      "normalMapAssetId": null,
+                      "metalnessMapAssetId": null
+                    }
+                  }
+                ],
+                "children": []
+              },
+              {
+                "id": "751e5acd-1add-4e8a-bcaa-adef042df097",
+                "name": "Beam Long 0",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    0,
+                    6.82,
+                    0
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    0.35,
+                    0.36,
+                    22
+                  ]
+                },
+                "components": [
+                  {
+                    "id": "c2f9f8d1-0c4d-44d6-9065-588520981bb3",
+                    "type": "render",
+                    "enabled": true,
+                    "meshType": "box",
+                    "meshAssetId": null,
+                    "castShadows": true,
+                    "receiveShadows": true,
+                    "material": {
+                      "diffuseColor": [
+                        0.133,
+                        0.094,
+                        0.075
+                      ],
+                      "metalness": 0.02,
+                      "gloss": 0.22,
+                      "emissiveColor": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "emissiveIntensity": 1,
+                      "opacity": 1,
+                      "useLighting": true,
+                      "diffuseMapAssetId": null,
+                      "normalMapAssetId": null,
+                      "metalnessMapAssetId": null
+                    }
+                  }
+                ],
+                "children": []
+              },
+              {
+                "id": "9832c93c-678f-44d7-8ff2-fdb6ca9f32f7",
+                "name": "Beam Long 8",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    8,
+                    6.82,
+                    0
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    0.35,
+                    0.36,
+                    22
+                  ]
+                },
+                "components": [
+                  {
+                    "id": "ae6b567b-b222-485f-8e25-820ecfbe105f",
+                    "type": "render",
+                    "enabled": true,
+                    "meshType": "box",
+                    "meshAssetId": null,
+                    "castShadows": true,
+                    "receiveShadows": true,
+                    "material": {
+                      "diffuseColor": [
+                        0.133,
+                        0.094,
+                        0.075
+                      ],
+                      "metalness": 0.02,
+                      "gloss": 0.22,
+                      "emissiveColor": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "emissiveIntensity": 1,
+                      "opacity": 1,
+                      "useLighting": true,
+                      "diffuseMapAssetId": null,
+                      "normalMapAssetId": null,
+                      "metalnessMapAssetId": null
+                    }
+                  }
+                ],
+                "children": []
+              },
+              {
+                "id": "1427f4a8-7df4-4c33-8e45-ba8583779b96",
+                "name": "Beam Trans -6",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    0,
+                    6.82,
+                    -6
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    26,
+                    0.36,
+                    0.35
+                  ]
+                },
+                "components": [
+                  {
+                    "id": "deab0537-5ea4-4d06-8f47-63bf87b85bcf",
+                    "type": "render",
+                    "enabled": true,
+                    "meshType": "box",
+                    "meshAssetId": null,
+                    "castShadows": true,
+                    "receiveShadows": true,
+                    "material": {
+                      "diffuseColor": [
+                        0.133,
+                        0.094,
+                        0.075
+                      ],
+                      "metalness": 0.02,
+                      "gloss": 0.22,
+                      "emissiveColor": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "emissiveIntensity": 1,
+                      "opacity": 1,
+                      "useLighting": true,
+                      "diffuseMapAssetId": null,
+                      "normalMapAssetId": null,
+                      "metalnessMapAssetId": null
+                    }
+                  }
+                ],
+                "children": []
+              },
+              {
+                "id": "d4b3d172-c2d8-4955-be26-9b65d794fd53",
+                "name": "Beam Trans 0",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    0,
+                    6.82,
+                    0
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    26,
+                    0.36,
+                    0.35
+                  ]
+                },
+                "components": [
+                  {
+                    "id": "c2ab5fc4-88ad-4e02-a5c0-3ab13cd34ab2",
+                    "type": "render",
+                    "enabled": true,
+                    "meshType": "box",
+                    "meshAssetId": null,
+                    "castShadows": true,
+                    "receiveShadows": true,
+                    "material": {
+                      "diffuseColor": [
+                        0.133,
+                        0.094,
+                        0.075
+                      ],
+                      "metalness": 0.02,
+                      "gloss": 0.22,
+                      "emissiveColor": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "emissiveIntensity": 1,
+                      "opacity": 1,
+                      "useLighting": true,
+                      "diffuseMapAssetId": null,
+                      "normalMapAssetId": null,
+                      "metalnessMapAssetId": null
+                    }
+                  }
+                ],
+                "children": []
+              },
+              {
+                "id": "715f6c08-baad-4282-8282-29638107de05",
+                "name": "Beam Trans 6",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    0,
+                    6.82,
+                    6
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    26,
+                    0.36,
+                    0.35
+                  ]
+                },
+                "components": [
+                  {
+                    "id": "90478fc2-051e-4a07-b265-962ce660956a",
+                    "type": "render",
+                    "enabled": true,
+                    "meshType": "box",
+                    "meshAssetId": null,
+                    "castShadows": true,
+                    "receiveShadows": true,
+                    "material": {
+                      "diffuseColor": [
+                        0.133,
+                        0.094,
+                        0.075
+                      ],
+                      "metalness": 0.02,
+                      "gloss": 0.22,
+                      "emissiveColor": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "emissiveIntensity": 1,
+                      "opacity": 1,
+                      "useLighting": true,
+                      "diffuseMapAssetId": null,
+                      "normalMapAssetId": null,
+                      "metalnessMapAssetId": null
+                    }
+                  }
+                ],
+                "children": []
+              },
+              {
+                "id": "519788fe-4499-4ae8-a4bf-30e904b503d4",
+                "name": "PF_Ceiling_Light_-8_-6",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    -8,
+                    6.95,
+                    -6
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    1,
+                    1,
+                    1
+                  ]
+                },
+                "components": [],
+                "children": [
+                  {
+                    "id": "5140940b-509d-499c-b345-e13341a7286b",
+                    "name": "Trim",
+                    "enabled": true,
+                    "tags": [],
+                    "transform": {
+                      "position": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "rotation": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "scale": [
+                        0.36,
+                        0.04,
+                        0.36
+                      ]
+                    },
+                    "components": [
+                      {
+                        "id": "8c55c4db-a953-4ec4-93ee-9ab32b9adb0a",
+                        "type": "render",
+                        "enabled": true,
+                        "meshType": "box",
+                        "meshAssetId": null,
+                        "castShadows": false,
+                        "receiveShadows": true,
+                        "material": {
+                          "diffuseColor": [
+                            0.773,
+                            0.608,
+                            0.306
+                          ],
+                          "metalness": 0.7,
+                          "gloss": 0.6,
+                          "emissiveColor": [
+                            0,
+                            0,
+                            0
+                          ],
+                          "emissiveIntensity": 1,
+                          "opacity": 1,
+                          "useLighting": true,
+                          "diffuseMapAssetId": null,
+                          "normalMapAssetId": null,
+                          "metalnessMapAssetId": null
+                        }
+                      }
+                    ],
+                    "children": []
+                  },
+                  {
+                    "id": "e5ede3da-1597-4eff-be66-ff8b62de1958",
+                    "name": "Bulb",
+                    "enabled": true,
+                    "tags": [],
+                    "transform": {
+                      "position": [
+                        0,
+                        -0.03,
+                        0
+                      ],
+                      "rotation": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "scale": [
+                        0.18,
+                        0.12,
+                        0.18
+                      ]
+                    },
+                    "components": [
+                      {
+                        "id": "1e0f8119-4b6a-470b-84a0-ee4aeaaf4f1c",
+                        "type": "render",
+                        "enabled": true,
+                        "meshType": "sphere",
+                        "meshAssetId": null,
+                        "castShadows": false,
+                        "receiveShadows": false,
+                        "material": {
+                          "diffuseColor": [
+                            1,
+                            0.94,
+                            0.8
+                          ],
+                          "metalness": 0.02,
+                          "gloss": 0.32,
+                          "emissiveColor": [
+                            1,
+                            0.8,
+                            0.47
+                          ],
+                          "emissiveIntensity": 2,
+                          "opacity": 1,
+                          "useLighting": false,
+                          "diffuseMapAssetId": null,
+                          "normalMapAssetId": null,
+                          "metalnessMapAssetId": null
+                        }
+                      }
+                    ],
+                    "children": []
+                  }
+                ]
+              },
+              {
+                "id": "9d222f4e-ff66-4b16-b89e-fa62ef21b11b",
+                "name": "PF_Ceiling_Light_-8_0",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    -8,
+                    6.95,
+                    0
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    1,
+                    1,
+                    1
+                  ]
+                },
+                "components": [],
+                "children": [
+                  {
+                    "id": "b9161af1-b5fc-49af-9fc0-1ccf27b9d514",
+                    "name": "Trim",
+                    "enabled": true,
+                    "tags": [],
+                    "transform": {
+                      "position": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "rotation": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "scale": [
+                        0.36,
+                        0.04,
+                        0.36
+                      ]
+                    },
+                    "components": [
+                      {
+                        "id": "5b2d9608-815d-4ef8-b8ed-177745d15a16",
+                        "type": "render",
+                        "enabled": true,
+                        "meshType": "box",
+                        "meshAssetId": null,
+                        "castShadows": false,
+                        "receiveShadows": true,
+                        "material": {
+                          "diffuseColor": [
+                            0.773,
+                            0.608,
+                            0.306
+                          ],
+                          "metalness": 0.7,
+                          "gloss": 0.6,
+                          "emissiveColor": [
+                            0,
+                            0,
+                            0
+                          ],
+                          "emissiveIntensity": 1,
+                          "opacity": 1,
+                          "useLighting": true,
+                          "diffuseMapAssetId": null,
+                          "normalMapAssetId": null,
+                          "metalnessMapAssetId": null
+                        }
+                      }
+                    ],
+                    "children": []
+                  },
+                  {
+                    "id": "dcffa997-62f4-4aa2-835b-337b6e6cce56",
+                    "name": "Bulb",
+                    "enabled": true,
+                    "tags": [],
+                    "transform": {
+                      "position": [
+                        0,
+                        -0.03,
+                        0
+                      ],
+                      "rotation": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "scale": [
+                        0.18,
+                        0.12,
+                        0.18
+                      ]
+                    },
+                    "components": [
+                      {
+                        "id": "95925f10-4bb4-47b9-b7f7-c5a4ec7750f7",
+                        "type": "render",
+                        "enabled": true,
+                        "meshType": "sphere",
+                        "meshAssetId": null,
+                        "castShadows": false,
+                        "receiveShadows": false,
+                        "material": {
+                          "diffuseColor": [
+                            1,
+                            0.94,
+                            0.8
+                          ],
+                          "metalness": 0.02,
+                          "gloss": 0.32,
+                          "emissiveColor": [
+                            1,
+                            0.8,
+                            0.47
+                          ],
+                          "emissiveIntensity": 2,
+                          "opacity": 1,
+                          "useLighting": false,
+                          "diffuseMapAssetId": null,
+                          "normalMapAssetId": null,
+                          "metalnessMapAssetId": null
+                        }
+                      }
+                    ],
+                    "children": []
+                  }
+                ]
+              },
+              {
+                "id": "5ad52c1f-e04c-43f8-b56b-981859901884",
+                "name": "PF_Ceiling_Light_-8_6",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    -8,
+                    6.95,
+                    6
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    1,
+                    1,
+                    1
+                  ]
+                },
+                "components": [],
+                "children": [
+                  {
+                    "id": "7064ffc3-a78d-402c-a1ee-bfeb3554dc56",
+                    "name": "Trim",
+                    "enabled": true,
+                    "tags": [],
+                    "transform": {
+                      "position": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "rotation": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "scale": [
+                        0.36,
+                        0.04,
+                        0.36
+                      ]
+                    },
+                    "components": [
+                      {
+                        "id": "fb551bc6-d1a9-406d-86cc-9100f87f381b",
+                        "type": "render",
+                        "enabled": true,
+                        "meshType": "box",
+                        "meshAssetId": null,
+                        "castShadows": false,
+                        "receiveShadows": true,
+                        "material": {
+                          "diffuseColor": [
+                            0.773,
+                            0.608,
+                            0.306
+                          ],
+                          "metalness": 0.7,
+                          "gloss": 0.6,
+                          "emissiveColor": [
+                            0,
+                            0,
+                            0
+                          ],
+                          "emissiveIntensity": 1,
+                          "opacity": 1,
+                          "useLighting": true,
+                          "diffuseMapAssetId": null,
+                          "normalMapAssetId": null,
+                          "metalnessMapAssetId": null
+                        }
+                      }
+                    ],
+                    "children": []
+                  },
+                  {
+                    "id": "000d8af0-b00a-4025-85e4-97a167ca5375",
+                    "name": "Bulb",
+                    "enabled": true,
+                    "tags": [],
+                    "transform": {
+                      "position": [
+                        0,
+                        -0.03,
+                        0
+                      ],
+                      "rotation": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "scale": [
+                        0.18,
+                        0.12,
+                        0.18
+                      ]
+                    },
+                    "components": [
+                      {
+                        "id": "a5886686-f00a-42b4-a387-c0143cc42d6b",
+                        "type": "render",
+                        "enabled": true,
+                        "meshType": "sphere",
+                        "meshAssetId": null,
+                        "castShadows": false,
+                        "receiveShadows": false,
+                        "material": {
+                          "diffuseColor": [
+                            1,
+                            0.94,
+                            0.8
+                          ],
+                          "metalness": 0.02,
+                          "gloss": 0.32,
+                          "emissiveColor": [
+                            1,
+                            0.8,
+                            0.47
+                          ],
+                          "emissiveIntensity": 2,
+                          "opacity": 1,
+                          "useLighting": false,
+                          "diffuseMapAssetId": null,
+                          "normalMapAssetId": null,
+                          "metalnessMapAssetId": null
+                        }
+                      }
+                    ],
+                    "children": []
+                  }
+                ]
+              },
+              {
+                "id": "ac0c2770-78d5-48f9-9484-46bdbb4e9367",
+                "name": "PF_Ceiling_Light_0_-6",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    0,
+                    6.95,
+                    -6
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    1,
+                    1,
+                    1
+                  ]
+                },
+                "components": [],
+                "children": [
+                  {
+                    "id": "8022bf1d-a027-4b55-8f55-b54b1bad696f",
+                    "name": "Trim",
+                    "enabled": true,
+                    "tags": [],
+                    "transform": {
+                      "position": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "rotation": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "scale": [
+                        0.36,
+                        0.04,
+                        0.36
+                      ]
+                    },
+                    "components": [
+                      {
+                        "id": "317f20b6-7b1e-4c58-96f0-a7888ee98f96",
+                        "type": "render",
+                        "enabled": true,
+                        "meshType": "box",
+                        "meshAssetId": null,
+                        "castShadows": false,
+                        "receiveShadows": true,
+                        "material": {
+                          "diffuseColor": [
+                            0.773,
+                            0.608,
+                            0.306
+                          ],
+                          "metalness": 0.7,
+                          "gloss": 0.6,
+                          "emissiveColor": [
+                            0,
+                            0,
+                            0
+                          ],
+                          "emissiveIntensity": 1,
+                          "opacity": 1,
+                          "useLighting": true,
+                          "diffuseMapAssetId": null,
+                          "normalMapAssetId": null,
+                          "metalnessMapAssetId": null
+                        }
+                      }
+                    ],
+                    "children": []
+                  },
+                  {
+                    "id": "03f88baf-f676-4b7c-a28c-d124270fc0a2",
+                    "name": "Bulb",
+                    "enabled": true,
+                    "tags": [],
+                    "transform": {
+                      "position": [
+                        0,
+                        -0.03,
+                        0
+                      ],
+                      "rotation": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "scale": [
+                        0.18,
+                        0.12,
+                        0.18
+                      ]
+                    },
+                    "components": [
+                      {
+                        "id": "36f921d7-b291-4127-8a00-52ca76126e28",
+                        "type": "render",
+                        "enabled": true,
+                        "meshType": "sphere",
+                        "meshAssetId": null,
+                        "castShadows": false,
+                        "receiveShadows": false,
+                        "material": {
+                          "diffuseColor": [
+                            1,
+                            0.94,
+                            0.8
+                          ],
+                          "metalness": 0.02,
+                          "gloss": 0.32,
+                          "emissiveColor": [
+                            1,
+                            0.8,
+                            0.47
+                          ],
+                          "emissiveIntensity": 2,
+                          "opacity": 1,
+                          "useLighting": false,
+                          "diffuseMapAssetId": null,
+                          "normalMapAssetId": null,
+                          "metalnessMapAssetId": null
+                        }
+                      }
+                    ],
+                    "children": []
+                  }
+                ]
+              },
+              {
+                "id": "5fa45a89-14d3-435d-b521-fa2482033927",
+                "name": "PF_Ceiling_Light_0_0",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    0,
+                    6.95,
+                    0
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    1,
+                    1,
+                    1
+                  ]
+                },
+                "components": [],
+                "children": [
+                  {
+                    "id": "8ec62604-5887-4a52-84c4-ad89280d2dbe",
+                    "name": "Trim",
+                    "enabled": true,
+                    "tags": [],
+                    "transform": {
+                      "position": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "rotation": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "scale": [
+                        0.36,
+                        0.04,
+                        0.36
+                      ]
+                    },
+                    "components": [
+                      {
+                        "id": "98364846-d3ce-4bc1-bf28-e41b02092bd4",
+                        "type": "render",
+                        "enabled": true,
+                        "meshType": "box",
+                        "meshAssetId": null,
+                        "castShadows": false,
+                        "receiveShadows": true,
+                        "material": {
+                          "diffuseColor": [
+                            0.773,
+                            0.608,
+                            0.306
+                          ],
+                          "metalness": 0.7,
+                          "gloss": 0.6,
+                          "emissiveColor": [
+                            0,
+                            0,
+                            0
+                          ],
+                          "emissiveIntensity": 1,
+                          "opacity": 1,
+                          "useLighting": true,
+                          "diffuseMapAssetId": null,
+                          "normalMapAssetId": null,
+                          "metalnessMapAssetId": null
+                        }
+                      }
+                    ],
+                    "children": []
+                  },
+                  {
+                    "id": "522c26e9-3ece-44e2-9617-4e9f3db9d5ba",
+                    "name": "Bulb",
+                    "enabled": true,
+                    "tags": [],
+                    "transform": {
+                      "position": [
+                        0,
+                        -0.03,
+                        0
+                      ],
+                      "rotation": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "scale": [
+                        0.18,
+                        0.12,
+                        0.18
+                      ]
+                    },
+                    "components": [
+                      {
+                        "id": "b479814e-7385-4840-8c92-1c805ba171e4",
+                        "type": "render",
+                        "enabled": true,
+                        "meshType": "sphere",
+                        "meshAssetId": null,
+                        "castShadows": false,
+                        "receiveShadows": false,
+                        "material": {
+                          "diffuseColor": [
+                            1,
+                            0.94,
+                            0.8
+                          ],
+                          "metalness": 0.02,
+                          "gloss": 0.32,
+                          "emissiveColor": [
+                            1,
+                            0.8,
+                            0.47
+                          ],
+                          "emissiveIntensity": 2,
+                          "opacity": 1,
+                          "useLighting": false,
+                          "diffuseMapAssetId": null,
+                          "normalMapAssetId": null,
+                          "metalnessMapAssetId": null
+                        }
+                      }
+                    ],
+                    "children": []
+                  }
+                ]
+              },
+              {
+                "id": "0ef544f3-e345-41e1-a010-7cba7004a402",
+                "name": "PF_Ceiling_Light_0_6",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    0,
+                    6.95,
+                    6
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    1,
+                    1,
+                    1
+                  ]
+                },
+                "components": [],
+                "children": [
+                  {
+                    "id": "d8f81f9e-0db0-46c5-8c9f-dc8a4580d120",
+                    "name": "Trim",
+                    "enabled": true,
+                    "tags": [],
+                    "transform": {
+                      "position": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "rotation": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "scale": [
+                        0.36,
+                        0.04,
+                        0.36
+                      ]
+                    },
+                    "components": [
+                      {
+                        "id": "00a98d36-aec5-43f1-b3c5-b426dcb1faa5",
+                        "type": "render",
+                        "enabled": true,
+                        "meshType": "box",
+                        "meshAssetId": null,
+                        "castShadows": false,
+                        "receiveShadows": true,
+                        "material": {
+                          "diffuseColor": [
+                            0.773,
+                            0.608,
+                            0.306
+                          ],
+                          "metalness": 0.7,
+                          "gloss": 0.6,
+                          "emissiveColor": [
+                            0,
+                            0,
+                            0
+                          ],
+                          "emissiveIntensity": 1,
+                          "opacity": 1,
+                          "useLighting": true,
+                          "diffuseMapAssetId": null,
+                          "normalMapAssetId": null,
+                          "metalnessMapAssetId": null
+                        }
+                      }
+                    ],
+                    "children": []
+                  },
+                  {
+                    "id": "6fa3e708-71e1-4d9f-b622-667bcc9a4bdc",
+                    "name": "Bulb",
+                    "enabled": true,
+                    "tags": [],
+                    "transform": {
+                      "position": [
+                        0,
+                        -0.03,
+                        0
+                      ],
+                      "rotation": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "scale": [
+                        0.18,
+                        0.12,
+                        0.18
+                      ]
+                    },
+                    "components": [
+                      {
+                        "id": "846dabdf-a7e2-454d-9a15-762691a8dd82",
+                        "type": "render",
+                        "enabled": true,
+                        "meshType": "sphere",
+                        "meshAssetId": null,
+                        "castShadows": false,
+                        "receiveShadows": false,
+                        "material": {
+                          "diffuseColor": [
+                            1,
+                            0.94,
+                            0.8
+                          ],
+                          "metalness": 0.02,
+                          "gloss": 0.32,
+                          "emissiveColor": [
+                            1,
+                            0.8,
+                            0.47
+                          ],
+                          "emissiveIntensity": 2,
+                          "opacity": 1,
+                          "useLighting": false,
+                          "diffuseMapAssetId": null,
+                          "normalMapAssetId": null,
+                          "metalnessMapAssetId": null
+                        }
+                      }
+                    ],
+                    "children": []
+                  }
+                ]
+              },
+              {
+                "id": "4b62b49f-cd34-4c41-92f3-89649351751a",
+                "name": "PF_Ceiling_Light_8_-6",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    8,
+                    6.95,
+                    -6
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    1,
+                    1,
+                    1
+                  ]
+                },
+                "components": [],
+                "children": [
+                  {
+                    "id": "fab779b4-e95c-4e41-8f27-639ecfe4072d",
+                    "name": "Trim",
+                    "enabled": true,
+                    "tags": [],
+                    "transform": {
+                      "position": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "rotation": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "scale": [
+                        0.36,
+                        0.04,
+                        0.36
+                      ]
+                    },
+                    "components": [
+                      {
+                        "id": "e298f4b6-b0ef-4eb8-ac1a-e265e9de25f6",
+                        "type": "render",
+                        "enabled": true,
+                        "meshType": "box",
+                        "meshAssetId": null,
+                        "castShadows": false,
+                        "receiveShadows": true,
+                        "material": {
+                          "diffuseColor": [
+                            0.773,
+                            0.608,
+                            0.306
+                          ],
+                          "metalness": 0.7,
+                          "gloss": 0.6,
+                          "emissiveColor": [
+                            0,
+                            0,
+                            0
+                          ],
+                          "emissiveIntensity": 1,
+                          "opacity": 1,
+                          "useLighting": true,
+                          "diffuseMapAssetId": null,
+                          "normalMapAssetId": null,
+                          "metalnessMapAssetId": null
+                        }
+                      }
+                    ],
+                    "children": []
+                  },
+                  {
+                    "id": "3b69d7a3-78a2-4fc4-9cee-8047b58b92d0",
+                    "name": "Bulb",
+                    "enabled": true,
+                    "tags": [],
+                    "transform": {
+                      "position": [
+                        0,
+                        -0.03,
+                        0
+                      ],
+                      "rotation": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "scale": [
+                        0.18,
+                        0.12,
+                        0.18
+                      ]
+                    },
+                    "components": [
+                      {
+                        "id": "8da808fd-2b55-4f98-9713-65089e30eff6",
+                        "type": "render",
+                        "enabled": true,
+                        "meshType": "sphere",
+                        "meshAssetId": null,
+                        "castShadows": false,
+                        "receiveShadows": false,
+                        "material": {
+                          "diffuseColor": [
+                            1,
+                            0.94,
+                            0.8
+                          ],
+                          "metalness": 0.02,
+                          "gloss": 0.32,
+                          "emissiveColor": [
+                            1,
+                            0.8,
+                            0.47
+                          ],
+                          "emissiveIntensity": 2,
+                          "opacity": 1,
+                          "useLighting": false,
+                          "diffuseMapAssetId": null,
+                          "normalMapAssetId": null,
+                          "metalnessMapAssetId": null
+                        }
+                      }
+                    ],
+                    "children": []
+                  }
+                ]
+              },
+              {
+                "id": "6b534af2-4276-41de-83f0-80ade74ad0f8",
+                "name": "PF_Ceiling_Light_8_0",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    8,
+                    6.95,
+                    0
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    1,
+                    1,
+                    1
+                  ]
+                },
+                "components": [],
+                "children": [
+                  {
+                    "id": "c84aca52-40f3-45f8-8d31-3e1295df73cc",
+                    "name": "Trim",
+                    "enabled": true,
+                    "tags": [],
+                    "transform": {
+                      "position": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "rotation": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "scale": [
+                        0.36,
+                        0.04,
+                        0.36
+                      ]
+                    },
+                    "components": [
+                      {
+                        "id": "ca7d7722-206b-4e3d-95c7-e869866ca71f",
+                        "type": "render",
+                        "enabled": true,
+                        "meshType": "box",
+                        "meshAssetId": null,
+                        "castShadows": false,
+                        "receiveShadows": true,
+                        "material": {
+                          "diffuseColor": [
+                            0.773,
+                            0.608,
+                            0.306
+                          ],
+                          "metalness": 0.7,
+                          "gloss": 0.6,
+                          "emissiveColor": [
+                            0,
+                            0,
+                            0
+                          ],
+                          "emissiveIntensity": 1,
+                          "opacity": 1,
+                          "useLighting": true,
+                          "diffuseMapAssetId": null,
+                          "normalMapAssetId": null,
+                          "metalnessMapAssetId": null
+                        }
+                      }
+                    ],
+                    "children": []
+                  },
+                  {
+                    "id": "f3579c3e-c479-4b07-8da1-ed52e3a349f7",
+                    "name": "Bulb",
+                    "enabled": true,
+                    "tags": [],
+                    "transform": {
+                      "position": [
+                        0,
+                        -0.03,
+                        0
+                      ],
+                      "rotation": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "scale": [
+                        0.18,
+                        0.12,
+                        0.18
+                      ]
+                    },
+                    "components": [
+                      {
+                        "id": "0eddab8c-9963-4897-b38e-ab5bbd7021fc",
+                        "type": "render",
+                        "enabled": true,
+                        "meshType": "sphere",
+                        "meshAssetId": null,
+                        "castShadows": false,
+                        "receiveShadows": false,
+                        "material": {
+                          "diffuseColor": [
+                            1,
+                            0.94,
+                            0.8
+                          ],
+                          "metalness": 0.02,
+                          "gloss": 0.32,
+                          "emissiveColor": [
+                            1,
+                            0.8,
+                            0.47
+                          ],
+                          "emissiveIntensity": 2,
+                          "opacity": 1,
+                          "useLighting": false,
+                          "diffuseMapAssetId": null,
+                          "normalMapAssetId": null,
+                          "metalnessMapAssetId": null
+                        }
+                      }
+                    ],
+                    "children": []
+                  }
+                ]
+              },
+              {
+                "id": "035fad4e-77f0-40a6-a00a-de3c6f364e49",
+                "name": "PF_Ceiling_Light_8_6",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    8,
+                    6.95,
+                    6
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    1,
+                    1,
+                    1
+                  ]
+                },
+                "components": [],
+                "children": [
+                  {
+                    "id": "5d03c49d-49d3-4963-923b-63062639bffc",
+                    "name": "Trim",
+                    "enabled": true,
+                    "tags": [],
+                    "transform": {
+                      "position": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "rotation": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "scale": [
+                        0.36,
+                        0.04,
+                        0.36
+                      ]
+                    },
+                    "components": [
+                      {
+                        "id": "8ee04966-1254-46ce-84d8-335b9d758f64",
+                        "type": "render",
+                        "enabled": true,
+                        "meshType": "box",
+                        "meshAssetId": null,
+                        "castShadows": false,
+                        "receiveShadows": true,
+                        "material": {
+                          "diffuseColor": [
+                            0.773,
+                            0.608,
+                            0.306
+                          ],
+                          "metalness": 0.7,
+                          "gloss": 0.6,
+                          "emissiveColor": [
+                            0,
+                            0,
+                            0
+                          ],
+                          "emissiveIntensity": 1,
+                          "opacity": 1,
+                          "useLighting": true,
+                          "diffuseMapAssetId": null,
+                          "normalMapAssetId": null,
+                          "metalnessMapAssetId": null
+                        }
+                      }
+                    ],
+                    "children": []
+                  },
+                  {
+                    "id": "4a21cb6c-fb92-4224-9123-50667e7ecc8b",
+                    "name": "Bulb",
+                    "enabled": true,
+                    "tags": [],
+                    "transform": {
+                      "position": [
+                        0,
+                        -0.03,
+                        0
+                      ],
+                      "rotation": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "scale": [
+                        0.18,
+                        0.12,
+                        0.18
+                      ]
+                    },
+                    "components": [
+                      {
+                        "id": "ba291fa3-5e99-408c-baae-13932ac48c0f",
+                        "type": "render",
+                        "enabled": true,
+                        "meshType": "sphere",
+                        "meshAssetId": null,
+                        "castShadows": false,
+                        "receiveShadows": false,
+                        "material": {
+                          "diffuseColor": [
+                            1,
+                            0.94,
+                            0.8
+                          ],
+                          "metalness": 0.02,
+                          "gloss": 0.32,
+                          "emissiveColor": [
+                            1,
+                            0.8,
+                            0.47
+                          ],
+                          "emissiveIntensity": 2,
+                          "opacity": 1,
+                          "useLighting": false,
+                          "diffuseMapAssetId": null,
+                          "normalMapAssetId": null,
+                          "metalnessMapAssetId": null
+                        }
+                      }
+                    ],
+                    "children": []
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "35451966-c7df-415c-b75e-6248cdd5e97f",
+        "name": "Portal_Doors",
+        "enabled": true,
+        "tags": [],
+        "transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "components": [],
+        "children": [
+          {
+            "id": "8c215de3-d964-4093-af8c-b169f6d7d588",
+            "name": "Portal_Door_Cinema",
+            "enabled": true,
+            "tags": [
+              "portal_door",
+              "load_scene:ca-van-nghe-cinema"
+            ],
+            "transform": {
+              "position": [
+                -4.5,
+                0,
+                -10.65
+              ],
+              "rotation": [
+                0,
+                0,
+                0
+              ],
+              "scale": [
+                1,
+                1,
+                1
+              ]
+            },
+            "components": [
+              {
+                "id": "4342a49e-cb5c-435d-88b5-1e1631cba334",
+                "type": "script",
+                "enabled": true,
+                "scriptName": "Interactable",
+                "code": "",
+                "attributes": [
+                  {
+                    "name": "interactId",
+                    "type": "string",
+                    "value": "load_scene:ca-van-nghe-cinema"
+                  },
+                  {
+                    "name": "interactTitle",
+                    "type": "string",
+                    "value": "Rạp Chiếu Phim"
+                  },
+                  {
+                    "name": "interactDistance",
+                    "type": "number",
+                    "value": 3.4
+                  },
+                  {
+                    "name": "targetSceneId",
+                    "type": "string",
+                    "value": "ca-van-nghe-cinema"
+                  }
+                ]
+              }
+            ],
+            "children": [
+              {
+                "id": "fa979113-c9e2-48eb-b1e1-5b1786850e05",
+                "name": "Door Pilaster Left",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    -1.55,
+                    1.9,
+                    0
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    0.26,
+                    3.8,
+                    0.34
+                  ]
+                },
+                "components": [
+                  {
+                    "id": "7d4cd1dc-5b4f-4358-a64c-b083fd8ef956",
+                    "type": "render",
+                    "enabled": true,
+                    "meshType": "box",
+                    "meshAssetId": null,
+                    "castShadows": false,
+                    "receiveShadows": true,
+                    "material": {
+                      "diffuseColor": [
+                        0.169,
+                        0.125,
+                        0.098
+                      ],
+                      "metalness": 0.02,
+                      "gloss": 0.28,
+                      "emissiveColor": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "emissiveIntensity": 1,
+                      "opacity": 1,
+                      "useLighting": true,
+                      "diffuseMapAssetId": null,
+                      "normalMapAssetId": null,
+                      "metalnessMapAssetId": null
+                    }
+                  }
+                ],
+                "children": []
+              },
+              {
+                "id": "244ca1f6-7c52-49b9-8c0d-43e5fda3d6f6",
+                "name": "Door Pilaster Right",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    1.55,
+                    1.9,
+                    0
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    0.26,
+                    3.8,
+                    0.34
+                  ]
+                },
+                "components": [
+                  {
+                    "id": "cfc71d61-a20e-4573-a951-8bea6278b6c0",
+                    "type": "render",
+                    "enabled": true,
+                    "meshType": "box",
+                    "meshAssetId": null,
+                    "castShadows": false,
+                    "receiveShadows": true,
+                    "material": {
+                      "diffuseColor": [
+                        0.169,
+                        0.125,
+                        0.098
+                      ],
+                      "metalness": 0.02,
+                      "gloss": 0.28,
+                      "emissiveColor": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "emissiveIntensity": 1,
+                      "opacity": 1,
+                      "useLighting": true,
+                      "diffuseMapAssetId": null,
+                      "normalMapAssetId": null,
+                      "metalnessMapAssetId": null
+                    }
+                  }
+                ],
+                "children": []
+              },
+              {
+                "id": "cc1cee69-930b-454d-8e7a-7433cbbb3527",
+                "name": "Door Header",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    0,
+                    3.65,
+                    0
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    3.38,
+                    0.36,
+                    0.36
+                  ]
+                },
+                "components": [
+                  {
+                    "id": "1f08b764-f94d-45c9-9575-06de227682f7",
+                    "type": "render",
+                    "enabled": true,
+                    "meshType": "box",
+                    "meshAssetId": null,
+                    "castShadows": false,
+                    "receiveShadows": true,
+                    "material": {
+                      "diffuseColor": [
+                        0.149,
+                        0.11,
+                        0.086
+                      ],
+                      "metalness": 0.02,
+                      "gloss": 0.28,
+                      "emissiveColor": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "emissiveIntensity": 1,
+                      "opacity": 1,
+                      "useLighting": true,
+                      "diffuseMapAssetId": null,
+                      "normalMapAssetId": null,
+                      "metalnessMapAssetId": null
+                    }
+                  }
+                ],
+                "children": []
+              },
+              {
+                "id": "2a14315e-6b4b-43d9-ac00-767487a7aa86",
+                "name": "Door Threshold",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    0,
+                    0.015,
+                    0.1
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    2.95,
+                    0.03,
+                    0.55
+                  ]
+                },
+                "components": [
+                  {
+                    "id": "b0c6deb9-e8f7-4f96-ad86-ff1940366aaf",
+                    "type": "render",
+                    "enabled": true,
+                    "meshType": "box",
+                    "meshAssetId": null,
+                    "castShadows": false,
+                    "receiveShadows": true,
+                    "material": {
+                      "diffuseColor": [
+                        0.773,
+                        0.608,
+                        0.306
+                      ],
+                      "metalness": 0.7,
+                      "gloss": 0.6,
+                      "emissiveColor": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "emissiveIntensity": 1,
+                      "opacity": 1,
+                      "useLighting": true,
+                      "diffuseMapAssetId": null,
+                      "normalMapAssetId": null,
+                      "metalnessMapAssetId": null
+                    }
+                  }
+                ],
+                "children": []
+              },
+              {
+                "id": "dd73844f-f784-4b14-8a92-20f42bdbe0fc",
+                "name": "Portal Trim Left",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    -1.38,
+                    1.75,
+                    0.14
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    0.05,
+                    3.45,
+                    0.05
+                  ]
+                },
+                "components": [
+                  {
+                    "id": "4b520b76-989c-46f3-9e76-db5ec765e424",
+                    "type": "render",
+                    "enabled": true,
+                    "meshType": "box",
+                    "meshAssetId": null,
+                    "castShadows": false,
+                    "receiveShadows": true,
+                    "material": {
+                      "diffuseColor": [
+                        0.2196078431372549,
+                        0.7411764705882353,
+                        0.9725490196078431
+                      ],
+                      "metalness": 0.02,
+                      "gloss": 0.32,
+                      "emissiveColor": [
+                        0.2196078431372549,
+                        0.7411764705882353,
+                        0.9725490196078431
+                      ],
+                      "emissiveIntensity": 1.8,
+                      "opacity": 1,
+                      "useLighting": false,
+                      "diffuseMapAssetId": null,
+                      "normalMapAssetId": null,
+                      "metalnessMapAssetId": null
+                    }
+                  }
+                ],
+                "children": []
+              },
+              {
+                "id": "dfcf0737-8fb2-45ee-a681-95f9b82518c8",
+                "name": "Portal Trim Right",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    1.38,
+                    1.75,
+                    0.14
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    0.05,
+                    3.45,
+                    0.05
+                  ]
+                },
+                "components": [
+                  {
+                    "id": "fd43d078-b8e5-46e2-9b11-5467cb47d7c9",
+                    "type": "render",
+                    "enabled": true,
+                    "meshType": "box",
+                    "meshAssetId": null,
+                    "castShadows": false,
+                    "receiveShadows": true,
+                    "material": {
+                      "diffuseColor": [
+                        0.2196078431372549,
+                        0.7411764705882353,
+                        0.9725490196078431
+                      ],
+                      "metalness": 0.02,
+                      "gloss": 0.32,
+                      "emissiveColor": [
+                        0.2196078431372549,
+                        0.7411764705882353,
+                        0.9725490196078431
+                      ],
+                      "emissiveIntensity": 1.8,
+                      "opacity": 1,
+                      "useLighting": false,
+                      "diffuseMapAssetId": null,
+                      "normalMapAssetId": null,
+                      "metalnessMapAssetId": null
+                    }
+                  }
+                ],
+                "children": []
+              },
+              {
+                "id": "1d5e970f-8340-4c14-86b2-102e0b98dc1b",
+                "name": "Portal Trim Top",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    0,
+                    3.45,
+                    0.14
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    2.8,
+                    0.05,
+                    0.05
+                  ]
+                },
+                "components": [
+                  {
+                    "id": "a5949a17-716b-4788-897f-e4c05a0c33d7",
+                    "type": "render",
+                    "enabled": true,
+                    "meshType": "box",
+                    "meshAssetId": null,
+                    "castShadows": false,
+                    "receiveShadows": true,
+                    "material": {
+                      "diffuseColor": [
+                        0.2196078431372549,
+                        0.7411764705882353,
+                        0.9725490196078431
+                      ],
+                      "metalness": 0.02,
+                      "gloss": 0.32,
+                      "emissiveColor": [
+                        0.2196078431372549,
+                        0.7411764705882353,
+                        0.9725490196078431
+                      ],
+                      "emissiveIntensity": 1.8,
+                      "opacity": 1,
+                      "useLighting": false,
+                      "diffuseMapAssetId": null,
+                      "normalMapAssetId": null,
+                      "metalnessMapAssetId": null
+                    }
+                  }
+                ],
+                "children": []
+              },
+              {
+                "id": "b40895e3-93ab-4d05-8c72-d06a700bf00d",
+                "name": "Door Leaf Left",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    -0.67,
+                    1.72,
+                    0
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    1.3,
+                    3.4,
+                    0.12
+                  ]
+                },
+                "components": [
+                  {
+                    "id": "04de9069-b38d-46a0-8f65-82716b06697b",
+                    "type": "render",
+                    "enabled": true,
+                    "meshType": "box",
+                    "meshAssetId": null,
+                    "castShadows": false,
+                    "receiveShadows": true,
+                    "material": {
+                      "diffuseColor": [
+                        0.133,
+                        0.094,
+                        0.075
+                      ],
+                      "metalness": 0.02,
+                      "gloss": 0.22,
+                      "emissiveColor": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "emissiveIntensity": 1,
+                      "opacity": 1,
+                      "useLighting": true,
+                      "diffuseMapAssetId": null,
+                      "normalMapAssetId": null,
+                      "metalnessMapAssetId": null
+                    }
+                  },
+                  {
+                    "id": "03dfcb74-8f38-4e34-affc-ee1b19b072ac",
+                    "type": "collision",
+                    "enabled": true,
+                    "shape": "box",
+                    "halfExtents": [
+                      0.65,
+                      1.7,
+                      0.06
+                    ],
+                    "radius": 0.5,
+                    "height": 2,
+                    "meshAssetId": null,
+                    "isTrigger": false
+                  },
+                  {
+                    "id": "8a401510-1b05-4155-8633-21b0303c7cd5",
+                    "type": "rigidbody",
+                    "enabled": true,
+                    "bodyType": "static",
+                    "mass": 0,
+                    "friction": 0.8,
+                    "restitution": 0.1,
+                    "linearDamping": 0,
+                    "angularDamping": 0,
+                    "linearFactor": [
+                      1,
+                      1,
+                      1
+                    ],
+                    "angularFactor": [
+                      1,
+                      1,
+                      1
+                    ]
+                  }
+                ],
+                "children": []
+              },
+              {
+                "id": "86970b39-54e2-4e91-860c-e7e87df03972",
+                "name": "Door Leaf Right",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    0.67,
+                    1.72,
+                    0
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    1.3,
+                    3.4,
+                    0.12
+                  ]
+                },
+                "components": [
+                  {
+                    "id": "5f83dbe8-c935-4faf-a84e-bb7f3e72cd1d",
+                    "type": "render",
+                    "enabled": true,
+                    "meshType": "box",
+                    "meshAssetId": null,
+                    "castShadows": false,
+                    "receiveShadows": true,
+                    "material": {
+                      "diffuseColor": [
+                        0.133,
+                        0.094,
+                        0.075
+                      ],
+                      "metalness": 0.02,
+                      "gloss": 0.22,
+                      "emissiveColor": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "emissiveIntensity": 1,
+                      "opacity": 1,
+                      "useLighting": true,
+                      "diffuseMapAssetId": null,
+                      "normalMapAssetId": null,
+                      "metalnessMapAssetId": null
+                    }
+                  },
+                  {
+                    "id": "ae3b1b3c-7cbe-4e2d-9d34-87e92fa0a243",
+                    "type": "collision",
+                    "enabled": true,
+                    "shape": "box",
+                    "halfExtents": [
+                      0.65,
+                      1.7,
+                      0.06
+                    ],
+                    "radius": 0.5,
+                    "height": 2,
+                    "meshAssetId": null,
+                    "isTrigger": false
+                  },
+                  {
+                    "id": "f6500794-631a-4a5c-8da1-93e2885f3ba4",
+                    "type": "rigidbody",
+                    "enabled": true,
+                    "bodyType": "static",
+                    "mass": 0,
+                    "friction": 0.8,
+                    "restitution": 0.1,
+                    "linearDamping": 0,
+                    "angularDamping": 0,
+                    "linearFactor": [
+                      1,
+                      1,
+                      1
+                    ],
+                    "angularFactor": [
+                      1,
+                      1,
+                      1
+                    ]
+                  }
+                ],
+                "children": []
+              },
+              {
+                "id": "f5bb8d7e-c800-49db-9bb4-ba0d022e57c5",
+                "name": "Door Handle Left",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    -0.15,
+                    1.45,
+                    0.09
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    0.05,
+                    0.42,
+                    0.05
+                  ]
+                },
+                "components": [
+                  {
+                    "id": "3e64e7e0-56bb-4e19-b451-cd59957b2a89",
+                    "type": "render",
+                    "enabled": true,
+                    "meshType": "box",
+                    "meshAssetId": null,
+                    "castShadows": false,
+                    "receiveShadows": true,
+                    "material": {
+                      "diffuseColor": [
+                        0.773,
+                        0.608,
+                        0.306
+                      ],
+                      "metalness": 0.7,
+                      "gloss": 0.6,
+                      "emissiveColor": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "emissiveIntensity": 1,
+                      "opacity": 1,
+                      "useLighting": true,
+                      "diffuseMapAssetId": null,
+                      "normalMapAssetId": null,
+                      "metalnessMapAssetId": null
+                    }
+                  }
+                ],
+                "children": []
+              },
+              {
+                "id": "04f09e64-294c-4a14-a422-9772882616e1",
+                "name": "Door Handle Right",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    0.15,
+                    1.45,
+                    0.09
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    0.05,
+                    0.42,
+                    0.05
+                  ]
+                },
+                "components": [
+                  {
+                    "id": "f33fd0b5-7942-4a51-bd1c-3ebb09646baf",
+                    "type": "render",
+                    "enabled": true,
+                    "meshType": "box",
+                    "meshAssetId": null,
+                    "castShadows": false,
+                    "receiveShadows": true,
+                    "material": {
+                      "diffuseColor": [
+                        0.773,
+                        0.608,
+                        0.306
+                      ],
+                      "metalness": 0.7,
+                      "gloss": 0.6,
+                      "emissiveColor": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "emissiveIntensity": 1,
+                      "opacity": 1,
+                      "useLighting": true,
+                      "diffuseMapAssetId": null,
+                      "normalMapAssetId": null,
+                      "metalnessMapAssetId": null
+                    }
+                  }
+                ],
+                "children": []
+              },
+              {
+                "id": "aba6f09d-9159-43ee-a2fb-d67daea83229",
+                "name": "Signboard Backing",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    0,
+                    4.45,
+                    0.1
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    3.35,
+                    1.1,
+                    0.12
+                  ]
+                },
+                "components": [
+                  {
+                    "id": "20fe73df-6465-4017-bcec-9df18e14de3f",
+                    "type": "render",
+                    "enabled": true,
+                    "meshType": "box",
+                    "meshAssetId": null,
+                    "castShadows": false,
+                    "receiveShadows": true,
+                    "material": {
+                      "diffuseColor": [
+                        0.078,
+                        0.094,
+                        0.114
+                      ],
+                      "metalness": 0.72,
+                      "gloss": 0.64,
+                      "emissiveColor": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "emissiveIntensity": 1,
+                      "opacity": 1,
+                      "useLighting": true,
+                      "diffuseMapAssetId": null,
+                      "normalMapAssetId": null,
+                      "metalnessMapAssetId": null
+                    }
+                  }
+                ],
+                "children": []
+              },
+              {
+                "id": "507643b4-3121-4e97-afd4-5b2a5eef9e1b",
+                "name": "Signboard Brass Trim",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    0,
+                    4.45,
+                    0.15
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    3.22,
+                    1,
+                    0.05
+                  ]
+                },
+                "components": [
+                  {
+                    "id": "b645a499-92ba-4950-827a-db6f9fff9024",
+                    "type": "render",
+                    "enabled": true,
+                    "meshType": "box",
+                    "meshAssetId": null,
+                    "castShadows": false,
+                    "receiveShadows": true,
+                    "material": {
+                      "diffuseColor": [
+                        0.773,
+                        0.608,
+                        0.306
+                      ],
+                      "metalness": 0.7,
+                      "gloss": 0.6,
+                      "emissiveColor": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "emissiveIntensity": 1,
+                      "opacity": 1,
+                      "useLighting": true,
+                      "diffuseMapAssetId": null,
+                      "normalMapAssetId": null,
+                      "metalnessMapAssetId": null
+                    }
+                  }
+                ],
+                "children": []
+              },
+              {
+                "id": "2a30594a-5050-48c8-89bc-bd76b31f1092",
+                "name": "Portal Signboard Cinema",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    0,
+                    4.45,
+                    0.19
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    3.08,
+                    0.88,
+                    0.02
+                  ]
+                },
+                "components": [
+                  {
+                    "id": "fc6a2e7a-35b8-447d-bf20-55b06f37dd7e",
+                    "type": "render",
+                    "enabled": true,
+                    "meshType": "box",
+                    "meshAssetId": null,
+                    "castShadows": false,
+                    "receiveShadows": true,
+                    "material": {
+                      "diffuseColor": [
+                        0.08,
+                        0.09,
+                        0.12
+                      ],
+                      "metalness": 0.02,
+                      "gloss": 0.32,
+                      "emissiveColor": [
+                        1,
+                        1,
+                        1
+                      ],
+                      "emissiveIntensity": 1.15,
+                      "opacity": 1,
+                      "useLighting": false,
+                      "loungeMaterialId": "lounge:doorSign:ca-van-nghe-cinema",
+                      "diffuseMapAssetId": null,
+                      "normalMapAssetId": null,
+                      "metalnessMapAssetId": null
+                    }
+                  }
+                ],
+                "children": []
+              },
+              {
+                "id": "814fd809-4a6f-440c-895f-7731c817fdd1",
+                "name": "Portal Spotlight",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    0,
+                    5.4,
+                    2
+                  ],
+                  "rotation": [
+                    27.897269610609115,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    1,
+                    1,
+                    1
+                  ]
+                },
+                "components": [
+                  {
+                    "id": "26c066b1-4345-41cd-961a-05b31abcc1cf",
+                    "type": "light",
+                    "enabled": true,
+                    "lightType": "spot",
+                    "color": [
+                      0.2196078431372549,
+                      0.7411764705882353,
+                      0.9725490196078431
+                    ],
+                    "intensity": 3.2,
+                    "range": 10,
+                    "castShadows": false,
+                    "innerConeAngle": 24,
+                    "outerConeAngle": 48,
+                    "shadowBias": 0.05,
+                    "normalOffsetBias": 0,
+                    "shadowDistance": 40,
+                    "shadowResolution": 1024
+                  }
+                ],
+                "children": []
+              }
+            ]
+          },
+          {
+            "id": "c740559b-4f20-4909-8480-61a8d84abce5",
+            "name": "Portal_Door_TeaRoom",
+            "enabled": true,
+            "tags": [
+              "portal_door",
+              "load_scene:ca-van-nghe-tearoom"
+            ],
+            "transform": {
+              "position": [
+                4.5,
+                0,
+                -10.65
+              ],
+              "rotation": [
+                0,
+                0,
+                0
+              ],
+              "scale": [
+                1,
+                1,
+                1
+              ]
+            },
+            "components": [
+              {
+                "id": "36ade410-9e13-4b59-8a69-0c3795b6da94",
+                "type": "script",
+                "enabled": true,
+                "scriptName": "Interactable",
+                "code": "",
+                "attributes": [
+                  {
+                    "name": "interactId",
+                    "type": "string",
+                    "value": "load_scene:ca-van-nghe-tearoom"
+                  },
+                  {
+                    "name": "interactTitle",
+                    "type": "string",
+                    "value": "Phòng Trà Acoustic"
+                  },
+                  {
+                    "name": "interactDistance",
+                    "type": "number",
+                    "value": 3.4
+                  },
+                  {
+                    "name": "targetSceneId",
+                    "type": "string",
+                    "value": "ca-van-nghe-tearoom"
+                  }
+                ]
+              }
+            ],
+            "children": [
+              {
+                "id": "9efa3204-6fb4-4d76-b774-72b57dfd4fd4",
+                "name": "Door Pilaster Left",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    -1.55,
+                    1.9,
+                    0
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    0.26,
+                    3.8,
+                    0.34
+                  ]
+                },
+                "components": [
+                  {
+                    "id": "241127cf-1eba-4da1-a73c-110a723c22c9",
+                    "type": "render",
+                    "enabled": true,
+                    "meshType": "box",
+                    "meshAssetId": null,
+                    "castShadows": false,
+                    "receiveShadows": true,
+                    "material": {
+                      "diffuseColor": [
+                        0.169,
+                        0.125,
+                        0.098
+                      ],
+                      "metalness": 0.02,
+                      "gloss": 0.28,
+                      "emissiveColor": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "emissiveIntensity": 1,
+                      "opacity": 1,
+                      "useLighting": true,
+                      "diffuseMapAssetId": null,
+                      "normalMapAssetId": null,
+                      "metalnessMapAssetId": null
+                    }
+                  }
+                ],
+                "children": []
+              },
+              {
+                "id": "b913b63a-b55e-4380-a80d-0f291863c397",
+                "name": "Door Pilaster Right",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    1.55,
+                    1.9,
+                    0
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    0.26,
+                    3.8,
+                    0.34
+                  ]
+                },
+                "components": [
+                  {
+                    "id": "4e0fd925-9a8a-4ae4-8238-e5a1ca04e94d",
+                    "type": "render",
+                    "enabled": true,
+                    "meshType": "box",
+                    "meshAssetId": null,
+                    "castShadows": false,
+                    "receiveShadows": true,
+                    "material": {
+                      "diffuseColor": [
+                        0.169,
+                        0.125,
+                        0.098
+                      ],
+                      "metalness": 0.02,
+                      "gloss": 0.28,
+                      "emissiveColor": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "emissiveIntensity": 1,
+                      "opacity": 1,
+                      "useLighting": true,
+                      "diffuseMapAssetId": null,
+                      "normalMapAssetId": null,
+                      "metalnessMapAssetId": null
+                    }
+                  }
+                ],
+                "children": []
+              },
+              {
+                "id": "c03a1399-a4e2-47b9-9327-814a4cb7f9e7",
+                "name": "Door Header",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    0,
+                    3.65,
+                    0
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    3.38,
+                    0.36,
+                    0.36
+                  ]
+                },
+                "components": [
+                  {
+                    "id": "6e8a3e27-fe3f-43c9-bb54-6180f24b79ca",
+                    "type": "render",
+                    "enabled": true,
+                    "meshType": "box",
+                    "meshAssetId": null,
+                    "castShadows": false,
+                    "receiveShadows": true,
+                    "material": {
+                      "diffuseColor": [
+                        0.149,
+                        0.11,
+                        0.086
+                      ],
+                      "metalness": 0.02,
+                      "gloss": 0.28,
+                      "emissiveColor": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "emissiveIntensity": 1,
+                      "opacity": 1,
+                      "useLighting": true,
+                      "diffuseMapAssetId": null,
+                      "normalMapAssetId": null,
+                      "metalnessMapAssetId": null
+                    }
+                  }
+                ],
+                "children": []
+              },
+              {
+                "id": "d0666df7-5b76-45f8-9f98-2dc1329e125a",
+                "name": "Door Threshold",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    0,
+                    0.015,
+                    0.1
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    2.95,
+                    0.03,
+                    0.55
+                  ]
+                },
+                "components": [
+                  {
+                    "id": "66d0cf34-52ef-4607-bc0a-fc348bfd66b6",
+                    "type": "render",
+                    "enabled": true,
+                    "meshType": "box",
+                    "meshAssetId": null,
+                    "castShadows": false,
+                    "receiveShadows": true,
+                    "material": {
+                      "diffuseColor": [
+                        0.773,
+                        0.608,
+                        0.306
+                      ],
+                      "metalness": 0.7,
+                      "gloss": 0.6,
+                      "emissiveColor": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "emissiveIntensity": 1,
+                      "opacity": 1,
+                      "useLighting": true,
+                      "diffuseMapAssetId": null,
+                      "normalMapAssetId": null,
+                      "metalnessMapAssetId": null
+                    }
+                  }
+                ],
+                "children": []
+              },
+              {
+                "id": "1edf8ae0-5315-4e6f-aaf3-8a0c614fe09f",
+                "name": "Portal Trim Left",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    -1.38,
+                    1.75,
+                    0.14
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    0.05,
+                    3.45,
+                    0.05
+                  ]
+                },
+                "components": [
+                  {
+                    "id": "1bf14f33-ea8c-4a90-8b54-cb35354d2ccc",
+                    "type": "render",
+                    "enabled": true,
+                    "meshType": "box",
+                    "meshAssetId": null,
+                    "castShadows": false,
+                    "receiveShadows": true,
+                    "material": {
+                      "diffuseColor": [
+                        0.9607843137254902,
+                        0.6196078431372549,
+                        0.043137254901960784
+                      ],
+                      "metalness": 0.02,
+                      "gloss": 0.32,
+                      "emissiveColor": [
+                        0.9607843137254902,
+                        0.6196078431372549,
+                        0.043137254901960784
+                      ],
+                      "emissiveIntensity": 1.8,
+                      "opacity": 1,
+                      "useLighting": false,
+                      "diffuseMapAssetId": null,
+                      "normalMapAssetId": null,
+                      "metalnessMapAssetId": null
+                    }
+                  }
+                ],
+                "children": []
+              },
+              {
+                "id": "587729a6-fef4-4aed-b242-be55fc6c4203",
+                "name": "Portal Trim Right",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    1.38,
+                    1.75,
+                    0.14
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    0.05,
+                    3.45,
+                    0.05
+                  ]
+                },
+                "components": [
+                  {
+                    "id": "c1ba2581-9783-4ff5-b9f6-fa39b91e3536",
+                    "type": "render",
+                    "enabled": true,
+                    "meshType": "box",
+                    "meshAssetId": null,
+                    "castShadows": false,
+                    "receiveShadows": true,
+                    "material": {
+                      "diffuseColor": [
+                        0.9607843137254902,
+                        0.6196078431372549,
+                        0.043137254901960784
+                      ],
+                      "metalness": 0.02,
+                      "gloss": 0.32,
+                      "emissiveColor": [
+                        0.9607843137254902,
+                        0.6196078431372549,
+                        0.043137254901960784
+                      ],
+                      "emissiveIntensity": 1.8,
+                      "opacity": 1,
+                      "useLighting": false,
+                      "diffuseMapAssetId": null,
+                      "normalMapAssetId": null,
+                      "metalnessMapAssetId": null
+                    }
+                  }
+                ],
+                "children": []
+              },
+              {
+                "id": "aa22f103-f821-423c-a012-60b92eda9e30",
+                "name": "Portal Trim Top",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    0,
+                    3.45,
+                    0.14
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    2.8,
+                    0.05,
+                    0.05
+                  ]
+                },
+                "components": [
+                  {
+                    "id": "ac97c654-47b8-413a-b9c1-426eb9151ebc",
+                    "type": "render",
+                    "enabled": true,
+                    "meshType": "box",
+                    "meshAssetId": null,
+                    "castShadows": false,
+                    "receiveShadows": true,
+                    "material": {
+                      "diffuseColor": [
+                        0.9607843137254902,
+                        0.6196078431372549,
+                        0.043137254901960784
+                      ],
+                      "metalness": 0.02,
+                      "gloss": 0.32,
+                      "emissiveColor": [
+                        0.9607843137254902,
+                        0.6196078431372549,
+                        0.043137254901960784
+                      ],
+                      "emissiveIntensity": 1.8,
+                      "opacity": 1,
+                      "useLighting": false,
+                      "diffuseMapAssetId": null,
+                      "normalMapAssetId": null,
+                      "metalnessMapAssetId": null
+                    }
+                  }
+                ],
+                "children": []
+              },
+              {
+                "id": "60aac544-6c63-4197-9499-40d7b7f08d15",
+                "name": "Door Leaf Left",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    -0.67,
+                    1.72,
+                    0
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    1.3,
+                    3.4,
+                    0.12
+                  ]
+                },
+                "components": [
+                  {
+                    "id": "5fdc9354-e75e-4b51-818b-7476fe550d5d",
+                    "type": "render",
+                    "enabled": true,
+                    "meshType": "box",
+                    "meshAssetId": null,
+                    "castShadows": false,
+                    "receiveShadows": true,
+                    "material": {
+                      "diffuseColor": [
+                        0.133,
+                        0.094,
+                        0.075
+                      ],
+                      "metalness": 0.02,
+                      "gloss": 0.22,
+                      "emissiveColor": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "emissiveIntensity": 1,
+                      "opacity": 1,
+                      "useLighting": true,
+                      "diffuseMapAssetId": null,
+                      "normalMapAssetId": null,
+                      "metalnessMapAssetId": null
+                    }
+                  },
+                  {
+                    "id": "7982e2ac-89d3-4781-9862-02c9856a13be",
+                    "type": "collision",
+                    "enabled": true,
+                    "shape": "box",
+                    "halfExtents": [
+                      0.65,
+                      1.7,
+                      0.06
+                    ],
+                    "radius": 0.5,
+                    "height": 2,
+                    "meshAssetId": null,
+                    "isTrigger": false
+                  },
+                  {
+                    "id": "797358e7-d489-4c9c-92e4-6a2a9d6b05f2",
+                    "type": "rigidbody",
+                    "enabled": true,
+                    "bodyType": "static",
+                    "mass": 0,
+                    "friction": 0.8,
+                    "restitution": 0.1,
+                    "linearDamping": 0,
+                    "angularDamping": 0,
+                    "linearFactor": [
+                      1,
+                      1,
+                      1
+                    ],
+                    "angularFactor": [
+                      1,
+                      1,
+                      1
+                    ]
+                  }
+                ],
+                "children": []
+              },
+              {
+                "id": "ea862915-2198-42c5-a7c6-2eef00cc5c1b",
+                "name": "Door Leaf Right",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    0.67,
+                    1.72,
+                    0
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    1.3,
+                    3.4,
+                    0.12
+                  ]
+                },
+                "components": [
+                  {
+                    "id": "1dfa326c-9613-4601-8ef4-306e1beaba25",
+                    "type": "render",
+                    "enabled": true,
+                    "meshType": "box",
+                    "meshAssetId": null,
+                    "castShadows": false,
+                    "receiveShadows": true,
+                    "material": {
+                      "diffuseColor": [
+                        0.133,
+                        0.094,
+                        0.075
+                      ],
+                      "metalness": 0.02,
+                      "gloss": 0.22,
+                      "emissiveColor": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "emissiveIntensity": 1,
+                      "opacity": 1,
+                      "useLighting": true,
+                      "diffuseMapAssetId": null,
+                      "normalMapAssetId": null,
+                      "metalnessMapAssetId": null
+                    }
+                  },
+                  {
+                    "id": "2c85d095-a94a-4f19-ae45-f6e6af418c00",
+                    "type": "collision",
+                    "enabled": true,
+                    "shape": "box",
+                    "halfExtents": [
+                      0.65,
+                      1.7,
+                      0.06
+                    ],
+                    "radius": 0.5,
+                    "height": 2,
+                    "meshAssetId": null,
+                    "isTrigger": false
+                  },
+                  {
+                    "id": "b7fce6c6-fcfc-428e-aa0f-d92828943755",
+                    "type": "rigidbody",
+                    "enabled": true,
+                    "bodyType": "static",
+                    "mass": 0,
+                    "friction": 0.8,
+                    "restitution": 0.1,
+                    "linearDamping": 0,
+                    "angularDamping": 0,
+                    "linearFactor": [
+                      1,
+                      1,
+                      1
+                    ],
+                    "angularFactor": [
+                      1,
+                      1,
+                      1
+                    ]
+                  }
+                ],
+                "children": []
+              },
+              {
+                "id": "d3e217ab-268e-46f0-984f-bdb2d7ea1531",
+                "name": "Door Handle Left",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    -0.15,
+                    1.45,
+                    0.09
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    0.05,
+                    0.42,
+                    0.05
+                  ]
+                },
+                "components": [
+                  {
+                    "id": "6458e182-248f-46ed-884d-87c5f5edbbb9",
+                    "type": "render",
+                    "enabled": true,
+                    "meshType": "box",
+                    "meshAssetId": null,
+                    "castShadows": false,
+                    "receiveShadows": true,
+                    "material": {
+                      "diffuseColor": [
+                        0.773,
+                        0.608,
+                        0.306
+                      ],
+                      "metalness": 0.7,
+                      "gloss": 0.6,
+                      "emissiveColor": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "emissiveIntensity": 1,
+                      "opacity": 1,
+                      "useLighting": true,
+                      "diffuseMapAssetId": null,
+                      "normalMapAssetId": null,
+                      "metalnessMapAssetId": null
+                    }
+                  }
+                ],
+                "children": []
+              },
+              {
+                "id": "fa9d9b95-7db6-4845-b7fe-f7d5a21c71ce",
+                "name": "Door Handle Right",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    0.15,
+                    1.45,
+                    0.09
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    0.05,
+                    0.42,
+                    0.05
+                  ]
+                },
+                "components": [
+                  {
+                    "id": "da240cae-6126-4683-8fb1-5647a63d1239",
+                    "type": "render",
+                    "enabled": true,
+                    "meshType": "box",
+                    "meshAssetId": null,
+                    "castShadows": false,
+                    "receiveShadows": true,
+                    "material": {
+                      "diffuseColor": [
+                        0.773,
+                        0.608,
+                        0.306
+                      ],
+                      "metalness": 0.7,
+                      "gloss": 0.6,
+                      "emissiveColor": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "emissiveIntensity": 1,
+                      "opacity": 1,
+                      "useLighting": true,
+                      "diffuseMapAssetId": null,
+                      "normalMapAssetId": null,
+                      "metalnessMapAssetId": null
+                    }
+                  }
+                ],
+                "children": []
+              },
+              {
+                "id": "d6dbad96-07ad-4e21-bfa0-0421e592e0fa",
+                "name": "Signboard Backing",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    0,
+                    4.45,
+                    0.1
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    3.35,
+                    1.1,
+                    0.12
+                  ]
+                },
+                "components": [
+                  {
+                    "id": "480bf8b7-203b-48e7-8024-ae269525ed22",
+                    "type": "render",
+                    "enabled": true,
+                    "meshType": "box",
+                    "meshAssetId": null,
+                    "castShadows": false,
+                    "receiveShadows": true,
+                    "material": {
+                      "diffuseColor": [
+                        0.078,
+                        0.094,
+                        0.114
+                      ],
+                      "metalness": 0.72,
+                      "gloss": 0.64,
+                      "emissiveColor": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "emissiveIntensity": 1,
+                      "opacity": 1,
+                      "useLighting": true,
+                      "diffuseMapAssetId": null,
+                      "normalMapAssetId": null,
+                      "metalnessMapAssetId": null
+                    }
+                  }
+                ],
+                "children": []
+              },
+              {
+                "id": "ef8b37dc-c897-4e2b-84b3-05b00bbca9f2",
+                "name": "Signboard Brass Trim",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    0,
+                    4.45,
+                    0.15
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    3.22,
+                    1,
+                    0.05
+                  ]
+                },
+                "components": [
+                  {
+                    "id": "ff64c965-c20e-465f-8ffe-ac4e2f89802e",
+                    "type": "render",
+                    "enabled": true,
+                    "meshType": "box",
+                    "meshAssetId": null,
+                    "castShadows": false,
+                    "receiveShadows": true,
+                    "material": {
+                      "diffuseColor": [
+                        0.773,
+                        0.608,
+                        0.306
+                      ],
+                      "metalness": 0.7,
+                      "gloss": 0.6,
+                      "emissiveColor": [
+                        0,
+                        0,
+                        0
+                      ],
+                      "emissiveIntensity": 1,
+                      "opacity": 1,
+                      "useLighting": true,
+                      "diffuseMapAssetId": null,
+                      "normalMapAssetId": null,
+                      "metalnessMapAssetId": null
+                    }
+                  }
+                ],
+                "children": []
+              },
+              {
+                "id": "885d3526-6ba3-499d-a5df-a1f577999ccd",
+                "name": "Portal Signboard TeaRoom",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    0,
+                    4.45,
+                    0.19
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    3.08,
+                    0.88,
+                    0.02
+                  ]
+                },
+                "components": [
+                  {
+                    "id": "4d3999d4-2478-4901-8277-e3b9a8972acd",
+                    "type": "render",
+                    "enabled": true,
+                    "meshType": "box",
+                    "meshAssetId": null,
+                    "castShadows": false,
+                    "receiveShadows": true,
+                    "material": {
+                      "diffuseColor": [
+                        0.08,
+                        0.09,
+                        0.12
+                      ],
+                      "metalness": 0.02,
+                      "gloss": 0.32,
+                      "emissiveColor": [
+                        1,
+                        1,
+                        1
+                      ],
+                      "emissiveIntensity": 1.15,
+                      "opacity": 1,
+                      "useLighting": false,
+                      "loungeMaterialId": "lounge:doorSign:ca-van-nghe-tearoom",
+                      "diffuseMapAssetId": null,
+                      "normalMapAssetId": null,
+                      "metalnessMapAssetId": null
+                    }
+                  }
+                ],
+                "children": []
+              },
+              {
+                "id": "a5f8e2db-59c1-41ff-94ec-63fcc619b259",
+                "name": "Portal Spotlight",
+                "enabled": true,
+                "tags": [],
+                "transform": {
+                  "position": [
+                    0,
+                    5.4,
+                    2
+                  ],
+                  "rotation": [
+                    27.897269610609115,
+                    0,
+                    0
+                  ],
+                  "scale": [
+                    1,
+                    1,
+                    1
+                  ]
+                },
+                "components": [
+                  {
+                    "id": "ad78cb9c-92fe-4487-a0d9-f0696b82b6e4",
+                    "type": "light",
+                    "enabled": true,
+                    "lightType": "spot",
+                    "color": [
+                      0.9607843137254902,
+                      0.6196078431372549,
+                      0.043137254901960784
+                    ],
+                    "intensity": 3.2,
+                    "range": 10,
+                    "castShadows": false,
+                    "innerConeAngle": 24,
+                    "outerConeAngle": 48,
+                    "shadowBias": 0.05,
+                    "normalOffsetBias": 0,
+                    "shadowDistance": 40,
+                    "shadowResolution": 1024
+                  }
+                ],
+                "children": []
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "b023c47f-6781-4ad6-84d0-a0cbb71b1a22",
+        "name": "Lighting_Rig",
+        "enabled": true,
+        "tags": [],
+        "transform": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "components": [],
+        "children": [
+          {
+            "id": "443edbd8-3826-4922-8514-99f5a8585dfd",
+            "name": "Directional Light",
+            "enabled": true,
+            "tags": [],
+            "transform": {
+              "position": [
+                15,
+                18,
+                12
+              ],
+              "rotation": [
+                -43.138435830346936,
+                51.34019216195387,
+                0.0000017266137930503922
+              ],
+              "scale": [
+                1,
+                1,
+                1
+              ]
+            },
+            "components": [
+              {
+                "id": "17f65cb5-68f1-4218-a992-1114c105e7ae",
+                "type": "light",
+                "enabled": true,
+                "lightType": "directional",
+                "color": [
+                  1,
+                  0.718,
+                  0.302
+                ],
+                "intensity": 1.6,
+                "range": 10,
+                "castShadows": true,
+                "innerConeAngle": 40,
+                "outerConeAngle": 45,
+                "shadowBias": 0.2,
+                "normalOffsetBias": 0.05,
+                "shadowDistance": 45,
+                "shadowResolution": 1024
+              }
+            ],
+            "children": []
+          },
+          {
+            "id": "2b807697-4f9e-4a9b-816b-66ec626fd92d",
+            "name": "Lobby Center PointLight",
+            "enabled": true,
+            "tags": [],
+            "transform": {
+              "position": [
+                0,
+                5.2,
+                0
+              ],
+              "rotation": [
+                0,
+                0,
+                0
+              ],
+              "scale": [
+                1,
+                1,
+                1
+              ]
+            },
+            "components": [
+              {
+                "id": "08f625cc-4ecc-46c3-b2c5-e9132bcd6547",
+                "type": "light",
+                "enabled": true,
+                "lightType": "point",
+                "color": [
+                  1,
+                  0.82,
+                  0.56
+                ],
+                "intensity": 2.8,
+                "range": 20,
+                "castShadows": false,
+                "innerConeAngle": 40,
+                "outerConeAngle": 45,
+                "shadowBias": 0.05,
+                "normalOffsetBias": 0,
+                "shadowDistance": 40,
+                "shadowResolution": 1024
+              }
+            ],
+            "children": []
+          }
+        ]
+      },
+      {
+        "id": "6310b43e-5c50-4f3a-8c6e-34c34045aaa1",
+        "name": "Main Camera",
+        "enabled": true,
+        "tags": [],
+        "transform": {
+          "position": [
+            0,
+            3,
+            8.2
+          ],
+          "rotation": [
+            -4.236394767523993,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "components": [
+          {
+            "id": "a587a6e3-b20e-499d-b67b-628e9eea0348",
+            "type": "camera",
+            "enabled": false,
+            "fov": 50,
+            "clearColor": [
+              0.035,
+              0.039,
+              0.059,
+              1
+            ],
+            "nearClip": 0.2,
+            "farClip": 120,
+            "priority": 0,
+            "projection": "perspective",
+            "orthoHeight": 10
+          }
+        ],
+        "children": []
+      },
+      {
+        "id": "9f237f1b-51ff-4260-a2f4-aba05008c7ca",
+        "name": "Player",
+        "enabled": true,
+        "tags": [
+          "player"
+        ],
+        "transform": {
+          "position": [
+            0,
+            0,
+            1.5458284401093065
+          ],
+          "rotation": [
+            180,
+            7.016709298534876e-15,
+            180
+          ],
+          "scale": [
+            0.62,
+            0.62,
+            0.62
+          ]
+        },
+        "components": [
+          {
+            "id": "662ab7c7-c96b-4886-a10f-c4ac6e26403a",
+            "type": "render",
+            "enabled": true,
+            "meshType": "asset",
+            "meshAssetId": "ac57a418-2a85-4f74-94ef-96f54f74d653",
+            "castShadows": true,
+            "receiveShadows": true,
+            "material": {
+              "diffuseColor": [
+                0.75,
+                0.78,
+                0.84
+              ],
+              "metalness": 0.1,
+              "gloss": 0.6,
+              "emissiveColor": [
+                0,
+                0,
+                0
+              ],
+              "emissiveIntensity": 1,
+              "opacity": 1,
+              "diffuseMapAssetId": null,
+              "normalMapAssetId": null,
+              "metalnessMapAssetId": null
+            }
+          },
+          {
+            "id": "234efad8-63f1-4c58-b524-6bdea551a7d7",
+            "type": "anim",
+            "enabled": true,
+            "activate": false,
+            "speed": 1,
+            "defaultState": "Idle_Loop",
+            "states": [
+              {
+                "name": "A_TPose",
+                "clipAssetId": "A_TPose",
+                "speed": 1,
+                "loop": true
+              },
+              {
+                "name": "Crouch_Fwd_Loop",
+                "clipAssetId": "Crouch_Fwd_Loop",
+                "speed": 1,
+                "loop": true
+              },
+              {
+                "name": "Crouch_Idle_Loop",
+                "clipAssetId": "Crouch_Idle_Loop",
+                "speed": 1,
+                "loop": true
+              },
+              {
+                "name": "Dance_Loop",
+                "clipAssetId": "Dance_Loop",
+                "speed": 1,
+                "loop": true
+              },
+              {
+                "name": "Death01",
+                "clipAssetId": "Death01",
+                "speed": 1,
+                "loop": true
+              },
+              {
+                "name": "Driving_Loop",
+                "clipAssetId": "Driving_Loop",
+                "speed": 1,
+                "loop": true
+              },
+              {
+                "name": "Fixing_Kneeling",
+                "clipAssetId": "Fixing_Kneeling",
+                "speed": 1,
+                "loop": true
+              },
+              {
+                "name": "Hit_Chest",
+                "clipAssetId": "Hit_Chest",
+                "speed": 1,
+                "loop": true
+              },
+              {
+                "name": "Hit_Head",
+                "clipAssetId": "Hit_Head",
+                "speed": 1,
+                "loop": true
+              },
+              {
+                "name": "Idle_Loop",
+                "clipAssetId": "Idle_Loop",
+                "speed": 1,
+                "loop": true
+              },
+              {
+                "name": "Idle_Talking_Loop",
+                "clipAssetId": "Idle_Talking_Loop",
+                "speed": 1,
+                "loop": true
+              },
+              {
+                "name": "Idle_Torch_Loop",
+                "clipAssetId": "Idle_Torch_Loop",
+                "speed": 1,
+                "loop": true
+              },
+              {
+                "name": "Interact",
+                "clipAssetId": "Interact",
+                "speed": 1,
+                "loop": true
+              },
+              {
+                "name": "Jog_Fwd_Loop",
+                "clipAssetId": "Jog_Fwd_Loop",
+                "speed": 1,
+                "loop": true
+              },
+              {
+                "name": "Jump_Land",
+                "clipAssetId": "Jump_Land",
+                "speed": 1,
+                "loop": false
+              },
+              {
+                "name": "Jump_Loop",
+                "clipAssetId": "Jump_Loop",
+                "speed": 1,
+                "loop": false
+              },
+              {
+                "name": "Jump_Start",
+                "clipAssetId": "Jump_Start",
+                "speed": 1,
+                "loop": false
+              },
+              {
+                "name": "PickUp_Table",
+                "clipAssetId": "PickUp_Table",
+                "speed": 1,
+                "loop": true
+              },
+              {
+                "name": "Pistol_Aim_Down",
+                "clipAssetId": "Pistol_Aim_Down",
+                "speed": 1,
+                "loop": true
+              },
+              {
+                "name": "Pistol_Aim_Neutral",
+                "clipAssetId": "Pistol_Aim_Neutral",
+                "speed": 1,
+                "loop": true
+              },
+              {
+                "name": "Pistol_Aim_Up",
+                "clipAssetId": "Pistol_Aim_Up",
+                "speed": 1,
+                "loop": true
+              },
+              {
+                "name": "Pistol_Idle_Loop",
+                "clipAssetId": "Pistol_Idle_Loop",
+                "speed": 1,
+                "loop": true
+              },
+              {
+                "name": "Pistol_Reload",
+                "clipAssetId": "Pistol_Reload",
+                "speed": 1,
+                "loop": true
+              },
+              {
+                "name": "Pistol_Shoot",
+                "clipAssetId": "Pistol_Shoot",
+                "speed": 1,
+                "loop": true
+              },
+              {
+                "name": "Punch_Cross",
+                "clipAssetId": "Punch_Cross",
+                "speed": 1,
+                "loop": true
+              },
+              {
+                "name": "Punch_Enter",
+                "clipAssetId": "Punch_Enter",
+                "speed": 1,
+                "loop": true
+              },
+              {
+                "name": "Punch_Jab",
+                "clipAssetId": "Punch_Jab",
+                "speed": 1,
+                "loop": true
+              },
+              {
+                "name": "Push_Loop",
+                "clipAssetId": "Push_Loop",
+                "speed": 1,
+                "loop": true
+              },
+              {
+                "name": "Roll",
+                "clipAssetId": "Roll",
+                "speed": 1,
+                "loop": true
+              },
+              {
+                "name": "Roll_RM",
+                "clipAssetId": "Roll_RM",
+                "speed": 1,
+                "loop": true
+              },
+              {
+                "name": "Sitting_Enter",
+                "clipAssetId": "Sitting_Enter",
+                "speed": 1,
+                "loop": true
+              },
+              {
+                "name": "Sitting_Exit",
+                "clipAssetId": "Sitting_Exit",
+                "speed": 1,
+                "loop": true
+              },
+              {
+                "name": "Sitting_Idle_Loop",
+                "clipAssetId": "Sitting_Idle_Loop",
+                "speed": 1,
+                "loop": true
+              },
+              {
+                "name": "Sitting_Talking_Loop",
+                "clipAssetId": "Sitting_Talking_Loop",
+                "speed": 1,
+                "loop": true
+              },
+              {
+                "name": "Spell_Simple_Enter",
+                "clipAssetId": "Spell_Simple_Enter",
+                "speed": 1,
+                "loop": true
+              },
+              {
+                "name": "Spell_Simple_Exit",
+                "clipAssetId": "Spell_Simple_Exit",
+                "speed": 1,
+                "loop": true
+              },
+              {
+                "name": "Spell_Simple_Idle_Loop",
+                "clipAssetId": "Spell_Simple_Idle_Loop",
+                "speed": 1,
+                "loop": true
+              },
+              {
+                "name": "Spell_Simple_Shoot",
+                "clipAssetId": "Spell_Simple_Shoot",
+                "speed": 1,
+                "loop": true
+              },
+              {
+                "name": "Sprint_Loop",
+                "clipAssetId": "Sprint_Loop",
+                "speed": 1,
+                "loop": true
+              },
+              {
+                "name": "Swim_Fwd_Loop",
+                "clipAssetId": "Swim_Fwd_Loop",
+                "speed": 1,
+                "loop": true
+              },
+              {
+                "name": "Swim_Idle_Loop",
+                "clipAssetId": "Swim_Idle_Loop",
+                "speed": 1,
+                "loop": true
+              },
+              {
+                "name": "Sword_Attack",
+                "clipAssetId": "Sword_Attack",
+                "speed": 1,
+                "loop": true
+              },
+              {
+                "name": "Sword_Attack_RM",
+                "clipAssetId": "Sword_Attack_RM",
+                "speed": 1,
+                "loop": true
+              },
+              {
+                "name": "Sword_Idle",
+                "clipAssetId": "Sword_Idle",
+                "speed": 1,
+                "loop": true
+              },
+              {
+                "name": "Walk_Formal_Loop",
+                "clipAssetId": "Walk_Formal_Loop",
+                "speed": 1,
+                "loop": true
+              },
+              {
+                "name": "Walk_Loop",
+                "clipAssetId": "Walk_Loop",
+                "speed": 1,
+                "loop": true
+              },
+              {
+                "name": "Running",
+                "clipAssetId": "Running",
+                "speed": 1,
+                "loop": true
+              },
+              {
+                "name": "JumpWhileRun",
+                "clipAssetId": "JumpWhileRun",
+                "speed": 1,
+                "loop": false
+              },
+              {
+                "name": "Jumping",
+                "clipAssetId": "Jumping",
+                "speed": 1,
+                "loop": false
+              }
+            ],
+            "transitions": [],
+            "keyframeClipIds": []
+          },
+          {
+            "id": "b7eb7d19-8edc-49bc-a966-e1774d6ff578",
+            "type": "script",
+            "enabled": true,
+            "scriptName": "PlayerController",
+            "code": "",
+            "attributes": [
+              {
+                "name": "walkSpeed",
+                "type": "number",
+                "value": 4.5
+              },
+              {
+                "name": "runSpeed",
+                "type": "number",
+                "value": 7.5
+              },
+              {
+                "name": "jumpVelocity",
+                "type": "number",
+                "value": 6.2
+              },
+              {
+                "name": "gravity",
+                "type": "number",
+                "value": -18
+              },
+              {
+                "name": "turnSpeed",
+                "type": "number",
+                "value": 12
+              },
+              {
+                "name": "cameraDistance",
+                "type": "number",
+                "value": 3.6
+              },
+              {
+                "name": "interactRange",
+                "type": "number",
+                "value": 3.2
+              }
+            ]
+          }
+        ],
+        "children": []
+      }
+    ]
+  },
+  "animations": {},
+  "interactions": {}
+}
