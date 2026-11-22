@@ -18,6 +18,15 @@ interface SolidBox {
   maxZ: number;
 }
 
+interface CameraOccluderBox {
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+  minZ: number;
+  maxZ: number;
+}
+
 const MAIN_STAGE_SURFACES: StageSurface[] = [
   { minX: -7.32, maxX: 7.32, minZ: -8.06, maxZ: -7.56, y: 0.12 },
   { minX: -7.42, maxX: 7.42, minZ: -8.51, maxZ: -8.0, y: 0.24 },
@@ -92,11 +101,17 @@ export class PlayerControllerRuntime {
   private hasMainStage = false;
   private hasAcousticStage = false;
   private roomBounds = { minX: -18.2, maxX: 18.2, minZ: -16.2, maxZ: 16.2 };
+  private cameraOccluders: CameraOccluderBox[] = [];
 
   private readonly keys = new Set<string>();
-  private isDraggingLook = false;
+  private hasLastPointer = false;
+  private isKaraokeDragging = false;
   private lastPointerX = 0;
   private lastPointerY = 0;
+  private cameraSensitivity = (() => {
+    const saved = Number(localStorage.getItem('cavannghe:cam-sensitivity'));
+    return Number.isFinite(saved) && saved >= 0.2 && saved <= 3 ? saved : 1.0;
+  })();
   private mobileMove: { x: number; y: number } | null = null;
   private lastPromptKey = '';
   private destroyed = false;
@@ -137,10 +152,13 @@ export class PlayerControllerRuntime {
     window.addEventListener('keydown', this.onKeyDown);
     window.addEventListener('keyup', this.onKeyUp);
     this.canvas.addEventListener('mousedown', this.onMouseDown);
+    this.canvas.addEventListener('mouseleave', this.onMouseLeave);
     window.addEventListener('mousemove', this.onMouseMove);
     window.addEventListener('mouseup', this.onMouseUp);
+    document.addEventListener('pointerlockchange', this.onPointerLockChange);
     window.addEventListener('cavannghe:mobile-move', this.onMobileMove as EventListener);
     window.addEventListener('cavannghe:toggle-camera', this.onToggleCamera);
+    window.addEventListener('cavannghe:camera-sensitivity', this.onCameraSensitivity as EventListener);
     window.addEventListener('cavannghe:stand-up', this.onStandUp);
     window.addEventListener('cavannghe:emote', this.onEmote as EventListener);
     window.addEventListener('cavannghe:karaoke-exit', this.onKaraokeExit);
@@ -196,10 +214,16 @@ export class PlayerControllerRuntime {
     window.removeEventListener('keydown', this.onKeyDown);
     window.removeEventListener('keyup', this.onKeyUp);
     this.canvas.removeEventListener('mousedown', this.onMouseDown);
+    this.canvas.removeEventListener('mouseleave', this.onMouseLeave);
     window.removeEventListener('mousemove', this.onMouseMove);
     window.removeEventListener('mouseup', this.onMouseUp);
+    document.removeEventListener('pointerlockchange', this.onPointerLockChange);
+    if (document.pointerLockElement === this.canvas) {
+      document.exitPointerLock?.();
+    }
     window.removeEventListener('cavannghe:mobile-move', this.onMobileMove as EventListener);
     window.removeEventListener('cavannghe:toggle-camera', this.onToggleCamera);
+    window.removeEventListener('cavannghe:camera-sensitivity', this.onCameraSensitivity as EventListener);
     window.removeEventListener('cavannghe:stand-up', this.onStandUp);
     window.removeEventListener('cavannghe:emote', this.onEmote as EventListener);
     window.removeEventListener('cavannghe:karaoke-exit', this.onKaraokeExit);
@@ -334,9 +358,27 @@ export class PlayerControllerRuntime {
 
     const dist = this.getNumberAttr(this.playerEntity, 'cameraDistance', 3.6);
     const horiz = dist * Math.cos(pitchRad);
-    const camX = p.x + Math.sin(yawRad) * horiz;
-    const camY = Math.max(0.4, p.y + 1.5 - Math.sin(pitchRad) * dist);
-    const camZ = p.z + Math.cos(yawRad) * horiz;
+    const targetX = p.x;
+    const targetY = p.y + 1.15;
+    const targetZ = p.z;
+
+    let camX = targetX + Math.sin(yawRad) * horiz;
+    let camY = Math.max(0.4, Math.min(6.4, p.y + 1.5 - Math.sin(pitchRad) * dist));
+    let camZ = targetZ + Math.cos(yawRad) * horiz;
+
+    // Pull camera inward if ray from target to desired camera hits a wall or stage curtain
+    const hitT = this.raycastCameraOccluders(targetX, targetY, targetZ, camX, camY, camZ);
+    if (hitT < 1) {
+      const safeT = Math.max(0.18, hitT * 0.88);
+      camX = targetX + (camX - targetX) * safeT;
+      camY = Math.max(0.4, targetY + (camY - targetY) * safeT);
+      camZ = targetZ + (camZ - targetZ) * safeT;
+    }
+
+    // Clamp inside room walls so camera never clips outside the room
+    const wallMargin = 0.25;
+    camX = pc.math.clamp(camX, this.roomBounds.minX + wallMargin, this.roomBounds.maxX - wallMargin);
+    camZ = pc.math.clamp(camZ, this.roomBounds.minZ + wallMargin, this.roomBounds.maxZ - wallMargin);
 
     const cur = this.cameraEntity.getLocalPosition();
     this.tempPos.set(
@@ -345,7 +387,54 @@ export class PlayerControllerRuntime {
       pc.math.lerp(cur.z, camZ, alpha)
     );
     this.cameraEntity.setLocalPosition(this.tempPos);
-    this.cameraEntity.lookAt(p.x, p.y + 1.15, p.z);
+    this.cameraEntity.lookAt(targetX, targetY, targetZ);
+  }
+
+  private raycastCameraOccluders(
+    ox: number,
+    oy: number,
+    oz: number,
+    ex: number,
+    ey: number,
+    ez: number
+  ): number {
+    const dx = ex - ox;
+    const dy = ey - oy;
+    const dz = ez - oz;
+    let closest = 1;
+
+    for (const box of this.cameraOccluders) {
+      let tmin = 0;
+      let tmax = closest;
+
+      const checkAxis = (o: number, d: number, minB: number, maxB: number): boolean => {
+        if (Math.abs(d) < 1e-6) {
+          return o >= minB && o <= maxB;
+        }
+        let t1 = (minB - o) / d;
+        let t2 = (maxB - o) / d;
+        if (t1 > t2) {
+          const tmp = t1;
+          t1 = t2;
+          t2 = tmp;
+        }
+        if (t1 > tmin) tmin = t1;
+        if (t2 < tmax) tmax = t2;
+        return tmin <= tmax;
+      };
+
+      if (
+        checkAxis(ox, dx, box.minX, box.maxX) &&
+        checkAxis(oy, dy, box.minY, box.maxY) &&
+        checkAxis(oz, dz, box.minZ, box.maxZ) &&
+        tmin > 0.02 &&
+        tmin < closest
+      ) {
+        closest = tmin;
+      }
+    }
+
+    return closest;
   }
 
   private updateProximity(): void {
@@ -536,25 +625,77 @@ export class PlayerControllerRuntime {
   };
 
   private onMouseDown = (e: MouseEvent): void => {
-    if (e.button === 0 || e.button === 2) {
-      this.isDraggingLook = true;
+    if (e.target !== this.canvas) return;
+    if (this.karaoke.isActive()) {
+      this.isKaraokeDragging = true;
       this.lastPointerX = e.clientX;
       this.lastPointerY = e.clientY;
+      return;
+    }
+    if (document.pointerLockElement !== this.canvas) {
+      void this.canvas.requestPointerLock?.();
     }
   };
 
-  private onMouseMove = (e: MouseEvent): void => {
-    if (!this.isDraggingLook) return;
-    const dx = e.clientX - this.lastPointerX;
-    const dy = e.clientY - this.lastPointerY;
-    this.lastPointerX = e.clientX;
-    this.lastPointerY = e.clientY;
-    this.yaw -= dx * 0.28;
-    this.pitch = pc.math.clamp(this.pitch - dy * 0.22, -60, 45);
+  private onMouseUp = (): void => {
+    this.isKaraokeDragging = false;
   };
 
-  private onMouseUp = (): void => {
-    this.isDraggingLook = false;
+  private onMouseLeave = (): void => {
+    this.hasLastPointer = false;
+  };
+
+  private onPointerLockChange = (): void => {
+    this.hasLastPointer = false;
+  };
+
+  private onMouseMove = (e: MouseEvent): void => {
+    if (this.karaoke.isActive()) {
+      if (!this.isKaraokeDragging) {
+        this.hasLastPointer = false;
+        return;
+      }
+      const dx = e.clientX - this.lastPointerX;
+      const dy = e.clientY - this.lastPointerY;
+      this.lastPointerX = e.clientX;
+      this.lastPointerY = e.clientY;
+      this.yaw -= dx * 0.25 * this.cameraSensitivity;
+      this.pitch = pc.math.clamp(this.pitch - dy * 0.2 * this.cameraSensitivity, -60, 45);
+      return;
+    }
+
+    const isPointerLocked = document.pointerLockElement === this.canvas;
+    if (!isPointerLocked && e.target !== this.canvas) {
+      this.hasLastPointer = false;
+      return;
+    }
+
+    let dx = 0;
+    let dy = 0;
+    if (isPointerLocked) {
+      dx = e.movementX || 0;
+      dy = e.movementY || 0;
+    } else {
+      if (!this.hasLastPointer) {
+        this.hasLastPointer = true;
+        this.lastPointerX = e.clientX;
+        this.lastPointerY = e.clientY;
+        return;
+      }
+      dx = e.clientX - this.lastPointerX;
+      dy = e.clientY - this.lastPointerY;
+      this.lastPointerX = e.clientX;
+      this.lastPointerY = e.clientY;
+    }
+
+    this.yaw -= dx * 0.22 * this.cameraSensitivity;
+    this.pitch = pc.math.clamp(this.pitch - dy * 0.18 * this.cameraSensitivity, -60, 45);
+  };
+
+  private onCameraSensitivity = (e: CustomEvent<number>): void => {
+    if (typeof e.detail === 'number' && Number.isFinite(e.detail)) {
+      this.cameraSensitivity = Math.max(0.2, Math.min(3.0, e.detail));
+    }
   };
 
   private onMobileMove = (e: CustomEvent<{ x: number; y: number } | null>): void => {
@@ -595,6 +736,7 @@ export class PlayerControllerRuntime {
   private detectRoomEnvironment(): void {
     this.hasMainStage = Boolean(this.sceneRoot.findByName('Main_Stage'));
     this.hasAcousticStage = Boolean(this.sceneRoot.findByName('Acoustic_Stage'));
+    this.collectCameraOccluders();
 
     const floorNames = ['Lobby Floor', 'Lounge Floor', 'TeaRoom Floor'];
     for (const name of floorNames) {
@@ -615,12 +757,73 @@ export class PlayerControllerRuntime {
     }
   }
 
+  private collectCameraOccluders(): void {
+    const boxes: CameraOccluderBox[] = [];
+    const pad = 0.22;
+
+    const visit = (node: pc.GraphNode) => {
+      if (node instanceof pc.Entity && node !== this.sceneRoot) {
+        const lower = node.name.toLowerCase();
+        const isFloor = lower.includes('floor') || lower.includes('ceiling');
+        const isBlockingName =
+          lower.includes('wall') ||
+          lower.includes('curtain') ||
+          lower.includes('backdrop') ||
+          lower.includes('drape') ||
+          lower.includes('rem');
+        const hasBoxCollider = node.collision?.type === 'box';
+
+        if (!isFloor && (isBlockingName || hasBoxCollider)) {
+          if (node.render && node.render.meshInstances.length > 0) {
+            for (const mi of node.render.meshInstances) {
+              const aabb = mi.aabb;
+              const min = aabb.getMin();
+              const max = aabb.getMax();
+              if (max.y - min.y >= 1.2) {
+                boxes.push({
+                  minX: min.x - pad,
+                  maxX: max.x + pad,
+                  minY: min.y - pad,
+                  maxY: max.y + pad,
+                  minZ: min.z - pad,
+                  maxZ: max.z + pad,
+                });
+              }
+            }
+          } else if (hasBoxCollider && node.collision) {
+            const pos = node.getPosition();
+            const he = node.collision.halfExtents;
+            if (he && he.y * 2 >= 1.2) {
+              boxes.push({
+                minX: pos.x - he.x - pad,
+                maxX: pos.x + he.x + pad,
+                minY: pos.y - he.y - pad,
+                maxY: pos.y + he.y + pad,
+                minZ: pos.z - he.z - pad,
+                maxZ: pos.z + he.z + pad,
+              });
+            }
+          }
+        }
+      }
+      for (const child of node.children) {
+        visit(child);
+      }
+    };
+
+    visit(this.sceneRoot);
+    this.cameraOccluders = boxes;
+  }
+
   private onPostUpdate = (): void => {
     this.karaoke.applyArmPose();
   };
 
   private enterKaraoke(): void {
     if (!this.playerEntity) return;
+    if (document.pointerLockElement === this.canvas) {
+      document.exitPointerLock?.();
+    }
     const view = this.karaoke.enter(this.playerEntity);
     this.playerYaw = view.playerYaw;
     this.yaw = view.camYaw;

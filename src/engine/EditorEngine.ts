@@ -84,6 +84,7 @@ import {
 } from './serialization/SceneRegistry';
 import { serializeEntity, serializeScene } from './serialization/SceneSerializer';
 import { MultiplayerManager } from '../network/MultiplayerManager';
+import { KaraokeVoiceManager } from '../network/KaraokeVoiceManager';
 
 export type PrimitiveType = 'box' | 'sphere' | 'plane' | 'cylinder' | 'capsule';
 export type SnapView = 'top' | 'front' | 'right' | 'iso';
@@ -147,6 +148,7 @@ export class EditorEngine {
   private currentSceneName = getSceneDefinition(getStartupSceneId()).name;
   private sceneTransitionLock = false;
   private autoDraftReady = false;
+  private allowAutoDraftSave = true;
   private autoDraftTimer: number | null = null;
   private hasPendingAutoDraft = false;
   private autoDraftUnsubs: Array<() => void> = [];
@@ -166,6 +168,21 @@ export class EditorEngine {
   private gameplayRuntime: GameplayRuntime | null = null;
   private stageAudioManager: StageAudioManager | null = null;
   private remotePlayerPool: RemotePlayerPool | null = null;
+  private stageSweepGeneration = -1;
+  private stageMovingHeads: Array<{
+    node: pc.Entity;
+    baseQuat: pc.Quat;
+    glowMat: pc.StandardMaterial | null;
+    spotEntity: pc.Entity | null;
+    phase: number;
+    speed: number;
+    baseZ: number;
+    front: boolean;
+    canRotate: boolean;
+    anchorPos: pc.Vec3;
+  }> = [];
+  private stageFresnelModels: Array<{ node: pc.Entity; phase: number; baseX: number }> = [];
+  private stageSweepSpots: pc.Entity[] = [];
 
   private readonly commandContext: EntityCommandContext = {
     getSceneRoot: () => {
@@ -230,6 +247,7 @@ export class EditorEngine {
 
     this.canvas = canvas;
     this.autoDraftReady = false;
+    this.allowAutoDraftSave = options?.restoreAutoDraft !== false;
 
     configureAmmo();
     void initAmmo();
@@ -308,12 +326,19 @@ export class EditorEngine {
     this.appUpdateHandler = (dt: number) => {
       if (this.playState === 'playing') {
         this.tickPlayModeAnimations(dt);
+        this.tickStageSweepLights();
         this.interactionRuntime?.update(dt);
         this.scriptSandbox?.update(dt);
         this.gameplayRuntime?.update(dt);
         this.playerController?.update(dt);
         this.remotePlayerPool?.update(dt);
         this.stageAudioManager?.update();
+        if (this.sceneRoot) {
+          KaraokeVoiceManager.getInstance().updateSpatialAudio(
+            this.findGameCamera(this.sceneRoot),
+            MultiplayerManager.getInstance().getRemotePlayers()
+          );
+        }
       }
     };
     app.on('update', this.appUpdateHandler);
@@ -475,7 +500,13 @@ export class EditorEngine {
   }
 
   async saveAutoDraftNow(): Promise<void> {
-    if (!this.app || !this.sceneRoot || this.playState !== 'edit' || !this.autoDraftReady) {
+    if (
+      !this.app ||
+      !this.sceneRoot ||
+      this.playState !== 'edit' ||
+      !this.autoDraftReady ||
+      !this.allowAutoDraftSave
+    ) {
       return;
     }
     if (this.autoDraftTimer !== null) {
@@ -1551,10 +1582,22 @@ export class EditorEngine {
       clearGlbContainerCache(this.app);
       clearGlbAssetBufferCache();
 
-      const savedDraft = options?.resetToDefault
+      const rawDraft = options?.resetToDefault
         ? null
         : await ProjectRepository.loadSceneDraft(sceneDef.id);
       if (this.app !== targetApp || !this.sceneRoot) return;
+
+      const hasCameraInEntity = (ent: EntityData): boolean =>
+        ent.components.some((c) => c.type === 'camera' && c.enabled !== false) ||
+        ent.children.some(hasCameraInEntity);
+      const savedDraft =
+        rawDraft && rawDraft.scene?.children?.length > 0 && hasCameraInEntity(rawDraft.scene)
+          ? rawDraft
+          : null;
+
+      if (rawDraft && !savedDraft) {
+        void ProjectRepository.deleteSceneDraft(sceneDef.id);
+      }
 
       if (savedDraft) {
         report(18, `Đang đọc dữ liệu ${sceneDef.shortName}...`);
@@ -1996,6 +2039,163 @@ export class EditorEngine {
     this.playModeClipTimes.set(clip.id, 0);
   }
 
+  private initStageSweepRig(): void {
+    if (!this.sceneRoot) return;
+    this.stageSweepGeneration = this.sceneGeneration;
+    this.stageMovingHeads = [];
+    this.stageFresnelModels = [];
+    this.stageSweepSpots = [];
+
+    const housings: Array<{ entity: pc.Entity; meshCenter: pc.Vec3 }> = [];
+    const lenses: Array<{ entity: pc.Entity; mat: pc.StandardMaterial; center: pc.Vec3 }> = [];
+
+    const visit = (node: pc.GraphNode) => {
+      if (node instanceof pc.Entity && node !== this.sceneRoot) {
+        const isSweep =
+          node.tags.has('stage_sweep') ||
+          node.name.startsWith('Stage Fresnel') ||
+          node.name.startsWith('Acoustic Fresnel');
+        if (isSweep && node.light) {
+          this.stageSweepSpots.push(node);
+        }
+
+        const lower = node.name.toLowerCase();
+        if (lower.includes('fresnel') && !node.light && node.render) {
+          this.stageFresnelModels.push({
+            node,
+            phase: this.stageFresnelModels.length * 1.15,
+            baseX: node.getPosition().x,
+          });
+        }
+
+        if (node.render) {
+          for (const mi of node.render.meshInstances) {
+            const mat = mi.material;
+            if (!(mat instanceof pc.StandardMaterial)) continue;
+            const matName = (mat.name || '').toLowerCase();
+            if (matName === 'parcan' && node.parent instanceof pc.Entity) {
+              if (!housings.some((h) => h.entity === node.parent)) {
+                housings.push({ entity: node.parent, meshCenter: mi.aabb.center.clone() });
+              }
+            } else if (/^light00[1-4]$/.test(matName)) {
+              lenses.push({ entity: node, mat, center: mi.aabb.center.clone() });
+            }
+          }
+        }
+      }
+      for (const child of node.children) {
+        visit(child);
+      }
+    };
+    visit(this.sceneRoot);
+
+    const pairedLenses = new Set<pc.Entity>();
+    const acousticSpots = this.stageSweepSpots.filter((s) => s.name.startsWith('Acoustic'));
+    let spotIdx = 0;
+
+    housings.forEach(({ entity: housing, meshCenter }, i) => {
+      const origin = housing.getPosition();
+      const canRotateInPlace = origin.distance(meshCenter) < 0.35;
+      let bestDist = 0.6;
+      let bestLens: { entity: pc.Entity; mat: pc.StandardMaterial; center: pc.Vec3 } | null = null;
+      for (const l of lenses) {
+        if (pairedLenses.has(l.entity)) continue;
+        const d = meshCenter.distance(l.center);
+        if (d < bestDist) {
+          bestDist = d;
+          bestLens = l;
+        }
+      }
+
+      let glowMat: pc.StandardMaterial | null = null;
+      if (bestLens) {
+        pairedLenses.add(bestLens.entity);
+        glowMat = bestLens.mat;
+        glowMat.emissiveIntensity = 3.1;
+        glowMat.update();
+
+        // Keep lens attached to housing only if housing rotates in place
+        const lensEnt = bestLens.entity;
+        if (canRotateInPlace && lensEnt !== housing && lensEnt.parent !== housing) {
+          const wPos = lensEnt.getPosition().clone();
+          const wRot = lensEnt.getRotation().clone();
+          housing.addChild(lensEnt);
+          lensEnt.setPosition(wPos);
+          lensEnt.setRotation(wRot);
+        }
+      }
+
+      let spotEntity: pc.Entity | null = null;
+      if (i % 4 === 0 && spotIdx < acousticSpots.length) {
+        spotEntity = acousticSpots[spotIdx];
+        spotIdx += 1;
+        if (spotEntity.light && glowMat && (glowMat.emissive.r > 0.01 || glowMat.emissive.g > 0.01 || glowMat.emissive.b > 0.01)) {
+          spotEntity.light.color = glowMat.emissive.clone();
+        }
+      }
+
+      if (canRotateInPlace || spotEntity) {
+        this.stageMovingHeads.push({
+          node: housing,
+          baseQuat: housing.getLocalRotation().clone(),
+          glowMat: canRotateInPlace ? glowMat : null,
+          spotEntity,
+          phase: i * 0.92,
+          speed: 0.46 + (i % 4) * 0.07,
+          baseZ: meshCenter.z,
+          front: meshCenter.x < 17,
+          canRotate: canRotateInPlace,
+          anchorPos: meshCenter.clone(),
+        });
+      }
+    });
+  }
+
+  private tickStageSweepLights(): void {
+    if (!this.sceneRoot) return;
+    if (this.stageSweepGeneration !== this.sceneGeneration) {
+      this.initStageSweepRig();
+    }
+
+    const t = performance.now() * 0.001;
+
+    // 1. Gently pulse parcan lens emissive glow without detaching housings from truss
+    for (const fix of this.stageMovingHeads) {
+      if (fix.glowMat) {
+        const pulse = Math.sin(t * fix.speed + fix.phase);
+        fix.glowMat.emissiveIntensity = 2.6 + (pulse * 0.5 + 0.5) * 0.8;
+        fix.glowMat.update();
+      }
+    }
+
+    // 2. Smoothly sweep stage spotlights aimed accurately along PlayCanvas local -Y
+    let acousticIdx = 0;
+    let cinemaIdx = 0;
+    for (const spot of this.stageSweepSpots) {
+      if (!spot.light) continue;
+      if (spot.name.startsWith('Acoustic')) {
+        const isNorth = acousticIdx % 2 === 0;
+        const sweep = Math.sin(t * 0.55 + (isNorth ? 0 : Math.PI));
+        const aimZ = (isNorth ? 1.8 : 4.2) + sweep * 1.45;
+        const aimY = 1.25 + Math.cos(t * 0.4 + acousticIdx) * 0.35;
+        spot.lookAt(17.3, aimY, aimZ);
+        spot.rotateLocal(90, 0, 0);
+        acousticIdx += 1;
+      } else {
+        const pos = spot.getLocalPosition();
+        const sweep = Math.sin(t * 0.58 + cinemaIdx * 1.45);
+        spot.lookAt(pos.x * 0.35 + sweep * 2.4, 0.7, -12.6);
+        spot.rotateLocal(90, 0, 0);
+        cinemaIdx += 1;
+      }
+    }
+
+    for (const fm of this.stageFresnelModels) {
+      const sweep = Math.sin(t * 0.58 + fm.phase);
+      fm.node.lookAt(fm.baseX * 0.25 + sweep * 2.2, 0.42, -11.6);
+    }
+  }
+
   private tickPlayModeAnimations(dt: number): void {
     if (!this.sceneRoot || dt <= 0) return;
 
@@ -2059,6 +2259,10 @@ export class EditorEngine {
 
     this.pendingScrubOldTransform.clear();
     this.entityGuidCache.clear();
+    this.stageSweepGeneration = -1;
+    this.stageMovingHeads = [];
+    this.stageFresnelModels = [];
+    this.stageSweepSpots = [];
 
     for (const mat of this.trackedMaterials) {
       mat.destroy();

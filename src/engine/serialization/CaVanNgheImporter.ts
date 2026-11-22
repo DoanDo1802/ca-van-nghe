@@ -358,8 +358,8 @@ export async function importCaVanNgheSceneById(
 
   report(75, `Đang dựng không gian 3D: ${sceneDef.shortName}...`);
 
-  app.scene.ambientLight = new pc.Color(0.28, 0.25, 0.22);
-  app.scene.exposure = 1.1;
+  app.scene.ambientLight = new pc.Color(0.045, 0.045, 0.055);
+  app.scene.exposure = 0.92;
 
   const mats = createSharedLoungeMaterials(engine);
   const glbMaterialCache: GlbMaterialCache = new Map();

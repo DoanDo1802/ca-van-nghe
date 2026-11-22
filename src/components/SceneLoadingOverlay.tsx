@@ -33,44 +33,31 @@ export const SceneLoadingOverlay: React.FC<SceneLoadingOverlayProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-[95] flex flex-col items-center justify-center bg-[#090b10]/95 backdrop-blur-md text-neutral-100 px-6 select-none"
+      className="fixed inset-0 z-[95] flex flex-col items-center justify-center bg-black/85 backdrop-blur-sm text-neutral-100 px-6 select-none"
       onPointerDown={(e) => e.stopPropagation()}
       onKeyDown={(e) => e.stopPropagation()}
     >
-      <div className="w-full max-w-md rounded-2xl bg-[#121620] border border-amber-500/25 p-6 shadow-2xl space-y-5">
-        <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-300 shrink-0">
-            <DoorOpen className="w-6 h-6" />
-          </div>
-          <div className="min-w-0">
-            <div className="text-[10px] font-mono uppercase tracking-widest text-amber-400/90">
-              Đang Chuyển Scene
-            </div>
-            <h2 className="text-base font-bold text-white truncate">
+      <div className="w-full max-w-sm rounded-2xl bg-[#121212] border border-white/10 p-5 shadow-2xl space-y-4">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <DoorOpen className="w-4 h-4 text-neutral-400 shrink-0" />
+            <h2 className="text-sm font-semibold text-white truncate">
               {progress.sceneName}
             </h2>
           </div>
+          <span className="text-xs font-mono text-neutral-400 shrink-0">{pct}%</span>
         </div>
 
-        <div className="space-y-2">
-          <div className="h-3 w-full rounded-full bg-neutral-900 border border-white/10 overflow-hidden p-0.5">
-            <div
-              className="h-full rounded-full bg-gradient-to-r from-amber-500 via-amber-400 to-sky-400 transition-all duration-200 ease-out"
-              style={{ width: `${pct}%` }}
-            />
-          </div>
-
-          <div className="flex items-center justify-between text-xs">
-            <span className="flex items-center gap-1.5 text-neutral-300 truncate pr-3">
-              <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-400 shrink-0" />
-              <span className="truncate">{progress.label}</span>
-            </span>
-            <span className="font-mono font-bold text-amber-300 shrink-0">{pct}%</span>
-          </div>
+        <div className="h-1.5 w-full rounded-full bg-white/10 overflow-hidden">
+          <div
+            className="h-full rounded-full bg-white transition-all duration-200 ease-out"
+            style={{ width: `${pct}%` }}
+          />
         </div>
 
-        <div className="text-[11px] text-neutral-400 text-center">
-          Vui lòng chờ tải hoàn tất tài nguyên 3D của phòng trước khi bước vào...
+        <div className="flex items-center gap-2 text-xs text-neutral-400">
+          <Loader2 className="w-3.5 h-3.5 animate-spin text-neutral-400 shrink-0" />
+          <span className="truncate">{progress.label}</span>
         </div>
       </div>
     </div>

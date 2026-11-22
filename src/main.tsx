@@ -8,29 +8,20 @@ const EditorApp = lazy(() =>
 const WebGamePlayer = lazy(() =>
   import('./editor/WebGamePlayer').then((m) => ({ default: m.WebGamePlayer }))
 );
-const LegacyApp = lazy(() => import('./App.jsx'));
-
-const isLegacyMode =
-  window.location.search.includes('legacy=1') ||
-  window.location.pathname === '/legacy';
 
 const isEditorMode =
   window.location.search.includes('editor=1') ||
   window.location.pathname === '/editor';
 
 const Loader: React.FC<{ label: string }> = ({ label }) => (
-  <div className="w-screen h-screen bg-[#0c0e14] text-amber-200 flex items-center justify-center text-sm">
+  <div className="w-screen h-screen bg-[#121212] text-neutral-300 flex items-center justify-center text-sm">
     {label}
   </div>
 );
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    {isLegacyMode ? (
-      <Suspense fallback={<Loader label="Đang tải game gốc (Three.js)..." />}>
-        <LegacyApp />
-      </Suspense>
-    ) : isEditorMode ? (
+    {isEditorMode ? (
       <Suspense fallback={<Loader label="Đang tải 3D Game Editor (Admin)..." />}>
         <EditorApp />
       </Suspense>

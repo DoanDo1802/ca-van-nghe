@@ -653,7 +653,7 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({ viewportSize }) => {
         </button>
       </div>
 
-      {/* Right: Build Player / Standalone Play / Legacy Reference / Viewport Resolution */}
+      {/* Right: Build Player / Standalone Play / Viewport Resolution */}
       <div className="flex items-center gap-2 shrink-0">
         <button
           type="button"
@@ -665,22 +665,13 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({ viewportSize }) => {
           <span>Build Player</span>
         </button>
         <a
-          href="?play=1"
+          href="/"
           target="_blank"
           rel="noopener noreferrer"
-          title="Mở bản Game Web PlayCanvas độc lập (không có Editor UI)"
+          title="Mở bản Game Web độc lập (không có Editor UI)"
           className="px-2 py-0.5 rounded bg-sky-500/15 border border-sky-500/30 text-sky-300 hover:bg-sky-500/25 text-[11px] font-medium transition-colors"
         >
           Play Web
-        </a>
-        <a
-          href="?legacy=1"
-          target="_blank"
-          rel="noopener noreferrer"
-          title="Mở game web gốc (Three.js) để đối chiếu"
-          className="px-2 py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-amber-300 hover:bg-amber-500/25 text-[11px] font-medium transition-colors"
-        >
-          Legacy Game
         </a>
         <span className="px-2 py-0.5 rounded bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-[11px] font-medium">
           Web Game

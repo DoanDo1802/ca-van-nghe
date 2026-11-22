@@ -5,6 +5,7 @@ import DetailModal from '../../components/DetailModal';
 import StageScreenModal from '../../components/StageScreenModal';
 import SettingsModal from '../../components/SettingsModal';
 import { KaraokeOverlay } from './KaraokeOverlay';
+import { KaraokeAudienceSync } from './KaraokeAudienceSync';
 import { RemoteNameplates } from '../../components/RemoteNameplates';
 import { MultiplayerManager, type RoomStatusSnapshot } from '../../network/MultiplayerManager';
 import { INTERACTIVE_OBJECTS } from '../../data/sceneData';
@@ -242,6 +243,8 @@ export const GameOverlayUI: React.FC = () => {
           onExit={() => window.dispatchEvent(new CustomEvent('cavannghe:karaoke-exit'))}
         />
 
+        <KaraokeAudienceSync isSingingLocal={isKaraokeOpen} />
+
         {interactiveItem && (
           <DetailModal
             item={interactiveItem}
@@ -326,7 +329,12 @@ export const GameOverlayUI: React.FC = () => {
             window.dispatchEvent(new CustomEvent('cavannghe:toggle-camera'));
           }}
           isDecoMode={false}
-          onToggleDecoMode={() => {}}
+          onToggleDecoMode={undefined}
+          renderScale={renderScale}
+          onChangeRenderScale={(scale: number) => {
+            setRenderScale(scale);
+            EditorEngine.getInstance().setRenderResolutionScale(scale);
+          }}
           isScreenOn={isScreenOn}
           onToggleScreen={() => {
             const next = !isScreenOn;

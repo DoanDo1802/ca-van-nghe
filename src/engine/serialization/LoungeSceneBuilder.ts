@@ -971,8 +971,8 @@ export function buildLightingRig(
   const dirLight = new pc.Entity('Directional Light');
   dirLight.addComponent('light', {
     type: 'directional',
-    color: new pc.Color(1, 0.718, 0.302),
-    intensity: 1.6,
+    color: new pc.Color(0.85, 0.72, 0.58),
+    intensity: 0.18,
     castShadows: true,
     shadowBias: 0.2,
     normalOffsetBias: 0.05,
@@ -983,24 +983,57 @@ export function buildLightingRig(
   dirLight.lookAt(variant === 'tearoom' ? 6.9 : 0, 0, variant === 'tearoom' ? 3.0 : 0);
   rig.addChild(dirLight);
 
+  const addSpot = (
+    name: string,
+    pos: [number, number, number],
+    target: [number, number, number],
+    hexColor: string,
+    intensity: number,
+    range = 18,
+    sweepBeam = false
+  ) => {
+    const spot = new pc.Entity(name);
+    const pcColor = new pc.Color().fromString(hexColor);
+    spot.addComponent('light', {
+      type: 'spot',
+      color: pcColor,
+      intensity,
+      range,
+      innerConeAngle: sweepBeam ? 14 : 20,
+      outerConeAngle: sweepBeam ? 28 : 38,
+      castShadows: false,
+    });
+    spot.setLocalPosition(pos[0], pos[1], pos[2]);
+    // PlayCanvas spot lights shine along local -Y; lookAt aims -Z, so rotateLocal(+90, 0, 0) aims -Y at target
+    spot.lookAt(target[0], target[1], target[2]);
+    spot.rotateLocal(90, 0, 0);
+    if (sweepBeam) {
+      spot.tags.add('stage_sweep');
+    }
+    rig.addChild(spot);
+  };
+
   if (variant === 'lobby') {
     const lobbyCenter = new pc.Entity('Lobby Center PointLight');
     lobbyCenter.addComponent('light', {
       type: 'point',
-      color: new pc.Color(1, 0.82, 0.56),
-      intensity: 2.8,
+      color: new pc.Color().fromString('#ffe0b2'),
+      intensity: 1.8,
       range: 20,
       castShadows: false,
     });
-    lobbyCenter.setLocalPosition(0, 5.2, 0);
+    lobbyCenter.setLocalPosition(0, 5.4, 0);
     rig.addChild(lobbyCenter);
+
+    addSpot('Portal Cinema Spot', [-4.5, 5.5, -6.5], [-4.5, 1.5, -10.5], '#ffb74d', 3.2, 14);
+    addSpot('Portal TeaRoom Spot', [4.5, 5.5, -6.5], [4.5, 1.5, -10.5], '#ffb74d', 3.2, 14);
   } else if (variant === 'cinema') {
     const stageScreenGlow = new pc.Entity('Stage Screen PointLight');
     stageScreenGlow.addComponent('light', {
       type: 'point',
-      color: new pc.Color(1, 0.718, 0.302),
-      intensity: 2.6,
-      range: 16,
+      color: new pc.Color().fromString('#ffb74d'),
+      intensity: 1.6,
+      range: 14,
       castShadows: false,
     });
     stageScreenGlow.setLocalPosition(0, 3.3, -14.62);
@@ -1009,35 +1042,45 @@ export function buildLightingRig(
     const hallPoint = new pc.Entity('Cinema Hall PointLight');
     hallPoint.addComponent('light', {
       type: 'point',
-      color: new pc.Color(1, 0.76, 0.45),
-      intensity: 2.0,
+      color: new pc.Color().fromString('#ffd180'),
+      intensity: 1.25,
       range: 22,
       castShadows: false,
     });
-    hallPoint.setLocalPosition(0, 5.5, 2.0);
+    hallPoint.setLocalPosition(0, 5.2, 2.0);
     rig.addChild(hallPoint);
+
+    // Clean overhead Fresnel stage spotlights (aimed properly along -Y)
+    addSpot('Stage Fresnel Left', [-5.0, 5.9, -8.5], [-3.5, 0.6, -12.8], '#ffb15a', 2.2, 18, true);
+    addSpot('Stage Fresnel Center', [0, 5.9, -8.2], [0, 0.8, -12.8], '#ffd8a8', 2.5, 18, true);
+    addSpot('Stage Fresnel Right', [5.0, 5.9, -8.5], [3.5, 0.6, -12.8], '#ff9e5e', 2.2, 18, true);
   } else {
     const acousticGlow = new pc.Entity('Acoustic Stage PointLight');
     acousticGlow.addComponent('light', {
       type: 'point',
-      color: new pc.Color(1, 0.74, 0.38),
-      intensity: 3.2,
-      range: 18,
+      color: new pc.Color().fromString('#ffb74d'),
+      intensity: 0.35,
+      range: 12,
       castShadows: false,
     });
-    acousticGlow.setLocalPosition(14.5, 4.2, 3.0);
+    acousticGlow.setLocalPosition(15.4, 4.2, 3.0);
     rig.addChild(acousticGlow);
 
     const teaCenterGlow = new pc.Entity('TeaRoom Center PointLight');
     teaCenterGlow.addComponent('light', {
       type: 'point',
-      color: new pc.Color(1, 0.78, 0.48),
-      intensity: 2.4,
+      color: new pc.Color().fromString('#ffd8a8'),
+      intensity: 1.15,
       range: 20,
       castShadows: false,
     });
-    teaCenterGlow.setLocalPosition(5.5, 5.2, 3.0);
+    teaCenterGlow.setLocalPosition(5.5, 4.8, 3.0);
     rig.addChild(teaCenterGlow);
+
+    // Moody Acoustic Stage lighting: soft warm center key + 2 subtle sweeping front-truss spots
+    addSpot('Acoustic Center Key', [13.5, 4.8, 3.0], [16.6, 1.1, 3.0], '#ffd4a3', 1.4, 15, false);
+    addSpot('Acoustic Fresnel North', [14.2, 4.5, 0.8], [17.2, 1.2, 1.5], '#ffd8a8', 2.0, 15, true);
+    addSpot('Acoustic Fresnel South', [14.2, 4.5, 5.2], [17.2, 1.2, 4.5], '#ffb15a', 2.0, 15, true);
   }
 
   return rig;

@@ -11,6 +11,24 @@ export interface NetworkStageState {
   updatedAt: number;
 }
 
+export interface NetworkKaraokeState {
+  active: boolean;
+  singerId: string;
+  singerName: string;
+  youtubeVideoId: string | null;
+  title: string;
+  isPlaying: boolean;
+  updatedAt: number;
+}
+
+export interface RtcSignalMessage {
+  fromId: string;
+  targetId: string;
+  kind: 'offer' | 'answer' | 'ice' | 'ready' | 'bye';
+  sdp?: RTCSessionDescriptionInit;
+  candidate?: RTCIceCandidateInit;
+}
+
 export interface RemotePlayerState {
   id: string;
   name: string;
@@ -46,6 +64,7 @@ interface PresencePayload {
   joinedAt: number;
   chairId: string | null;
   stageState?: NetworkStageState;
+  karaokeState?: NetworkKaraokeState;
 }
 
 const BROADCAST_INTERVAL_MS = 50; // 20 Hz when moving for smooth curves
@@ -75,6 +94,8 @@ export class MultiplayerManager {
   private joinedAt = Date.now();
   private localChairId: string | null = null;
   private hostStageState: NetworkStageState | null = null;
+  private remoteKaraokeState: NetworkKaraokeState | null = null;
+  private localKaraokeState: NetworkKaraokeState | null = null;
   private hostId: string | null = null;
   private hostName: string | null = null;
 
@@ -86,11 +107,21 @@ export class MultiplayerManager {
   private localSeq = 0;
 
   private onRemoteStageCallback: ((state: NetworkStageState) => void) | null = null;
+  private onRemoteKaraokeCallback: ((state: NetworkKaraokeState) => void) | null = null;
+  private onRtcSignalCallback: ((msg: RtcSignalMessage) => void) | null = null;
 
   private constructor() {}
 
   setOnRemoteStage(cb: ((state: NetworkStageState) => void) | null): void {
     this.onRemoteStageCallback = cb;
+  }
+
+  setOnRemoteKaraoke(cb: ((state: NetworkKaraokeState) => void) | null): void {
+    this.onRemoteKaraokeCallback = cb;
+  }
+
+  setOnRtcSignal(cb: ((msg: RtcSignalMessage) => void) | null): void {
+    this.onRtcSignalCallback = cb;
   }
 
   async joinRoom(roomId: string, playerName: string, sceneId?: string): Promise<boolean> {
@@ -137,6 +168,20 @@ export class MultiplayerManager {
       }
     });
 
+    channel.on('broadcast', { event: 'karaoke:sync' }, ({ payload }) => {
+      const k = payload as NetworkKaraokeState;
+      if (!k || k.singerId === this.localPlayerId) return;
+      this.remoteKaraokeState = k.active ? k : null;
+      this.onRemoteKaraokeCallback?.(k);
+    });
+
+    channel.on('broadcast', { event: 'rtc:signal' }, ({ payload }) => {
+      const msg = payload as RtcSignalMessage;
+      if (!msg || msg.fromId === this.localPlayerId) return;
+      if (msg.targetId !== '*' && msg.targetId !== this.localPlayerId) return;
+      this.onRtcSignalCallback?.(msg);
+    });
+
     this.channel = channel;
 
     return new Promise<boolean>((resolve) => {
@@ -172,6 +217,8 @@ export class MultiplayerManager {
       this.presenceList = [];
       this.hostId = null;
       this.hostName = null;
+      this.remoteKaraokeState = null;
+      this.localKaraokeState = null;
       try {
         await ch.untrack();
       } catch {
@@ -307,6 +354,47 @@ export class MultiplayerManager {
     }
   }
 
+  getLocalPlayerName(): string {
+    return this.localPlayerName;
+  }
+
+  getRemoteKaraokeState(): NetworkKaraokeState | null {
+    return this.remoteKaraokeState;
+  }
+
+  broadcastKaraokeState(
+    partial: Omit<NetworkKaraokeState, 'singerId' | 'singerName' | 'updatedAt'>
+  ): void {
+    const state: NetworkKaraokeState = {
+      ...partial,
+      singerId: this.localPlayerId,
+      singerName: this.localPlayerName,
+      updatedAt: Date.now(),
+    };
+    this.localKaraokeState = state.active ? state : null;
+    if (!this.connected || !this.channel) return;
+
+    void this.channel.send({
+      type: 'broadcast',
+      event: 'karaoke:sync',
+      payload: state,
+    });
+    void this.trackLocalPresence();
+  }
+
+  sendRtcSignal(msg: Omit<RtcSignalMessage, 'fromId'>): void {
+    if (!this.connected || !this.channel) return;
+    const payload: RtcSignalMessage = {
+      ...msg,
+      fromId: this.localPlayerId,
+    };
+    void this.channel.send({
+      type: 'broadcast',
+      event: 'rtc:signal',
+      payload,
+    });
+  }
+
   private async trackLocalPresence(): Promise<void> {
     if (!this.channel || !this.connected) return;
     const payload: PresencePayload = {
@@ -315,6 +403,7 @@ export class MultiplayerManager {
       joinedAt: this.joinedAt,
       chairId: this.localChairId,
       ...(this.isHost() && this.hostStageState ? { stageState: this.hostStageState } : {}),
+      ...(this.localKaraokeState ? { karaokeState: this.localKaraokeState } : {}),
     };
     try {
       await this.channel.track(payload);
@@ -360,6 +449,30 @@ export class MultiplayerManager {
       if (!activeIds.has(id)) {
         this.remotePlayers.delete(id);
       }
+    }
+
+    // Sync active Karaoke singer state from presence for late joiners, or clear if singer left
+    const activeSinger = list.find(
+      (p) => p.playerId !== this.localPlayerId && p.karaokeState?.active
+    );
+    if (activeSinger?.karaokeState) {
+      const prevTs = this.remoteKaraokeState?.updatedAt ?? 0;
+      if (
+        activeSinger.karaokeState.updatedAt > prevTs ||
+        this.remoteKaraokeState?.singerId !== activeSinger.karaokeState.singerId
+      ) {
+        this.remoteKaraokeState = activeSinger.karaokeState;
+        this.onRemoteKaraokeCallback?.(activeSinger.karaokeState);
+      }
+    } else if (this.remoteKaraokeState && !activeIds.has(this.remoteKaraokeState.singerId)) {
+      const cleared: NetworkKaraokeState = {
+        ...this.remoteKaraokeState,
+        active: false,
+        isPlaying: false,
+        updatedAt: Date.now(),
+      };
+      this.remoteKaraokeState = null;
+      this.onRemoteKaraokeCallback?.(cleared);
     }
 
     for (const p of list) {

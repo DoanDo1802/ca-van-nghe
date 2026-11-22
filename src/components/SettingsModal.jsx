@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import {
-  Settings,
   X,
   Sliders,
   Tv,
@@ -17,11 +16,11 @@ import {
   Keyboard,
   Music,
   Sparkles,
-  Check,
   MessageSquare,
   Hand,
   ChevronDown,
-  Footprints
+  Footprints,
+  Gauge,
 } from 'lucide-react';
 
 export default function SettingsModal({
@@ -44,12 +43,34 @@ export default function SettingsModal({
   onOpenReservation,
   onResetLayout,
   activeEmote,
-  onTriggerEmote
+  onTriggerEmote,
+  renderScale = 1,
+  onChangeRenderScale,
 }) {
   const [activeTab, setActiveTab] = useState('modes'); // 'modes' | 'audio' | 'graphics' | 'shortcuts'
   const [resetConfirm, setResetConfirm] = useState(false);
+  const [camSensitivity, setCamSensitivity] = useState(() => {
+    const saved = Number(localStorage.getItem('cavannghe:cam-sensitivity'));
+    return Number.isFinite(saved) && saved >= 0.2 && saved <= 3 ? saved : 1.0;
+  });
+  const [showFps, setShowFps] = useState(
+    () => localStorage.getItem('cavannghe:show-fps') === '1'
+  );
 
   if (!isOpen) return null;
+
+  const handleSensitivityChange = (val) => {
+    setCamSensitivity(val);
+    localStorage.setItem('cavannghe:cam-sensitivity', String(val));
+    window.dispatchEvent(new CustomEvent('cavannghe:camera-sensitivity', { detail: val }));
+  };
+
+  const handleToggleFps = () => {
+    const next = !showFps;
+    setShowFps(next);
+    localStorage.setItem('cavannghe:show-fps', next ? '1' : '0');
+    window.dispatchEvent(new CustomEvent('cavannghe:show-fps', { detail: next }));
+  };
 
   const handleResetClick = () => {
     if (!resetConfirm) {
@@ -62,159 +83,131 @@ export default function SettingsModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fadeIn select-none">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm select-none">
       <div className="absolute inset-0" onClick={onClose} />
 
-      <div className="relative z-10 w-full max-w-2xl bg-neutral-950/95 border border-white/15 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+      <div className="relative z-10 w-full max-w-2xl bg-[#121212] border border-white/10 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-white/10 bg-neutral-900/60">
-          <div className="flex items-center space-x-3">
-            <div className="w-9 h-9 rounded-xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-300">
-              <Sliders className="w-5 h-5" />
-            </div>
-            <div>
-              <h2 className="text-base font-bold text-white flex items-center gap-2">
-                Cài Đặt & Chế Độ Trải Nghiệm
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/10 text-neutral-300 border border-white/15 font-mono">
-                  [Tab]
-                </span>
-              </h2>
-              <p className="text-xs text-neutral-400">
-                Tuỳ chỉnh góc nhìn, chế độ điều khiển, âm thanh và không gian 3D
-              </p>
-            </div>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
+          <div className="flex items-center gap-2.5">
+            <Sliders className="w-4 h-4 text-neutral-300" />
+            <h2 className="text-sm font-semibold text-white">Cài đặt</h2>
+            <span className="text-[11px] px-2 py-0.5 rounded-md bg-white/10 text-neutral-400 font-mono">
+              Tab
+            </span>
           </div>
 
           <button
             onClick={onClose}
-            className="p-2 rounded-xl bg-white/5 hover:bg-white/10 text-neutral-400 hover:text-white transition"
+            className="p-1.5 rounded-lg hover:bg-white/10 text-neutral-400 hover:text-white transition"
           >
-            <X className="w-5 h-5" />
+            <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* Tab Navigation */}
-        <div className="flex border-b border-white/10 bg-neutral-950/40 px-6 pt-2 space-x-2">
-          <button
-            onClick={() => setActiveTab('modes')}
-            className={`pb-2.5 px-3 text-xs font-medium border-b-2 transition flex items-center space-x-1.5 ${
-              activeTab === 'modes'
-                ? 'border-amber-400 text-amber-300 font-semibold'
-                : 'border-transparent text-neutral-400 hover:text-neutral-200'
-            }`}
-          >
-            <User className="w-3.5 h-3.5" />
-            <span>Chế độ & Góc nhìn</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('audio')}
-            className={`pb-2.5 px-3 text-xs font-medium border-b-2 transition flex items-center space-x-1.5 ${
-              activeTab === 'audio'
-                ? 'border-amber-400 text-amber-300 font-semibold'
-                : 'border-transparent text-neutral-400 hover:text-neutral-200'
-            }`}
-          >
-            <Tv className="w-3.5 h-3.5" />
-            <span>Sân khấu & Âm thanh</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('graphics')}
-            className={`pb-2.5 px-3 text-xs font-medium border-b-2 transition flex items-center space-x-1.5 ${
-              activeTab === 'graphics'
-                ? 'border-amber-400 text-amber-300 font-semibold'
-                : 'border-transparent text-neutral-400 hover:text-neutral-200'
-            }`}
-          >
-            <Sparkles className="w-3.5 h-3.5" />
-            <span>Không gian & Tiện ích</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('shortcuts')}
-            className={`pb-2.5 px-3 text-xs font-medium border-b-2 transition flex items-center space-x-1.5 ${
-              activeTab === 'shortcuts'
-                ? 'border-amber-400 text-amber-300 font-semibold'
-                : 'border-transparent text-neutral-400 hover:text-neutral-200'
-            }`}
-          >
-            <Keyboard className="w-3.5 h-3.5" />
-            <span>Phím tắt</span>
-          </button>
+        <div className="flex items-center gap-2 px-5 py-3 border-b border-white/10 overflow-x-auto">
+          {[
+            { id: 'modes', label: 'Điều khiển & Camera', icon: User },
+            { id: 'audio', label: 'Sân khấu & Âm thanh', icon: Tv },
+            { id: 'graphics', label: 'Đồ họa & FPS', icon: Gauge },
+            { id: 'shortcuts', label: 'Phím tắt', icon: Keyboard },
+          ].map((tab) => {
+            const Icon = tab.icon;
+            const active = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition flex items-center gap-1.5 shrink-0 ${
+                  active
+                    ? 'bg-white text-black font-semibold'
+                    : 'bg-white/5 text-neutral-300 hover:bg-white/10 hover:text-white'
+                }`}
+              >
+                <Icon className="w-3.5 h-3.5" />
+                <span>{tab.label}</span>
+              </button>
+            );
+          })}
         </div>
 
         {/* Content Body */}
-        <div className="p-6 overflow-y-auto space-y-5 text-sm">
-          {/* TAB 1: CHẾ ĐỘ & GÓC NHÌN */}
+        <div className="p-5 overflow-y-auto space-y-3 text-sm">
+          {/* TAB 1: ĐIỀU KHIỂN & CAMERA */}
           {activeTab === 'modes' && (
-            <div className="space-y-4">
-              {/* Mode Toggle: Visitor vs Decor */}
+            <div className="space-y-3">
+              {/* Camera Sensitivity */}
               <div className="p-4 rounded-xl bg-white/[0.03] border border-white/10 space-y-3">
                 <div className="flex items-center justify-between">
                   <div>
-                    <h4 className="font-semibold text-neutral-200 flex items-center gap-2">
-                      <Hammer className="w-4 h-4 text-amber-400" />
-                      Chế độ Decor / Thiết Kế Bố Cục
+                    <h4 className="text-xs font-semibold text-white">Độ nhạy xoay camera</h4>
+                    <p className="text-[11px] text-neutral-400 mt-0.5">
+                      Điều chỉnh tốc độ xoay góc nhìn theo chuột
+                    </p>
+                  </div>
+                  <span className="text-xs font-mono text-white bg-white/10 px-2 py-0.5 rounded">
+                    {camSensitivity.toFixed(1)}x
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={0.2}
+                  max={2.5}
+                  step={0.1}
+                  value={camSensitivity}
+                  onChange={(e) => handleSensitivityChange(Number(e.target.value))}
+                  className="w-full accent-white cursor-pointer"
+                />
+              </div>
+
+              {/* Camera Mode */}
+              <div className="p-4 rounded-xl bg-white/[0.03] border border-white/10 flex items-center justify-between gap-4">
+                <div>
+                  <h4 className="text-xs font-semibold text-white flex items-center gap-2">
+                    <Eye className="w-4 h-4 text-neutral-400" />
+                    Góc nhìn camera
+                  </h4>
+                  <p className="text-[11px] text-neutral-400 mt-0.5">
+                    Chuyển giữa góc nhìn thứ 3 và góc nhìn thứ 1
+                  </p>
+                </div>
+                <button
+                  onClick={onToggleCameraMode}
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium border bg-white/5 hover:bg-white/10 text-neutral-200 border-white/10 transition shrink-0"
+                >
+                  {cameraMode === 'first' ? 'Thứ 1 [V]' : 'Thứ 3 [V]'}
+                </button>
+              </div>
+
+              {onToggleDecoMode && (
+                <div className="p-4 rounded-xl bg-white/[0.03] border border-white/10 flex items-center justify-between gap-4">
+                  <div>
+                    <h4 className="text-xs font-semibold text-white flex items-center gap-2">
+                      <Hammer className="w-4 h-4 text-neutral-400" />
+                      Chế độ Decor
                     </h4>
-                    <p className="text-xs text-neutral-400 mt-0.5">
-                      Chuyển sang chế độ tự do di chuyển, xoay và sắp xếp lại bàn ghế trong lounge
+                    <p className="text-[11px] text-neutral-400 mt-0.5">
+                      Sắp xếp bàn ghế và đồ vật trong phòng
                     </p>
                   </div>
                   <button
                     onClick={onToggleDecoMode}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition ${
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition shrink-0 ${
                       isDecoMode
-                        ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                        ? 'bg-white text-black border-white'
                         : 'bg-white/5 text-neutral-300 border-white/10 hover:bg-white/10'
                     }`}
                   >
-                    {isDecoMode ? 'Đang bật Decor [B]' : 'Bật chế độ Decor [B]'}
+                    {isDecoMode ? 'Đang bật [B]' : 'Bật Decor [B]'}
                   </button>
                 </div>
-              </div>
+              )}
 
-              {/* Camera Mode: 3rd Person vs 1st Person */}
-              <div className="p-4 rounded-xl bg-white/[0.03] border border-white/10 space-y-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h4 className="font-semibold text-neutral-200 flex items-center gap-2">
-                      <Eye className="w-4 h-4 text-emerald-400" />
-                      Góc Nhìn Camera Nhân Vật
-                    </h4>
-                    <p className="text-xs text-neutral-400 mt-0.5">
-                      Chọn giữa góc nhìn toàn thân người thứ 3 hoặc góc nhìn thứ nhất (mắt nhìn)
-                    </p>
-                  </div>
-                  <button
-                    onClick={onToggleCameraMode}
-                    className="px-3 py-1.5 rounded-lg text-xs font-medium border bg-white/5 hover:bg-white/10 text-neutral-200 border-white/10 transition flex items-center space-x-1.5"
-                  >
-                    {cameraMode === 'first' ? (
-                      <>
-                        <Eye className="w-3.5 h-3.5 text-emerald-400" />
-                        <span>Góc nhìn thứ 1 [V]</span>
-                      </>
-                    ) : (
-                      <>
-                        <User className="w-3.5 h-3.5 text-amber-400" />
-                        <span>Góc nhìn thứ 3 [V]</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-              </div>
-
-              {/* Character Emotes / Animations */}
+              {/* Character Emotes */}
               <div className="p-4 rounded-xl bg-white/[0.03] border border-white/10 space-y-3">
                 <div>
-                  <h4 className="font-semibold text-neutral-200 flex items-center gap-2">
-                    <Sparkles className="w-4 h-4 text-purple-400" />
-                    Động Tác & Biểu Cảm Nhân Vật (Emotes)
-                  </h4>
-                  <p className="text-xs text-neutral-400 mt-0.5">
-                    Thực hiện các cử chỉ, tương tác hoặc điệu nhảy đặc biệt (Phím tắt: 1 - 5)
-                  </p>
+                  <h4 className="text-xs font-semibold text-white">Động tác nhân vật (1 - 5)</h4>
                 </div>
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                   {[
@@ -229,20 +222,22 @@ export default function SettingsModal({
                     return (
                       <button
                         key={em.id}
-                        onClick={() => {
-                          if (onTriggerEmote) onTriggerEmote(em.id);
-                        }}
+                        onClick={() => onTriggerEmote?.(em.id)}
                         className={`p-2.5 rounded-xl border text-xs font-medium flex items-center justify-between transition ${
                           isActive
-                            ? 'bg-purple-600/25 border-purple-500/50 text-purple-200 shadow-sm'
+                            ? 'bg-white text-black border-white'
                             : 'bg-white/5 border-white/10 text-neutral-300 hover:bg-white/10 hover:text-white'
                         }`}
                       >
                         <div className="flex items-center space-x-2">
-                          <IconComp className="w-3.5 h-3.5 text-purple-400" />
+                          <IconComp className="w-3.5 h-3.5" />
                           <span>{em.label}</span>
                         </div>
-                        <kbd className="px-1.5 py-0.5 rounded bg-white/10 font-mono text-[10px] text-neutral-400">
+                        <kbd
+                          className={`px-1.5 py-0.5 rounded font-mono text-[10px] ${
+                            isActive ? 'bg-black/10 text-black' : 'bg-white/10 text-neutral-400'
+                          }`}
+                        >
                           {em.key}
                         </kbd>
                       </button>
@@ -255,155 +250,180 @@ export default function SettingsModal({
 
           {/* TAB 2: SÂN KHẤU & ÂM THANH */}
           {activeTab === 'audio' && (
-            <div className="space-y-4">
-              {/* Stage YouTube Screen Master */}
-              <div className="p-4 rounded-xl bg-white/[0.03] border border-white/10 space-y-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h4 className="font-semibold text-neutral-200 flex items-center gap-2">
-                      <Tv className="w-4 h-4 text-red-400" />
-                      Màn Hình LED Sân Khấu (10.4m x 5.85m)
-                    </h4>
-                    <p className="text-xs text-neutral-400 mt-0.5">
-                      Trình chiếu video YouTube trực tiếp lên sân khấu chính
-                    </p>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <button
-                      onClick={onToggleScreen}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition ${
-                        isScreenOn
-                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
-                          : 'bg-red-500/20 text-red-300 border-red-500/40'
-                      }`}
-                    >
-                      {isScreenOn ? 'Màn hình BẬT' : 'Màn hình TẮT'}
-                    </button>
-                    <button
-                      onClick={() => {
-                        onClose();
-                        if (onOpenStageScreenModal) onOpenStageScreenModal();
-                      }}
-                      className="px-3 py-1.5 rounded-lg text-xs font-medium bg-red-600/30 hover:bg-red-600/50 text-red-200 border border-red-500/40 transition"
-                    >
-                      Đổi link video
-                    </button>
-                  </div>
+            <div className="space-y-3">
+              <div className="p-4 rounded-xl bg-white/[0.03] border border-white/10 flex items-center justify-between gap-4">
+                <div>
+                  <h4 className="text-xs font-semibold text-white flex items-center gap-2">
+                    <Tv className="w-4 h-4 text-neutral-400" />
+                    Màn hình sân khấu
+                  </h4>
+                  <p className="text-[11px] text-neutral-400 mt-0.5">
+                    Bật/tắt hoặc đổi video trình chiếu trên sân khấu
+                  </p>
                 </div>
-              </div>
-
-              {/* Stage Audio Mute Toggle */}
-              <div className="p-4 rounded-xl bg-white/[0.03] border border-white/10 space-y-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h4 className="font-semibold text-neutral-200 flex items-center gap-2">
-                      {isStageVideoMuted ? (
-                        <VolumeX className="w-4 h-4 text-neutral-400" />
-                      ) : (
-                        <Volume2 className="w-4 h-4 text-emerald-400" />
-                      )}
-                      Âm Thanh Video Sân Khấu
-                    </h4>
-                    <p className="text-xs text-neutral-400 mt-0.5">
-                      Bật hoặc tắt tiếng loa hòa nhạc sân khấu (Phím tắt: M)
-                    </p>
-                  </div>
+                <div className="flex items-center gap-2 shrink-0">
                   <button
-                    onClick={onToggleStageMute}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition flex items-center space-x-1.5 ${
-                      isStageVideoMuted
-                        ? 'bg-neutral-800 text-neutral-400 border-white/10'
-                        : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
-                    }`}
-                  >
-                    {isStageVideoMuted ? (
-                      <>
-                        <VolumeX className="w-3.5 h-3.5" />
-                        <span>Đang tắt tiếng [M]</span>
-                      </>
-                    ) : (
-                      <>
-                        <Volume2 className="w-3.5 h-3.5 text-emerald-400" />
-                        <span>Đang phát loa [M]</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-              </div>
-
-              {/* Ambient Lounge Audio */}
-              <div className="p-4 rounded-xl bg-white/[0.03] border border-white/10 space-y-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h4 className="font-semibold text-neutral-200 flex items-center gap-2">
-                      <Music className="w-4 h-4 text-amber-400" />
-                      Nhạc Nền Không Gian Lounge
-                    </h4>
-                    <p className="text-xs text-neutral-400 mt-0.5">
-                      Âm thanh mộc mạc Lofi / Jazz đệm nền cho quán
-                    </p>
-                  </div>
-                  <button
-                    onClick={onToggleAudio}
+                    onClick={onToggleScreen}
                     className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition ${
-                      isAudioPlaying
-                        ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
-                        : 'bg-white/5 text-neutral-400 border-white/10'
+                      isScreenOn
+                        ? 'bg-white text-black border-white'
+                        : 'bg-white/5 text-neutral-300 border-white/10'
                     }`}
                   >
-                    {isAudioPlaying ? 'Bật nhạc nền' : 'Tắt nhạc nền'}
+                    {isScreenOn ? 'Đang BẬT' : 'Đang TẮT'}
+                  </button>
+                  <button
+                    onClick={() => {
+                      onClose();
+                      onOpenStageScreenModal?.();
+                    }}
+                    className="px-3 py-1.5 rounded-lg text-xs font-medium bg-white/5 hover:bg-white/10 text-neutral-200 border border-white/10 transition"
+                  >
+                    Đổi video
                   </button>
                 </div>
+              </div>
+
+              <div className="p-4 rounded-xl bg-white/[0.03] border border-white/10 flex items-center justify-between gap-4">
+                <div>
+                  <h4 className="text-xs font-semibold text-white flex items-center gap-2">
+                    {isStageVideoMuted ? (
+                      <VolumeX className="w-4 h-4 text-neutral-400" />
+                    ) : (
+                      <Volume2 className="w-4 h-4 text-neutral-400" />
+                    )}
+                    Âm thanh sân khấu
+                  </h4>
+                  <p className="text-[11px] text-neutral-400 mt-0.5">
+                    Bật hoặc tắt tiếng loa sân khấu [M]
+                  </p>
+                </div>
+                <button
+                  onClick={onToggleStageMute}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition shrink-0 ${
+                    isStageVideoMuted
+                      ? 'bg-white/5 text-neutral-400 border-white/10'
+                      : 'bg-white text-black border-white'
+                  }`}
+                >
+                  {isStageVideoMuted ? 'Đang tắt [M]' : 'Đang bật [M]'}
+                </button>
+              </div>
+
+              <div className="p-4 rounded-xl bg-white/[0.03] border border-white/10 flex items-center justify-between gap-4">
+                <div>
+                  <h4 className="text-xs font-semibold text-white flex items-center gap-2">
+                    <Music className="w-4 h-4 text-neutral-400" />
+                    Nhạc nền Lounge
+                  </h4>
+                  <p className="text-[11px] text-neutral-400 mt-0.5">
+                    Nhạc Lofi / Jazz nhẹ trong không gian
+                  </p>
+                </div>
+                <button
+                  onClick={onToggleAudio}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition shrink-0 ${
+                    isAudioPlaying
+                      ? 'bg-white text-black border-white'
+                      : 'bg-white/5 text-neutral-300 border-white/10'
+                  }`}
+                >
+                  {isAudioPlaying ? 'Đang bật' : 'Đang tắt'}
+                </button>
               </div>
             </div>
           )}
 
-          {/* TAB 3: KHÔNG GIAN & TIỆN ÍCH */}
+          {/* TAB 3: ĐỒ HỌA & FPS */}
           {activeTab === 'graphics' && (
-            <div className="space-y-4">
-              {/* Day/Night Lighting */}
-              <div className="p-4 rounded-xl bg-white/[0.03] border border-white/10 space-y-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h4 className="font-semibold text-neutral-200 flex items-center gap-2">
-                      {isNightMode ? (
-                        <Moon className="w-4 h-4 text-indigo-400" />
-                      ) : (
-                        <Sun className="w-4 h-4 text-amber-400" />
-                      )}
-                      Ánh Sáng & Thời Điểm
-                    </h4>
-                    <p className="text-xs text-neutral-400 mt-0.5">
-                      Chuyển đổi giữa Đêm Acoustic huyền ảo hoặc Hoàng hôn ấm cúng
-                    </p>
-                  </div>
-                  <button
-                    onClick={onToggleNightMode}
-                    className="px-3 py-1.5 rounded-lg text-xs font-medium bg-white/5 hover:bg-white/10 border border-white/10 text-neutral-200 transition"
-                  >
-                    {isNightMode ? 'Chế độ Đêm (Night)' : 'Hoàng hôn (Sunset)'}
-                  </button>
+            <div className="space-y-3">
+              {/* Show FPS */}
+              <div className="p-4 rounded-xl bg-white/[0.03] border border-white/10 flex items-center justify-between gap-4">
+                <div>
+                  <h4 className="text-xs font-semibold text-white">Hiển thị FPS</h4>
+                  <p className="text-[11px] text-neutral-400 mt-0.5">
+                    Hiện bộ đếm khung hình ở góc trên bên phải
+                  </p>
                 </div>
+                <button
+                  onClick={handleToggleFps}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition shrink-0 ${
+                    showFps
+                      ? 'bg-white text-black border-white'
+                      : 'bg-white/5 text-neutral-300 border-white/10 hover:bg-white/10'
+                  }`}
+                >
+                  {showFps ? 'Đang bật' : 'Đang tắt'}
+                </button>
               </div>
 
-              {/* Quick Actions */}
+              {/* Render Scale */}
+              {onChangeRenderScale && (
+                <div className="p-4 rounded-xl bg-white/[0.03] border border-white/10 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="text-xs font-semibold text-white">Độ nét đồ họa (Render Scale)</h4>
+                      <p className="text-[11px] text-neutral-400 mt-0.5">
+                        Giảm xuống 0.75x để tăng FPS trên máy yếu
+                      </p>
+                    </div>
+                    <span className="text-xs font-mono text-white bg-white/10 px-2 py-0.5 rounded">
+                      {renderScale}x
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-4 gap-2">
+                    {[0.75, 1, 1.25, 1.5].map((scale) => (
+                      <button
+                        key={scale}
+                        onClick={() => onChangeRenderScale(scale)}
+                        className={`py-1.5 rounded-lg text-xs font-medium border transition ${
+                          renderScale === scale
+                            ? 'bg-white text-black border-white'
+                            : 'bg-white/5 text-neutral-300 border-white/10 hover:bg-white/10'
+                        }`}
+                      >
+                        {scale}x
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Day/Night Lighting */}
+              <div className="p-4 rounded-xl bg-white/[0.03] border border-white/10 flex items-center justify-between gap-4">
+                <div>
+                  <h4 className="text-xs font-semibold text-white flex items-center gap-2">
+                    {isNightMode ? (
+                      <Moon className="w-4 h-4 text-neutral-400" />
+                    ) : (
+                      <Sun className="w-4 h-4 text-neutral-400" />
+                    )}
+                    Ánh sáng không gian
+                  </h4>
+                  <p className="text-[11px] text-neutral-400 mt-0.5">
+                    Đổi giữa chế độ Đêm và Hoàng hôn
+                  </p>
+                </div>
+                <button
+                  onClick={onToggleNightMode}
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium bg-white/5 hover:bg-white/10 border border-white/10 text-neutral-200 transition shrink-0"
+                >
+                  {isNightMode ? 'Đêm' : 'Hoàng hôn'}
+                </button>
+              </div>
+
               {(onOpenMenu || onOpenReservation) && (
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-2 gap-2.5">
                   {onOpenMenu && (
                     <button
                       onClick={() => {
                         onClose();
                         onOpenMenu();
                       }}
-                      className="p-3.5 rounded-xl bg-white/[0.03] hover:bg-white/[0.07] border border-white/10 text-left transition flex items-center space-x-3"
+                      className="p-3 rounded-xl bg-white/[0.03] hover:bg-white/[0.07] border border-white/10 text-left transition flex items-center gap-2.5"
                     >
-                      <div className="p-2 rounded-lg bg-amber-500/20 text-amber-300">
-                        <Utensils className="w-4 h-4" />
-                      </div>
-                      <div>
-                        <div className="font-medium text-xs text-neutral-200">Xem Thực Đơn</div>
-                        <div className="text-[11px] text-neutral-400">Đồ uống & Món ăn</div>
-                      </div>
+                      <Utensils className="w-4 h-4 text-neutral-400" />
+                      <span className="text-xs font-medium text-neutral-200">Xem Thực Đơn</span>
                     </button>
                   )}
 
@@ -413,88 +433,74 @@ export default function SettingsModal({
                         onClose();
                         onOpenReservation();
                       }}
-                      className="p-3.5 rounded-xl bg-white/[0.03] hover:bg-white/[0.07] border border-white/10 text-left transition flex items-center space-x-3"
+                      className="p-3 rounded-xl bg-white/[0.03] hover:bg-white/[0.07] border border-white/10 text-left transition flex items-center gap-2.5"
                     >
-                      <div className="p-2 rounded-lg bg-emerald-500/20 text-emerald-300">
-                        <Calendar className="w-4 h-4" />
-                      </div>
-                      <div>
-                        <div className="font-medium text-xs text-neutral-200">Đặt Bàn Lounge</div>
-                        <div className="text-[11px] text-neutral-400">Chọn vị trí ngồi VIP</div>
-                      </div>
+                      <Calendar className="w-4 h-4 text-neutral-400" />
+                      <span className="text-xs font-medium text-neutral-200">Đặt Bàn Lounge</span>
                     </button>
                   )}
                 </div>
               )}
 
-              {/* Reset Layout */}
               {onResetLayout && (
-                <div className="p-4 rounded-xl bg-red-950/20 border border-red-500/20 flex items-center justify-between">
+                <div className="p-4 rounded-xl bg-white/[0.03] border border-white/10 flex items-center justify-between gap-4">
                   <div>
-                    <h4 className="font-semibold text-red-200 text-xs flex items-center gap-1.5">
-                      <RotateCcw className="w-3.5 h-3.5 text-red-400" />
-                      Khôi Phục Bố Cục Bàn Ghế Gốc
+                    <h4 className="font-semibold text-neutral-200 text-xs flex items-center gap-1.5">
+                      <RotateCcw className="w-3.5 h-3.5 text-neutral-400" />
+                      Khôi phục bố cục gốc
                     </h4>
-                    <p className="text-[11px] text-neutral-400 mt-0.5">
-                      Đặt lại toàn bộ vị trí bàn ghế và đồ trang trí về chuẩn ban đầu
-                    </p>
                   </div>
                   <button
                     onClick={handleResetClick}
                     className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition ${
                       resetConfirm
-                        ? 'bg-red-600 text-white border-red-500 font-bold animate-pulse'
-                        : 'bg-red-900/30 text-red-300 border-red-500/30 hover:bg-red-900/50'
+                        ? 'bg-white text-black border-white'
+                        : 'bg-white/5 text-neutral-300 border-white/10 hover:bg-white/10'
                     }`}
                   >
-                    {resetConfirm ? 'Xác nhận đặt lại?' : 'Khôi phục'}
+                    {resetConfirm ? 'Xác nhận?' : 'Khôi phục'}
                   </button>
                 </div>
               )}
             </div>
           )}
 
-          {/* TAB 4: HƯỚNG DẪN PHÍM TẮT */}
+          {/* TAB 4: PHÍM TẮT */}
           {activeTab === 'shortcuts' && (
-            <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-2 text-xs">
-                {[
-                  { key: 'Tab', desc: 'Mở / Đóng bảng Cài Đặt & Chế Độ này' },
-                  { key: 'W / A / S / D', desc: 'Di chuyển nhân vật (hoặc phím mũi tên)' },
-                  { key: 'Shift', desc: 'Giữ để chạy nhanh (Sprint)' },
-                  { key: 'Space', desc: 'Nhảy bật cao' },
-                  { key: 'E', desc: 'Ngồi xuống ghế / Đứng dậy' },
-                  { key: 'V', desc: 'Đổi góc nhìn thứ 1 (Mắt nhìn) / thứ 3 (Toàn thân)' },
-                  { key: 'B', desc: 'Bật / Tắt chế độ Decor thiết kế bàn ghế' },
-                  { key: 'M', desc: 'Bật / Tắt loa màn hình LED sân khấu' },
-                  { key: '1 - 5', desc: 'Kích hoạt động tác cảm xúc (Chào, Nhún nhảy...)' },
-                  { key: 'G / R', desc: 'Chuyển Di chuyển / Xoay đồ vật trong Decor' },
-                  { key: 'Del / Backspace', desc: 'Xóa vật phẩm đang chọn trong Decor' },
-                  { key: 'Esc', desc: 'Thoát lựa chọn / Đóng bảng điều khiển' },
-                ].map((item, idx) => (
-                  <div
-                    key={idx}
-                    className="flex items-center justify-between p-2.5 rounded-lg bg-white/[0.02] border border-white/[0.06]"
-                  >
-                    <span className="text-neutral-400 text-[11px]">{item.desc}</span>
-                    <span className="px-2 py-0.5 rounded bg-white/10 font-mono text-[11px] font-bold text-amber-300 border border-white/15">
-                      {item.key}
-                    </span>
-                  </div>
-                ))}
-              </div>
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              {[
+                { key: 'Tab', desc: 'Mở / Đóng bảng Cài đặt' },
+                { key: 'W A S D', desc: 'Di chuyển nhân vật' },
+                { key: 'Shift', desc: 'Chạy nhanh' },
+                { key: 'Space', desc: 'Nhảy' },
+                { key: 'E', desc: 'Tương tác / Ngồi ghế / Hát' },
+                { key: 'V', desc: 'Đổi góc nhìn thứ 1 / thứ 3' },
+                { key: 'M', desc: 'Bật / Tắt loa sân khấu' },
+                { key: '1 - 5', desc: 'Động tác nhân vật' },
+                { key: 'Esc', desc: 'Nhả chuột / Đóng bảng' },
+              ].map((item, idx) => (
+                <div
+                  key={idx}
+                  className="flex items-center justify-between p-2.5 rounded-lg bg-white/[0.03] border border-white/10"
+                >
+                  <span className="text-neutral-400 text-[11px]">{item.desc}</span>
+                  <span className="px-2 py-0.5 rounded bg-white/10 font-mono text-[11px] text-white">
+                    {item.key}
+                  </span>
+                </div>
+              ))}
             </div>
           )}
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between px-6 py-3.5 border-t border-white/10 bg-neutral-900/60">
+        <div className="flex items-center justify-between px-5 py-3.5 border-t border-white/10">
           <span className="text-[11px] text-neutral-400">
-            Mẹo: Bạn có thể nhấn <kbd className="px-1.5 py-0.5 rounded bg-white/10 font-mono text-neutral-300">Tab</kbd> hoặc <kbd className="px-1.5 py-0.5 rounded bg-white/10 font-mono text-neutral-300">Esc</kbd> bất kỳ lúc nào để đóng bảng này
+            Nhấn <kbd className="px-1.5 py-0.5 rounded bg-white/10 font-mono text-neutral-300">Tab</kbd> hoặc <kbd className="px-1.5 py-0.5 rounded bg-white/10 font-mono text-neutral-300">Esc</kbd> để đóng
           </span>
           <button
             onClick={onClose}
-            className="px-5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-neutral-950 font-bold text-xs tracking-wide shadow-lg transition active:scale-95"
+            className="px-4 py-1.5 rounded-lg bg-white hover:bg-neutral-200 text-black font-semibold text-xs transition"
           >
             Đóng [Tab]
           </button>
@@ -503,4 +509,3 @@ export default function SettingsModal({
     </div>
   );
 }
-

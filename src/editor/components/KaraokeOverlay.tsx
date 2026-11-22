@@ -19,6 +19,8 @@ import {
   Youtube,
 } from 'lucide-react';
 import { KARAOKE_SONGS, karaokeAudio, type KaraokeSong } from '../../utils/karaokeAudio';
+import { MultiplayerManager } from '../../network/MultiplayerManager';
+import { KaraokeVoiceManager } from '../../network/KaraokeVoiceManager';
 
 interface KaraokeOverlayProps {
   isOpen: boolean;
@@ -86,6 +88,13 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
       karaokeAudio.stop();
       setIsFilePlaying(false);
       setYoutubeVideoId(null);
+      KaraokeVoiceManager.getInstance().stopBroadcasting();
+      MultiplayerManager.getInstance().broadcastKaraokeState({
+        active: false,
+        youtubeVideoId: null,
+        title: '',
+        isPlaying: false,
+      });
       return;
     }
     setIsPickerOpen(true);
@@ -107,6 +116,13 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
 
   useEffect(() => {
     return () => {
+      KaraokeVoiceManager.getInstance().stopBroadcasting();
+      MultiplayerManager.getInstance().broadcastKaraokeState({
+        active: false,
+        youtubeVideoId: null,
+        title: '',
+        isPlaying: false,
+      });
       karaokeAudio.disableMic();
       karaokeAudio.stop();
     };
@@ -183,6 +199,12 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
     setActiveSong(song);
     setYoutubeVideoId(song.youtubeId);
     setIsPickerOpen(false);
+    MultiplayerManager.getInstance().broadcastKaraokeState({
+      active: true,
+      youtubeVideoId: song.youtubeId,
+      title: song.title,
+      isPlaying: true,
+    });
   };
 
   const handleUploadFile = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -211,6 +233,7 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
   const handleToggleMic = async () => {
     setMicError(null);
     if (micEnabled) {
+      KaraokeVoiceManager.getInstance().stopBroadcasting();
       karaokeAudio.disableMic();
       setMicEnabled(false);
       return;
@@ -225,6 +248,10 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
     });
     if (ok) {
       setMicEnabled(true);
+      const stream = karaokeAudio.getBroadcastStream();
+      if (stream) {
+        KaraokeVoiceManager.getInstance().startBroadcasting(stream);
+      }
       const list = await karaokeAudio.listInputDevices();
       setInputDevices(list);
       if (!selectedDeviceId && list[0]?.deviceId) {
@@ -248,7 +275,12 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
       bassDb,
       trebleDb,
     });
-    if (!ok) {
+    if (ok) {
+      const stream = karaokeAudio.getBroadcastStream();
+      if (stream) {
+        KaraokeVoiceManager.getInstance().startBroadcasting(stream);
+      }
+    } else {
       setMicError('Không thể chuyển sang thiết bị micro này');
     }
   };

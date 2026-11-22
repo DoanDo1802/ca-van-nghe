@@ -102,6 +102,7 @@ class KaraokeAudioEngine {
   private micNodes: AudioNode[] = [];
   private micStream: MediaStream | null = null;
   private micSource: MediaStreamAudioSourceNode | null = null;
+  private micBroadcastDest: MediaStreamAudioDestinationNode | null = null;
 
   private audioEl: HTMLAudioElement | null = null;
   private mediaSource: MediaElementAudioSourceNode | null = null;
@@ -287,7 +288,13 @@ class KaraokeAudioEngine {
       delayFilter.connect(delayOut);
       delayOut.connect(this.masterGain!);
 
-      this.micNodes = [hp, warmth, presence, comp, makeup, dry, convolver, wet, delay, delayFilter, delayFeedback, delayOut];
+      const broadcastDest = ctx.createMediaStreamDestination();
+      dry.connect(broadcastDest);
+      wet.connect(broadcastDest);
+      delayOut.connect(broadcastDest);
+      this.micBroadcastDest = broadcastDest;
+
+      this.micNodes = [hp, warmth, presence, comp, makeup, dry, convolver, wet, delay, delayFilter, delayFeedback, delayOut, broadcastDest];
       return true;
     } catch {
       return false;
@@ -321,6 +328,11 @@ class KaraokeAudioEngine {
       this.micStream.getTracks().forEach((t) => t.stop());
       this.micStream = null;
     }
+    this.micBroadcastDest = null;
+  }
+
+  getBroadcastStream(): MediaStream | null {
+    return this.micBroadcastDest?.stream ?? this.micStream;
   }
 
   isMicActive(): boolean {
