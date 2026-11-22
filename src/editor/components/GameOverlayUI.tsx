@@ -273,6 +273,7 @@ export const GameOverlayUI: React.FC = () => {
           spatialMode
           isHost={isRoomHost}
           onResyncStage={() => MultiplayerManager.getInstance().requestStageResync()}
+          onSyncLiveEdge={() => EditorEngine.getInstance().syncStageToLiveEdge()}
           sourceType={stageSourceType}
           currentVideoId={stageYoutubeId ?? ''}
           currentMediaUrl={stageMediaUrl}

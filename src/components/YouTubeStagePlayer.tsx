@@ -9,6 +9,9 @@ interface YTPlayerInstance {
   unMute: () => void;
   setVolume: (vol: number) => void;
   setPlaybackQuality: (quality: string) => void;
+  getDuration?: () => number;
+  getVideoData?: () => { isLive?: boolean; video_id?: string; title?: string };
+  seekTo?: (seconds: number, allowSeekAhead: boolean) => void;
   destroy: () => void;
 }
 
@@ -157,9 +160,41 @@ export const YouTubeStagePlayer: React.FC = () => {
       }
     };
 
+    const onSyncLive = () => {
+      const cur = latestStateRef.current;
+      if (readyRef.current && playerRef.current && cur.videoId) {
+        const videoData = playerRef.current.getVideoData?.();
+        // Skip seeking to duration if YouTube explicitly reports this is not a live stream (VOD)
+        if (!videoData || videoData.isLive !== false) {
+          const duration = playerRef.current.getDuration?.() ?? 0;
+          if (Number.isFinite(duration) && duration > 0 && playerRef.current.seekTo) {
+            playerRef.current.seekTo(duration, true);
+          } else {
+            playerRef.current.loadVideoById({ videoId: cur.videoId, suggestedQuality: cur.quality });
+          }
+          if (cur.isPlaying && cur.isScreenOn) {
+            playerRef.current.playVideo();
+          }
+        }
+      }
+      if (domVideoRef.current && cur.domVideoUrl) {
+        const v = domVideoRef.current;
+        if (!Number.isFinite(v.duration) && v.seekable && v.seekable.length > 0) {
+          const liveEnd = v.seekable.end(v.seekable.length - 1);
+          if (Number.isFinite(liveEnd) && liveEnd > 0) {
+            v.currentTime = liveEnd;
+          }
+        }
+        if (cur.isPlaying && cur.isScreenOn && v.paused) {
+          void v.play().catch(() => {});
+        }
+      }
+    };
+
     window.addEventListener('cavannghe:stage-audio-changed', onStageAudio);
     window.addEventListener('cavannghe:youtube-volume', onVolume);
     window.addEventListener('cavannghe:screen-projection', onProjection);
+    window.addEventListener('cavannghe:stage-sync-live', onSyncLive);
     window.addEventListener('pointerdown', onUserGesture, { passive: true });
     window.addEventListener('keydown', onUserGesture, { passive: true });
     window.addEventListener('focus', onUserGesture, { passive: true });
@@ -168,6 +203,7 @@ export const YouTubeStagePlayer: React.FC = () => {
       window.removeEventListener('cavannghe:stage-audio-changed', onStageAudio);
       window.removeEventListener('cavannghe:youtube-volume', onVolume);
       window.removeEventListener('cavannghe:screen-projection', onProjection);
+      window.removeEventListener('cavannghe:stage-sync-live', onSyncLive);
       window.removeEventListener('pointerdown', onUserGesture);
       window.removeEventListener('keydown', onUserGesture);
       window.removeEventListener('focus', onUserGesture);

@@ -133,6 +133,7 @@ export class MultiplayerManager {
   private localSeq = 0;
 
   private onRemoteStageCallback: ((state: NetworkStageState) => void) | null = null;
+  private onRemoteStageLiveSyncCallback: (() => void) | null = null;
   private onRemoteKaraokeCallback: ((state: NetworkKaraokeState) => void) | null = null;
   private onRtcSignalCallback: ((msg: RtcSignalMessage) => void) | null = null;
   private onVoiceSignalCallback: ((msg: RtcSignalMessage) => void) | null = null;
@@ -141,6 +142,10 @@ export class MultiplayerManager {
 
   setOnRemoteStage(cb: ((state: NetworkStageState) => void) | null): void {
     this.onRemoteStageCallback = cb;
+  }
+
+  setOnRemoteStageLiveSync(cb: (() => void) | null): void {
+    this.onRemoteStageLiveSyncCallback = cb;
   }
 
   setOnRemoteKaraoke(cb: ((state: NetworkKaraokeState) => void) | null): void {
@@ -201,6 +206,11 @@ export class MultiplayerManager {
         this.hostStageState = stage;
         this.onRemoteStageCallback?.(stage);
       }
+    });
+
+    channel.on('broadcast', { event: 'stage:sync-live' }, () => {
+      if (this.channel !== channel || this.isHost()) return;
+      this.onRemoteStageLiveSyncCallback?.();
     });
 
     channel.on('broadcast', { event: 'karaoke:sync' }, ({ payload }) => {
@@ -459,6 +469,15 @@ export class MultiplayerManager {
     if (this.hostStageState && !this.isHost()) {
       this.onRemoteStageCallback?.(this.hostStageState);
     }
+  }
+
+  broadcastStageLiveSync(): void {
+    if (!this.connected || !this.channel || !this.isHost()) return;
+    void this.channel.send({
+      type: 'broadcast',
+      event: 'stage:sync-live',
+      payload: { updatedAt: Date.now() },
+    });
   }
 
   getLocalPlayerName(): string {

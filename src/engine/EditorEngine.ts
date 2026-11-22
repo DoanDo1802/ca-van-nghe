@@ -1325,6 +1325,10 @@ export class EditorEngine {
     this.stageAudioManager?.setScreenOn(on);
   }
 
+  syncStageToLiveEdge(): void {
+    this.stageAudioManager?.syncToLiveEdge();
+  }
+
   setNightMode(isNight: boolean): void {
     if (!this.app || !this.sceneRoot) return;
     if (this.app.scene) {

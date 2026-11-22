@@ -13,6 +13,7 @@ import {
   Upload,
   Radio,
   Link2,
+  RefreshCw,
 } from 'lucide-react';
 
 function parseYouTubeVideoId(urlOrId) {
@@ -70,6 +71,7 @@ const SPATIAL_MEDIA_PRESETS = [
  *   spatialMode?: boolean;
  *   isHost?: boolean;
  *   onResyncStage?: () => void;
+ *   onSyncLiveEdge?: () => void;
  *   sourceType?: 'media' | 'youtube';
  *   currentMediaUrl?: string;
  *   currentMediaTitle?: string;
@@ -97,6 +99,7 @@ export default function StageScreenModal({
   spatialMode = false,
   isHost = true,
   onResyncStage,
+  onSyncLiveEdge,
   sourceType = 'media',
   currentMediaUrl = '',
   currentMediaTitle = '',
@@ -118,6 +121,7 @@ export default function StageScreenModal({
   const [inputUrl, setInputUrl] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [justApplied, setJustApplied] = useState(false);
+  const [justSyncedLive, setJustSyncedLive] = useState(false);
   const fileInputRef = useRef(null);
 
   useEffect(() => {
@@ -137,6 +141,13 @@ export default function StageScreenModal({
   const triggerAppliedFeedback = () => {
     setJustApplied(true);
     setTimeout(() => setJustApplied(false), 2000);
+  };
+
+  const handleSyncLiveEdge = () => {
+    if (!isHost || !onSyncLiveEdge) return;
+    onSyncLiveEdge();
+    setJustSyncedLive(true);
+    setTimeout(() => setJustSyncedLive(false), 2000);
   };
 
   const handleApply = (e) => {
@@ -297,6 +308,36 @@ export default function StageScreenModal({
                 {isMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
                 <span>{isMuted ? 'Loa: TẮT (Mute)' : 'Loa: BẬT'}</span>
               </button>
+
+              {spatialMode && onSyncLiveEdge && isHost && (
+                <button
+                  type="button"
+                  onClick={handleSyncLiveEdge}
+                  disabled={sourceType === 'media' && currentMediaUrl.startsWith('blob:')}
+                  title={
+                    sourceType === 'media' && currentMediaUrl.startsWith('blob:')
+                      ? 'File chọn từ máy không phải luồng live'
+                      : 'Cập nhật luồng live tới điểm mới nhất cho chủ phòng và tất cả người xem'
+                  }
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium flex items-center space-x-1.5 transition disabled:opacity-45 disabled:cursor-not-allowed ${
+                    justSyncedLive
+                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                      : 'bg-rose-500/20 text-rose-300 border border-rose-500/30 hover:bg-rose-500/30'
+                  }`}
+                >
+                  {justSyncedLive ? (
+                    <>
+                      <Check className="w-3.5 h-3.5" />
+                      <span>Đã bắt Live!</span>
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      <span>Cập nhật Live</span>
+                    </>
+                  )}
+                </button>
+              )}
             </div>
 
             {!spatialMode && (

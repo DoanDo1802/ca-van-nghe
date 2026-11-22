@@ -231,6 +231,10 @@ export class StageAudioManager {
     MultiplayerManager.getInstance().setOnRemoteStage((remote) => {
       this.applyRemoteState(remote);
     });
+
+    MultiplayerManager.getInstance().setOnRemoteStageLiveSync(() => {
+      this.applyRemoteLiveSync();
+    });
   }
 
   getState(): StageMediaState {
@@ -325,6 +329,36 @@ export class StageAudioManager {
     this.syncGain();
     this.emitStateChanged();
     this.broadcastIfHost();
+  }
+
+  /** Host-only: seek local stream to live edge and notify all connected clients to update. */
+  syncToLiveEdge(): void {
+    if (!MultiplayerManager.getInstance().isHost()) return;
+    if (this.state.sourceType === 'media' && this.state.mediaUrl.startsWith('blob:')) return;
+    this.seekLocalToLiveEdge();
+    MultiplayerManager.getInstance().broadcastStageLiveSync();
+  }
+
+  applyRemoteLiveSync(): void {
+    if (this.destroyed) return;
+    this.seekLocalToLiveEdge();
+  }
+
+  private seekLocalToLiveEdge(): void {
+    if (this.state.sourceType === 'media' && !this.state.domVideoFallback && this.videoEl) {
+      const v = this.videoEl;
+      // Only seek to seekable.end for live streams (non-finite duration) to avoid jumping VODs to the end
+      if (!Number.isFinite(v.duration) && v.seekable && v.seekable.length > 0) {
+        const liveEnd = v.seekable.end(v.seekable.length - 1);
+        if (Number.isFinite(liveEnd) && liveEnd > 0) {
+          v.currentTime = liveEnd;
+        }
+      }
+      if (this.state.isPlaying) {
+        void this.tryPlayVideo();
+      }
+    }
+    window.dispatchEvent(new CustomEvent('cavannghe:stage-sync-live'));
   }
 
   applyRemoteState(remote: NetworkStageState): void {
