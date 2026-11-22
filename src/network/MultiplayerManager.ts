@@ -8,6 +8,8 @@ export interface NetworkStageState {
   title: string;
   isPlaying: boolean;
   isScreenOn: boolean;
+  playbackStartedAt?: number;
+  pausedAtSec?: number;
   updatedAt: number;
 }
 
