@@ -13,7 +13,7 @@ function formatTime(ts: number): string {
 
 export const ChatBox: React.FC = () => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [isOpen, setIsOpen] = useState(true);
+  const [isOpen, setIsOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const [draft, setDraft] = useState('');
 
@@ -120,19 +120,19 @@ export const ChatBox: React.FC = () => {
 
   if (!isOpen) {
     return (
-      <div className="fixed bottom-4 left-4 z-30 pointer-events-auto hidden sm:block">
+      <div className="fixed top-14 left-3 z-30 pointer-events-auto hidden sm:block">
         <button
           type="button"
           onClick={handleOpen}
-          className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-[#121212]/85 hover:bg-[#1a1a1a] backdrop-blur-md border border-white/15 text-xs font-medium text-neutral-200 shadow-xl transition"
+          className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-black/35 hover:bg-black/50 backdrop-blur-md border border-white/15 text-xs font-medium text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)] shadow-lg transition"
         >
-          <MessageSquare className="w-3.5 h-3.5 text-sky-400" />
+          <MessageSquare className="w-3.5 h-3.5 text-cyan-300" />
           <span>Chat</span>
-          <kbd className="px-1.5 py-0.5 rounded bg-white/10 text-[10px] font-mono text-neutral-400">
+          <kbd className="px-1.5 py-0.5 rounded bg-black/35 text-[10px] font-mono text-amber-200 border border-white/10">
             T
           </kbd>
           {unreadCount > 0 && (
-            <span className="px-1.5 py-0.5 rounded-full bg-sky-500 text-white text-[10px] font-bold">
+            <span className="px-1.5 py-0.5 rounded-full bg-cyan-500 text-white text-[10px] font-bold">
               {unreadCount > 99 ? '99+' : unreadCount}
             </span>
           )}
@@ -142,19 +142,19 @@ export const ChatBox: React.FC = () => {
   }
 
   return (
-    <div className="fixed bottom-4 left-4 z-30 pointer-events-auto w-72 sm:w-80 rounded-2xl bg-[#121212]/80 backdrop-blur-xl border border-white/15 shadow-2xl overflow-hidden flex flex-col hidden sm:flex">
+    <div className="fixed top-14 left-3 z-30 pointer-events-auto w-72 sm:w-80 rounded-2xl bg-black/30 backdrop-blur-md border border-white/15 shadow-2xl overflow-hidden flex flex-col hidden sm:flex">
       {/* Header */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-white/10 bg-white/[0.02]">
-        <div className="flex items-center gap-1.5 text-xs font-semibold text-neutral-200">
-          <MessageSquare className="w-3.5 h-3.5 text-sky-400" />
+      <div className="flex items-center justify-between px-3 py-2 border-b border-white/10 bg-black/20">
+        <div className="flex items-center gap-1.5 text-xs font-semibold text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)]">
+          <MessageSquare className="w-3.5 h-3.5 text-cyan-300" />
           <span>Khung Chat</span>
-          <span className="text-[10px] font-normal text-neutral-500">(Enter / T)</span>
+          <span className="text-[10px] font-normal text-amber-200/80">(Enter / T)</span>
         </div>
         <button
           type="button"
           onClick={() => setIsOpen(false)}
           title="Thu gọn khung chat"
-          className="p-1 rounded-lg text-neutral-400 hover:text-white hover:bg-white/10 transition"
+          className="p-1 rounded-lg text-white/80 hover:text-white hover:bg-white/15 transition"
         >
           <Minimize2 className="w-3.5 h-3.5" />
         </button>
@@ -166,8 +166,8 @@ export const ChatBox: React.FC = () => {
         className="h-44 overflow-y-auto px-3 py-2 space-y-1.5 text-xs scrollbar-thin"
       >
         {messages.length === 0 ? (
-          <p className="text-[11px] text-neutral-500 text-center py-10">
-            Chưa có tin nhắn. Nhấn <kbd className="px-1 py-0.5 rounded bg-white/10 text-neutral-300 font-mono">T</kbd> để trò chuyện!
+          <p className="text-[11px] text-white/85 drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)] text-center py-10">
+            Chưa có tin nhắn. Nhấn <kbd className="px-1 py-0.5 rounded bg-black/40 text-amber-200 border border-white/15 font-mono">T</kbd> để trò chuyện!
           </p>
         ) : (
           messages.map((m) => {
@@ -175,7 +175,7 @@ export const ChatBox: React.FC = () => {
               return (
                 <div
                   key={m.id}
-                  className="text-[11px] text-amber-300/90 bg-amber-500/10 border border-amber-400/20 rounded-lg px-2 py-1 leading-snug"
+                  className="text-[11px] text-amber-200 bg-amber-500/20 border border-amber-400/30 rounded-lg px-2 py-1 leading-snug drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)]"
                 >
                   {m.text}
                 </div>
@@ -183,20 +183,20 @@ export const ChatBox: React.FC = () => {
             }
             const isLocal = m.senderId === localPlayerId;
             return (
-              <div key={m.id} className="leading-snug break-words">
-                <span className="text-[10px] text-neutral-500 font-mono mr-1.5">
+              <div key={m.id} className="leading-snug break-words drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">
+                <span className="text-[10px] text-amber-200/85 font-mono mr-1.5">
                   {formatTime(m.timestamp)}
                 </span>
                 <span
                   className={`inline-flex items-center gap-1 font-semibold mr-1.5 ${
-                    isLocal ? 'text-emerald-300' : 'text-sky-300'
+                    isLocal ? 'text-emerald-300' : 'text-cyan-300'
                   }`}
                 >
-                  {m.isHost && <Crown className="w-3 h-3 text-amber-400 inline" />}
+                  {m.isHost && <Crown className="w-3 h-3 text-amber-300 inline" />}
                   {m.senderName}
                   {isLocal ? ' (Bạn)' : ''}:
                 </span>
-                <span className="text-neutral-200">{m.text}</span>
+                <span className="text-white">{m.text}</span>
               </div>
             );
           })
@@ -206,7 +206,7 @@ export const ChatBox: React.FC = () => {
       {/* Input */}
       <form
         onSubmit={handleSend}
-        className="flex items-center gap-1.5 p-2 border-t border-white/10 bg-black/30"
+        className="flex items-center gap-1.5 p-2 border-t border-white/10 bg-black/25"
       >
         <input
           ref={inputRef}
@@ -220,12 +220,12 @@ export const ChatBox: React.FC = () => {
             }
           }}
           placeholder="Nhập tin nhắn..."
-          className="flex-1 min-w-0 px-2.5 py-1.5 rounded-xl bg-white/5 border border-white/10 text-xs text-white placeholder:text-neutral-500 focus:outline-none focus:border-sky-400/50"
+          className="flex-1 min-w-0 px-2.5 py-1.5 rounded-xl bg-black/30 border border-white/15 text-xs text-white placeholder:text-neutral-300/80 focus:outline-none focus:border-cyan-400/60"
         />
         <button
           type="submit"
           disabled={!draft.trim()}
-          className="p-1.5 rounded-xl bg-sky-500 hover:bg-sky-400 disabled:opacity-40 disabled:hover:bg-sky-500 text-white transition shrink-0"
+          className="p-1.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 disabled:opacity-40 disabled:hover:bg-cyan-500 text-white transition shrink-0"
           title="Gửi tin nhắn"
         >
           <Send className="w-3.5 h-3.5" />
