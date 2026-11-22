@@ -86,6 +86,9 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
   useEffect(() => {
     if (!isOpen) {
       karaokeAudio.stop();
+      karaokeAudio.disableMic();
+      setMicEnabled(false);
+      setIsMixerOpen(false);
       setIsFilePlaying(false);
       setYoutubeVideoId(null);
       KaraokeVoiceManager.getInstance().stopBroadcasting();

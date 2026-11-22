@@ -27,7 +27,23 @@ export const KaraokeAudienceSync: React.FC<KaraokeAudienceSyncProps> = ({ isSing
       setRemoteKaraoke(next.active ? next : null);
     });
 
+    const onRoomLeft = () => {
+      setRemoteKaraoke(null);
+    };
+
+    const onRoomStatus = (e: Event) => {
+      const detail = (e as CustomEvent<{ connected?: boolean }>).detail;
+      if (detail && !detail.connected) {
+        setRemoteKaraoke(null);
+      }
+    };
+
+    window.addEventListener('cavannghe:room-left', onRoomLeft);
+    window.addEventListener('cavannghe:room-status', onRoomStatus);
+
     return () => {
+      window.removeEventListener('cavannghe:room-left', onRoomLeft);
+      window.removeEventListener('cavannghe:room-status', onRoomStatus);
       mp.setOnRemoteKaraoke(null);
       voice.destroyListener();
     };
@@ -73,7 +89,7 @@ export const KaraokeAudienceSync: React.FC<KaraokeAudienceSyncProps> = ({ isSing
         allow="autoplay; encrypted-media"
         className="fixed w-px h-px opacity-0 pointer-events-none -left-[9999px] -top-[9999px]"
       />
-      <div className="fixed bottom-4 left-4 z-[85] pointer-events-auto flex items-center gap-2.5 px-3.5 py-2 rounded-full bg-[#121212]/90 border border-white/10 backdrop-blur-md shadow-xl text-xs text-white max-w-[320px]">
+      <div className="fixed top-14 left-3 z-[85] pointer-events-auto flex items-center gap-2.5 px-3.5 py-2 rounded-full bg-[#121212]/90 border border-white/10 backdrop-blur-md shadow-xl text-xs text-white max-w-[320px]">
         <span className="w-6 h-6 rounded-full bg-white/10 flex items-center justify-center shrink-0">
           <Mic className="w-3.5 h-3.5 text-white" />
         </span>

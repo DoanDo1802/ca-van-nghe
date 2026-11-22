@@ -7,6 +7,8 @@ import SettingsModal from '../../components/SettingsModal';
 import { KaraokeOverlay } from './KaraokeOverlay';
 import { KaraokeAudienceSync } from './KaraokeAudienceSync';
 import { RemoteNameplates } from '../../components/RemoteNameplates';
+import { ChatBox } from '../../components/ChatBox';
+import { VoiceChatBar } from '../../components/VoiceChatBar';
 import { MultiplayerManager, type RoomStatusSnapshot } from '../../network/MultiplayerManager';
 import { INTERACTIVE_OBJECTS } from '../../data/sceneData';
 import { loungeAudio } from '../../utils/audio';
@@ -18,6 +20,9 @@ import {
 } from '../../engine/serialization/SceneRegistry';
 import type { StageMediaState } from '../../engine/runtime';
 import type { NearbyPromptData } from '../../engine/runtime/PlayerControllerRuntime';
+
+// Temporarily hide Voice Chat from the UI
+const ENABLE_VOICE_CHAT = false;
 
 export const GameOverlayUI: React.FC = () => {
   const engine = EditorEngine.getInstance();
@@ -244,6 +249,10 @@ export const GameOverlayUI: React.FC = () => {
         />
 
         <KaraokeAudienceSync isSingingLocal={isKaraokeOpen} />
+
+        <ChatBox />
+
+        {ENABLE_VOICE_CHAT && <VoiceChatBar isKaraokeOpen={isKaraokeOpen} />}
 
         {interactiveItem && (
           <DetailModal
