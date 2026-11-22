@@ -1,33 +1,34 @@
 import * as pc from 'playcanvas';
-import { DEFAULT_LOUNGE_DECO_ITEMS } from '../../data/defaultLoungeLayout';
 import { AssetRepository } from '../../storage';
 import { useAssetStore } from '../../store/useAssetStore';
 import type { PrefabData, ScriptAttributeValue } from '../../types';
 import type { EditorEngine } from '../EditorEngine';
-import { loadGlbFromArrayBuffer } from '../animation/GlbAnimExtractor';
+import { clearGlbContainerCache, loadGlbFromArrayBuffer } from '../animation/GlbAnimExtractor';
 import { getEntityMeta } from './EntityComponentHelper';
 import { clearGlbAssetBufferCache } from './SceneDeserializer';
 import {
-  buildEnvironmentShell,
+  buildAcousticStageOnly,
+  buildCinemaEnvironmentShell,
   buildLightingRig,
-  buildMainAndAcousticStages,
+  buildLobbyEnvironmentShell,
+  buildMainStageOnly,
+  buildTeaRoomEnvironmentShell,
   createSharedLoungeMaterials,
-  enhanceGlbMaterials,
   type GlbMaterialCache,
 } from './LoungeSceneBuilder';
+import {
+  CINEMA_SCENE_ID,
+  getSceneDefinition,
+  LOBBY_SCENE_ID,
+  TEAROOM_SCENE_ID,
+} from './SceneRegistry';
 
-interface LoungeDecoItem {
-  id: string;
-  name: string;
-  category: string;
-  url: string;
-  position: [number, number, number];
-  rotation: [number, number, number];
-  scale: [number, number, number];
-  interactiveId?: string;
-  isChair?: boolean;
-  seatHeight?: number;
+export interface SceneLoadProgressPayload {
+  percent: number;
+  label: string;
 }
+
+export type SceneLoadProgressCallback = (progress: SceneLoadProgressPayload) => void;
 
 function attachObjectVariables(
   entity: pc.Entity,
@@ -49,16 +50,6 @@ function attachObjectVariables(
 
 const CA_VAN_NGHE_FOLDER = '/CaVanNghe';
 const PREFABS_FOLDER = '/Prefabs';
-const RAD_TO_DEG = 180 / Math.PI;
-
-const EXTRA_STAGE_MODELS = [
-  '/models/pa-speaker.glb',
-  '/models/fresnel-led.glb',
-  '/models/every_other_gig_ever.glb',
-  '/models/Character.glb',
-  '/models/MicStand.glb',
-  '/models/Microphone.glb',
-];
 
 function extractFilenameFromUrl(url: string): string {
   const cleanUrl = url.split('?')[0].split('#')[0];
@@ -69,80 +60,6 @@ function extractFilenameFromUrl(url: string): string {
 function getPrefabNameForUrl(url: string): string {
   const base = extractFilenameFromUrl(url).replace(/\.(glb|gltf)$/i, '');
   return `PF_${base}`;
-}
-
-async function instantiateLoungeGlbItem(options: {
-  app: pc.Application;
-  engine: EditorEngine;
-  buffer: ArrayBuffer;
-  item: LoungeDecoItem;
-  assetId?: string;
-  prefabName?: string;
-  glbMaterialCache: GlbMaterialCache;
-}): Promise<pc.Entity> {
-  const { app, engine, buffer, item, assetId, prefabName, glbMaterialCache } = options;
-  const filename = extractFilenameFromUrl(item.url);
-  const loaded = await loadGlbFromArrayBuffer(app, buffer, filename, assetId ?? item.url);
-  engine.registerExternalResources(loaded.destroyResources);
-
-  const entity = loaded.entity;
-  enhanceGlbMaterials(engine, entity, item.url, glbMaterialCache);
-  entity.name = item.name;
-  entity.setLocalPosition(item.position[0], item.position[1], item.position[2]);
-  entity.setLocalEulerAngles(
-    item.rotation[0] * RAD_TO_DEG,
-    item.rotation[1] * RAD_TO_DEG,
-    item.rotation[2] * RAD_TO_DEG
-  );
-  entity.setLocalScale(item.scale[0], item.scale[1], item.scale[2]);
-
-  const tags = [item.category, item.interactiveId, item.isChair ? 'chair' : undefined].filter(
-    (t): t is string => Boolean(t)
-  );
-  if (prefabName) {
-    tags.push(`prefab:${prefabName}`);
-  }
-  if (tags.length > 0) {
-    entity.tags.add(...tags);
-  }
-
-  if (item.isChair) {
-    attachObjectVariables(entity, 'ChairSeat', [
-      { name: 'isChair', type: 'boolean', value: true },
-      { name: 'sitTitle', type: 'string', value: item.name },
-      { name: 'seatOffset', type: 'vec3', value: [0, item.seatHeight ?? 0.83, 0] },
-      { name: 'seatYawOffset', type: 'number', value: 0 },
-      { name: 'interactDistance', type: 'number', value: 2.0 },
-    ]);
-  } else if (item.interactiveId) {
-    attachObjectVariables(entity, 'Interactable', [
-      { name: 'interactId', type: 'string', value: item.interactiveId },
-      { name: 'interactTitle', type: 'string', value: item.name },
-      { name: 'interactDistance', type: 'number', value: 3.2 },
-    ]);
-  }
-
-  if (loaded.animTracks.length > 0) {
-    const meta = getEntityMeta(entity);
-    meta.anim = {
-      defaultState: loaded.animTracks[0],
-      states: loaded.animTracks.map((trackName) => ({
-        name: trackName,
-        clipAssetId: trackName,
-        speed: 1,
-        loop: true,
-      })),
-      transitions: [],
-      keyframeClipIds: [],
-    };
-  }
-
-  if (assetId) {
-    const meta = getEntityMeta(entity);
-    meta.render = { ...(meta.render ?? {}), meshAssetId: assetId };
-  }
-
-  return entity;
 }
 
 function tagStagePrefabs(root: pc.GraphNode, prefabNameByAssetId: Map<string, string>): void {
@@ -163,172 +80,69 @@ function tagStagePrefabs(root: pc.GraphNode, prefabNameByAssetId: Map<string, st
   }
 }
 
-/**
- * Imports the complete "Ca Van Nghe" web game as 1 optimized Unity-style Scene:
- * - Shared GLB Container Cache (each .glb parsed & uploaded to GPU once)
- * - Shared Materials across walls/floor/ceiling/stages
- * - Prefabs created in `/Prefabs` for duplicated objects (`prefabRef` metadata)
- * - Full `Environment_Shell`, `Lighting_Rig`, `Main_Stage`, `Acoustic_Stage`, `Lounge_Furniture`
- */
-export async function importCaVanNgheScene(engine: EditorEngine): Promise<void> {
-  const app = engine.getApp();
-  const sceneRoot = engine.getSceneRoot();
-  if (!app || !sceneRoot) {
-    throw new Error('EditorEngine is not mounted');
+async function fetchWithProgress(
+  url: string,
+  onFraction: (fraction: number) => void
+): Promise<ArrayBuffer> {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch model "${url}": ${response.status} ${response.statusText}`);
   }
 
-  const items = DEFAULT_LOUNGE_DECO_ITEMS as LoungeDecoItem[];
-  const uniqueUrls = Array.from(
-    new Set([...items.map((item) => item.url), ...EXTRA_STAGE_MODELS])
-  );
-
-  // Fetch all unique GLB files once and cache ArrayBuffers in memory
-  const bufferCache = new Map<string, ArrayBuffer>();
-  const fetchBuffer = async (url: string): Promise<ArrayBuffer> => {
-    const cached = bufferCache.get(url);
-    if (cached) return cached;
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch model "${url}": ${response.status} ${response.statusText}`);
-    }
+  const contentLength = Number(response.headers.get('content-length') || 0);
+  if (!response.body || contentLength <= 0) {
     const buf = await response.arrayBuffer();
-    bufferCache.set(url, buf);
+    onFraction(1);
     return buf;
-  };
-  await Promise.all(uniqueUrls.map((url) => fetchBuffer(url)));
-
-  // Abort cleanly if React StrictMode unmounted/remounted while fetching
-  if (engine.getApp() !== app || engine.getSceneRoot() !== sceneRoot || !app.scene) {
-    return;
   }
 
-  // Persist unique models into AssetRepository under "/CaVanNghe"
-  const existingAssets = await AssetRepository.listAssets();
-  const existingByName = new Map<string, { id: string; sizeBytes: number }>();
-  const existingPrefabs = new Map<string, string>();
-  for (const asset of existingAssets) {
-    if (asset.folderPath === CA_VAN_NGHE_FOLDER) {
-      existingByName.set(asset.name, { id: asset.id, sizeBytes: asset.sizeBytes });
-    } else if (asset.type === 'prefab' && asset.folderPath === PREFABS_FOLDER) {
-      existingPrefabs.set(asset.name, asset.id);
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (value) {
+      chunks.push(value);
+      received += value.byteLength;
+      onFraction(Math.min(1, received / contentLength));
     }
   }
 
-  const assetIdByUrl = new Map<string, string>();
-  for (const url of uniqueUrls) {
-    const filename = extractFilenameFromUrl(url);
-    const buffer = bufferCache.get(url);
-    const existing = existingByName.get(filename);
-    if (existing) {
-      assetIdByUrl.set(url, existing.id);
-      if (buffer && existing.sizeBytes !== buffer.byteLength) {
-        await AssetRepository.updateAssetBlob(existing.id, buffer);
-        clearGlbAssetBufferCache(existing.id);
-      }
-      continue;
-    }
-
-    if (!buffer) continue;
-
-    const mimeType = filename.toLowerCase().endsWith('.gltf')
-      ? 'model/gltf+json'
-      : 'model/gltf-binary';
-    const file = new File([buffer], filename, { type: mimeType });
-    const entry = await AssetRepository.importFile(file, CA_VAN_NGHE_FOLDER);
-    assetIdByUrl.set(url, entry.id);
+  const merged = new Uint8Array(received);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.byteLength;
   }
+  onFraction(1);
+  return merged.buffer;
+}
 
-  // Create Prefab entries for any URL that appears more than once in the lounge/stages
-  const urlCounts = new Map<string, number>();
-  for (const item of items) {
-    urlCounts.set(item.url, (urlCounts.get(item.url) ?? 0) + 1);
-  }
-  urlCounts.set('/models/pa-speaker.glb', 4);
-  urlCounts.set('/models/fresnel-led.glb', 5);
+async function spawnPlayerAndCamera(options: {
+  app: pc.Application;
+  engine: EditorEngine;
+  sceneRoot: pc.Entity;
+  bufferCache: Map<string, ArrayBuffer>;
+  assetIdByUrl: Map<string, string>;
+  camPos: [number, number, number];
+  camLookAt: [number, number, number];
+  playerPos: [number, number, number];
+  playerRotY: number;
+}): Promise<void> {
+  const {
+    app,
+    engine,
+    sceneRoot,
+    bufferCache,
+    assetIdByUrl,
+    camPos,
+    camLookAt,
+    playerPos,
+    playerRotY,
+  } = options;
 
-  const prefabIdByUrl = new Map<string, string>();
-  const prefabNameByUrl = new Map<string, string>();
-  const prefabNameByAssetId = new Map<string, string>();
-  for (const [url, count] of urlCounts.entries()) {
-    if (count < 2) continue;
-    const prefabName = getPrefabNameForUrl(url);
-    const assetId = assetIdByUrl.get(url) ?? null;
-    prefabNameByUrl.set(url, prefabName);
-    if (assetId) {
-      prefabNameByAssetId.set(assetId, prefabName);
-    }
-    const existingPrefabId = existingPrefabs.get(prefabName);
-    if (existingPrefabId) {
-      prefabIdByUrl.set(url, existingPrefabId);
-      continue;
-    }
-
-    const prefabData: PrefabData = {
-      id: crypto.randomUUID(),
-      name: prefabName,
-      createdAt: new Date().toISOString(),
-      root: {
-        id: crypto.randomUUID(),
-        name: prefabName,
-        enabled: true,
-        tags: ['prefab'],
-        transform: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
-        components: [
-          {
-            id: crypto.randomUUID(),
-            type: 'render',
-            enabled: true,
-            meshType: assetId ? 'asset' : 'box',
-            meshAssetId: assetId,
-            castShadows: true,
-            receiveShadows: true,
-            material: {
-              diffuseColor: [0.8, 0.8, 0.8],
-              metalness: 0.1,
-              gloss: 0.5,
-              emissiveColor: [0, 0, 0],
-              emissiveIntensity: 1,
-              opacity: 1,
-              diffuseMapAssetId: null,
-              normalMapAssetId: null,
-              metalnessMapAssetId: null,
-            },
-          },
-        ],
-        children: [],
-      },
-    };
-    const savedPrefab = await AssetRepository.savePrefab(prefabName, prefabData, PREFABS_FOLDER);
-    prefabIdByUrl.set(url, savedPrefab.id);
-  }
-
-  // Abort cleanly if React StrictMode unmounted/remounted while writing IndexedDB
-  if (engine.getApp() !== app || engine.getSceneRoot() !== sceneRoot || !app.scene) {
-    return;
-  }
-
-  // Reset the scene cleanly before building the lounge
-  engine.prepareEmptyScene();
-  sceneRoot.name = 'CaVanNghe_Main';
-
-  // Ambient & Sky settings matching original dark luxury lounge
-  app.scene.ambientLight = new pc.Color(0.28, 0.25, 0.22);
-  app.scene.exposure = 1.1;
-
-  const mats = createSharedLoungeMaterials(engine);
-  const glbMaterialCache: GlbMaterialCache = new Map();
-
-  // 1. Environment Shell (Floor, Carpets, Walls, Ceiling, Beams, Downlights)
-  buildEnvironmentShell(sceneRoot, mats);
-
-  // 2. Lighting Rig (Directional, Bar/Reception Spotlights, Lamp PointLights)
-  buildLightingRig(sceneRoot);
-
-  // 3. Main Stage & Acoustic Stage (Stages, Steps, LED Strips, PA Speakers, Fresnels, Gig, Video LEDs)
-  await buildMainAndAcousticStages(engine, sceneRoot, mats, fetchBuffer, assetIdByUrl, glbMaterialCache);
-  tagStagePrefabs(sceneRoot, prefabNameByAssetId);
-
-  // 4. Main Camera inside the lounge (in front of reception desk, clear view of bar + stages)
   const mainCam = new pc.Entity('Main Camera');
   mainCam.addComponent('camera', {
     fov: 50,
@@ -339,21 +153,25 @@ export async function importCaVanNgheScene(engine: EditorEngine): Promise<void> 
   if (mainCam.camera) {
     mainCam.camera.enabled = false;
   }
-  mainCam.setLocalPosition(0, 3.0, 8.5);
-  mainCam.lookAt(0, 1.4, -6);
+  mainCam.setLocalPosition(camPos[0], camPos[1], camPos[2]);
+  mainCam.lookAt(camLookAt[0], camLookAt[1], camLookAt[2]);
   sceneRoot.addChild(mainCam);
 
-  // 5. Player Character (`Character.glb`) for Play Mode walking/sitting
   const charUrl = '/models/Character.glb';
   const charBuf = bufferCache.get(charUrl);
   if (charBuf) {
     const charAssetId = assetIdByUrl.get(charUrl);
-    const charLoaded = await loadGlbFromArrayBuffer(app, charBuf, 'Character.glb', charAssetId ?? charUrl);
+    const charLoaded = await loadGlbFromArrayBuffer(
+      app,
+      charBuf,
+      'Character.glb',
+      charAssetId ?? charUrl
+    );
     engine.registerExternalResources(charLoaded.destroyResources);
     const playerEntity = charLoaded.entity;
     playerEntity.name = 'Player';
-    playerEntity.setLocalPosition(0, 0, 7.0);
-    playerEntity.setLocalEulerAngles(0, 180, 0);
+    playerEntity.setLocalPosition(playerPos[0], playerPos[1], playerPos[2]);
+    playerEntity.setLocalEulerAngles(0, playerRotY, 0);
     playerEntity.setLocalScale(0.62, 0.62, 0.62);
     playerEntity.tags.add('player');
     if (charLoaded.animTracks.length > 0) {
@@ -386,35 +204,228 @@ export async function importCaVanNgheScene(engine: EditorEngine): Promise<void> 
     ]);
     sceneRoot.addChild(playerEntity);
   }
+}
 
-  // 5. Lounge Furniture (with Shared GLB Container Cache + Prefab tagging)
-  const furnitureGroup = new pc.Entity('Lounge_Furniture');
-  sceneRoot.addChild(furnitureGroup);
+/**
+ * Imports a single scene by ID, fetching ONLY the .glb assets required by that scene
+ * and reporting granular loading progress from 0% to 100%.
+ */
+export async function importCaVanNgheSceneById(
+  engine: EditorEngine,
+  sceneId: string = LOBBY_SCENE_ID,
+  onProgress?: SceneLoadProgressCallback
+): Promise<void> {
+  const app = engine.getApp();
+  const sceneRoot = engine.getSceneRoot();
+  if (!app || !sceneRoot) {
+    throw new Error('EditorEngine is not mounted');
+  }
 
-  for (const item of items) {
-    const buffer = bufferCache.get(item.url);
-    if (!buffer) continue;
+  const sceneDef = getSceneDefinition(sceneId);
+  const report = (percent: number, label: string) => {
+    onProgress?.({ percent, label });
+  };
 
-    try {
-      const entity = await instantiateLoungeGlbItem({
-        app,
-        engine,
-        buffer,
-        item,
-        assetId: assetIdByUrl.get(item.url),
-        prefabName: prefabNameByUrl.get(item.url),
-        glbMaterialCache,
-      });
-      furnitureGroup.addChild(entity);
-    } catch (itemErr) {
-      engine.consoleBridge.warn(
-        `Skipped lounge item "${item.name}" (${item.url}): ${
-          itemErr instanceof Error ? itemErr.message : String(itemErr)
-        }`
-      );
+  report(5, `Đang giải phóng tài nguyên scene cũ để vào ${sceneDef.shortName}...`);
+
+  // Release previous scene GPU/GLB caches cleanly before loading new scene assets
+  engine.prepareEmptyScene();
+  clearGlbContainerCache(app);
+  clearGlbAssetBufferCache();
+
+  const uniqueUrls = Array.from(new Set(sceneDef.modelUrls));
+  const bufferCache = new Map<string, ArrayBuffer>();
+  const fileFractions = new Map<string, number>();
+
+  const updateDownloadProgress = (currentFile: string) => {
+    if (uniqueUrls.length === 0) return;
+    let sum = 0;
+    for (const u of uniqueUrls) {
+      sum += fileFractions.get(u) ?? 0;
+    }
+    const ratio = sum / uniqueUrls.length;
+    const pct = 10 + ratio * 55; // 10% -> 65%
+    report(pct, `Đang tải tài nguyên: ${currentFile} (${Math.round(pct)}%)`);
+  };
+
+  const fetchBuffer = async (url: string): Promise<ArrayBuffer> => {
+    const cached = bufferCache.get(url);
+    if (cached) return cached;
+    const filename = extractFilenameFromUrl(url);
+    const buf = await fetchWithProgress(url, (frac) => {
+      fileFractions.set(url, frac);
+      updateDownloadProgress(filename);
+    });
+    bufferCache.set(url, buf);
+    return buf;
+  };
+
+  await Promise.all(uniqueUrls.map((url) => fetchBuffer(url)));
+
+  if (engine.getApp() !== app || engine.getSceneRoot() !== sceneRoot || !app.scene) {
+    return;
+  }
+
+  report(68, 'Đang đồng bộ kho tài nguyên của phòng...');
+
+  const existingAssets = await AssetRepository.listAssets();
+  const existingByName = new Map<string, { id: string; sizeBytes: number }>();
+  const existingPrefabs = new Map<string, string>();
+  for (const asset of existingAssets) {
+    if (asset.folderPath === CA_VAN_NGHE_FOLDER) {
+      existingByName.set(asset.name, { id: asset.id, sizeBytes: asset.sizeBytes });
+    } else if (asset.type === 'prefab' && asset.folderPath === PREFABS_FOLDER) {
+      existingPrefabs.set(asset.name, asset.id);
     }
   }
 
+  const assetIdByUrl = new Map<string, string>();
+  for (const url of uniqueUrls) {
+    const filename = extractFilenameFromUrl(url);
+    const buffer = bufferCache.get(url);
+    const existing = existingByName.get(filename);
+    if (existing) {
+      assetIdByUrl.set(url, existing.id);
+      if (buffer && existing.sizeBytes !== buffer.byteLength) {
+        await AssetRepository.updateAssetBlob(existing.id, buffer);
+        clearGlbAssetBufferCache(existing.id);
+      }
+      continue;
+    }
+    if (!buffer) continue;
+
+    const mimeType = filename.toLowerCase().endsWith('.gltf')
+      ? 'model/gltf+json'
+      : 'model/gltf-binary';
+    const file = new File([buffer], filename, { type: mimeType });
+    const entry = await AssetRepository.importFile(file, CA_VAN_NGHE_FOLDER);
+    assetIdByUrl.set(url, entry.id);
+  }
+
+  // Create prefab metadata only for repeated stage models in Cinema_Scene
+  const prefabNameByAssetId = new Map<string, string>();
+  if (sceneDef.id === CINEMA_SCENE_ID) {
+    for (const url of ['/models/pa-speaker.glb', '/models/fresnel-led.glb']) {
+      const prefabName = getPrefabNameForUrl(url);
+      const assetId = assetIdByUrl.get(url) ?? null;
+      if (assetId) {
+        prefabNameByAssetId.set(assetId, prefabName);
+      }
+      if (!existingPrefabs.has(prefabName)) {
+        const prefabData: PrefabData = {
+          id: crypto.randomUUID(),
+          name: prefabName,
+          createdAt: new Date().toISOString(),
+          root: {
+            id: crypto.randomUUID(),
+            name: prefabName,
+            enabled: true,
+            tags: ['prefab'],
+            transform: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+            components: [
+              {
+                id: crypto.randomUUID(),
+                type: 'render',
+                enabled: true,
+                meshType: assetId ? 'asset' : 'box',
+                meshAssetId: assetId,
+                castShadows: true,
+                receiveShadows: true,
+                material: {
+                  diffuseColor: [0.8, 0.8, 0.8],
+                  metalness: 0.1,
+                  gloss: 0.5,
+                  emissiveColor: [0, 0, 0],
+                  emissiveIntensity: 1,
+                  opacity: 1,
+                  diffuseMapAssetId: null,
+                  normalMapAssetId: null,
+                  metalnessMapAssetId: null,
+                },
+              },
+            ],
+            children: [],
+          },
+        };
+        await AssetRepository.savePrefab(prefabName, prefabData, PREFABS_FOLDER);
+      }
+    }
+  }
+
+  if (engine.getApp() !== app || engine.getSceneRoot() !== sceneRoot || !app.scene) {
+    return;
+  }
+
+  report(75, `Đang dựng không gian 3D: ${sceneDef.shortName}...`);
+
+  app.scene.ambientLight = new pc.Color(0.28, 0.25, 0.22);
+  app.scene.exposure = 1.1;
+
+  const mats = createSharedLoungeMaterials(engine);
+  const glbMaterialCache: GlbMaterialCache = new Map();
+
+  if (sceneDef.id === LOBBY_SCENE_ID) {
+    sceneRoot.name = 'Lobby_Scene';
+    buildLobbyEnvironmentShell(engine, sceneRoot, mats);
+    buildLightingRig(sceneRoot, 'lobby');
+    await spawnPlayerAndCamera({
+      app,
+      engine,
+      sceneRoot,
+      bufferCache,
+      assetIdByUrl,
+      camPos: [0, 3.0, 8.2],
+      camLookAt: [0, 1.8, -8.0],
+      playerPos: [0, 0, 6.2],
+      playerRotY: 180,
+    });
+  } else if (sceneDef.id === CINEMA_SCENE_ID) {
+    sceneRoot.name = 'Cinema_Scene';
+    buildCinemaEnvironmentShell(engine, sceneRoot, mats);
+    buildLightingRig(sceneRoot, 'cinema');
+    report(82, 'Đang dựng sân khấu Rạp Chiếu Phim (Main_Stage)...');
+    await buildMainStageOnly(engine, sceneRoot, mats, fetchBuffer, assetIdByUrl, glbMaterialCache);
+    tagStagePrefabs(sceneRoot, prefabNameByAssetId);
+    await spawnPlayerAndCamera({
+      app,
+      engine,
+      sceneRoot,
+      bufferCache,
+      assetIdByUrl,
+      camPos: [0, 3.0, 8.5],
+      camLookAt: [0, 1.4, -6.0],
+      playerPos: [0, 0, 7.0],
+      playerRotY: 180,
+    });
+  } else if (sceneDef.id === TEAROOM_SCENE_ID) {
+    sceneRoot.name = 'TeaRoom_Scene';
+    buildTeaRoomEnvironmentShell(engine, sceneRoot, mats);
+    buildLightingRig(sceneRoot, 'tearoom');
+    report(82, 'Đang dựng sân khấu Phòng Trà (Acoustic_Stage)...');
+    await buildAcousticStageOnly(engine, sceneRoot, mats, fetchBuffer, assetIdByUrl, glbMaterialCache);
+    await spawnPlayerAndCamera({
+      app,
+      engine,
+      sceneRoot,
+      bufferCache,
+      assetIdByUrl,
+      camPos: [-3.2, 2.8, 3.0],
+      camLookAt: [16.5, 1.4, 3.0],
+      playerPos: [-1.5, 0, 3.0],
+      playerRotY: 90,
+    });
+  }
+
+  report(94, 'Đang hoàn tất khởi tạo nhân vật & vật lý...');
   await useAssetStore.getState().loadAssets();
-  engine.notifySceneChanged('ca-van-nghe-lounge', 'Ca Van Nghe');
+  engine.notifySceneChanged(sceneDef.id, sceneDef.name);
+  report(100, `Đã sẵn sàng vào ${sceneDef.shortName}!`);
+}
+
+export async function importCaVanNgheScene(
+  engine: EditorEngine,
+  sceneId: string = LOBBY_SCENE_ID,
+  onProgress?: SceneLoadProgressCallback
+): Promise<void> {
+  return importCaVanNgheSceneById(engine, sceneId, onProgress);
 }

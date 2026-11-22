@@ -1,15 +1,16 @@
 import * as pc from 'playcanvas';
+import type { ScriptAttributeValue } from '../../types';
 import type { EditorEngine } from '../EditorEngine';
 import { loadGlbFromArrayBuffer } from '../animation/GlbAnimExtractor';
 import { createVideoScreenMaterial } from '../runtime/VideoTextureManager';
 import { getEntityMeta } from './EntityComponentHelper';
+import { CINEMA_SCENE_ID, LOBBY_SCENE_ID, TEAROOM_SCENE_ID } from './SceneRegistry';
 
 export interface SharedLoungeMaterials {
   floorWood: pc.StandardMaterial;
   brass: pc.StandardMaterial;
   goldBorder: pc.StandardMaterial;
   rugDark: pc.StandardMaterial;
-  rugBar: pc.StandardMaterial;
   velvetRed: pc.StandardMaterial;
   stageDark: pc.StandardMaterial;
   stageStep1: pc.StandardMaterial;
@@ -31,6 +32,65 @@ export interface SharedLoungeMaterials {
   bulbGlow: pc.StandardMaterial;
   screenBlack: pc.StandardMaterial;
   mainScreenPoster: pc.StandardMaterial;
+}
+
+export interface PortalDoorConfig {
+  name: string;
+  position: [number, number, number];
+  rotationY: number;
+  title: string;
+  subtitle: string;
+  accentColor: string;
+  targetSceneId: string;
+  interactTitle: string;
+}
+
+function getDoorSignMeta(targetSceneId: string): {
+  title: string;
+  subtitle: string;
+  accentColor: string;
+  signEntityName: string;
+} {
+  if (targetSceneId === CINEMA_SCENE_ID) {
+    return {
+      title: 'RẠP CHIẾU PHIM',
+      subtitle: 'MAIN STAGE • MÀN HÌNH LED LỚN',
+      accentColor: '#38bdf8',
+      signEntityName: 'Portal Signboard Cinema',
+    };
+  }
+  if (targetSceneId === TEAROOM_SCENE_ID) {
+    return {
+      title: 'PHÒNG TRÀ',
+      subtitle: 'ACOUSTIC STAGE • HÁT KARAOKE',
+      accentColor: '#f59e0b',
+      signEntityName: 'Portal Signboard TeaRoom',
+    };
+  }
+  return {
+    title: 'SẢNH CHỜ',
+    subtitle: 'QUAY LẠI CHỌN PHÒNG',
+    accentColor: '#e5c07b',
+    signEntityName: 'Portal Signboard Lobby',
+  };
+}
+
+function attachDoorInteractable(
+  entity: pc.Entity,
+  scriptName: string,
+  attributes: ScriptAttributeValue[]
+): void {
+  const meta = getEntityMeta(entity);
+  const compId = meta.componentIds.script ?? crypto.randomUUID();
+  meta.componentIds.script = compId;
+  meta.script = {
+    id: compId,
+    type: 'script',
+    enabled: true,
+    scriptName,
+    code: '',
+    attributes,
+  };
 }
 
 function createParquetTexture(
@@ -112,17 +172,77 @@ function createMainScreenPosterTexture(
     ctx.shadowBlur = 24;
     ctx.fillStyle = '#e5c07b';
     ctx.font = 'bold 54px sans-serif';
-    ctx.fillText('CA VĂN NGHỆ', 512, 260);
+    ctx.fillText('RẠP CHIẾU PHIM', 512, 255);
 
     ctx.shadowBlur = 0;
     ctx.fillStyle = '#8b949e';
     ctx.font = '22px sans-serif';
-    ctx.fillText('LIVE ACOUSTIC STAGE', 512, 330);
+    ctx.fillText('MAIN STAGE • YOUTUBE & VIDEO IMAX', 512, 325);
   }
 
   const tex = new pc.Texture(app.graphicsDevice, {
     width: 1024,
     height: 576,
+    format: pc.PIXELFORMAT_RGBA8,
+    mipmaps: true,
+    minFilter: pc.FILTER_LINEAR_MIPMAP_LINEAR,
+    magFilter: pc.FILTER_LINEAR,
+    addressU: pc.ADDRESS_CLAMP_TO_EDGE,
+    addressV: pc.ADDRESS_CLAMP_TO_EDGE,
+  });
+  tex.setSource(canvas);
+  trackTexture(tex);
+  return tex;
+}
+
+function createDoorSignTexture(
+  app: pc.Application,
+  trackTexture: (tex: pc.Texture) => void,
+  title: string,
+  subtitle: string,
+  accentColor: string
+): pc.Texture {
+  const canvas = document.createElement('canvas');
+  canvas.width = 768;
+  canvas.height = 256;
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    const grad = ctx.createLinearGradient(0, 0, 768, 256);
+    grad.addColorStop(0, '#12151f');
+    grad.addColorStop(0.5, '#1b1f2e');
+    grad.addColorStop(1, '#10131c');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 768, 256);
+
+    ctx.strokeStyle = accentColor;
+    ctx.lineWidth = 6;
+    ctx.strokeRect(12, 12, 744, 232);
+
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.14)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(22, 22, 724, 212);
+
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.shadowColor = accentColor;
+    ctx.shadowBlur = 18;
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 54px sans-serif';
+    ctx.fillText(title, 384, 102);
+
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = accentColor;
+    ctx.font = 'bold 21px sans-serif';
+    ctx.fillText(subtitle, 384, 166);
+
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.65)';
+    ctx.font = '16px monospace';
+    ctx.fillText('[E] BƯỚC VÀO PHÒNG', 384, 208);
+  }
+
+  const tex = new pc.Texture(app.graphicsDevice, {
+    width: 768,
+    height: 256,
     format: pc.PIXELFORMAT_RGBA8,
     mipmaps: true,
     minFilter: pc.FILTER_LINEAR_MIPMAP_LINEAR,
@@ -193,14 +313,19 @@ function makeMat(
 export function inferLoungeMaterialIdByEntityName(entityName: string): string | undefined {
   switch (entityName) {
     case 'Lounge Floor':
+    case 'Lobby Floor':
+    case 'TeaRoom Floor':
       return 'lounge:floorWood';
     case 'Wall North (Back)':
       return 'lounge:brickWall:12:2.5';
     case 'Wall West (Bar)':
+    case 'Wall West':
     case 'Wall East (Stage)':
+    case 'Wall East':
       return 'lounge:brickWall:11:2.5';
     case 'Wall South Left':
     case 'Wall South Right':
+    case 'Wall South':
       return 'lounge:brickWall:5.5:2.5';
     case 'Entrance Arch Header':
       return 'lounge:brickWall:1.5:0.7';
@@ -208,6 +333,12 @@ export function inferLoungeMaterialIdByEntityName(entityName: string): string | 
       return 'lounge:mainScreenPoster';
     case 'LED Video Screen':
       return 'lounge:videoScreen';
+    case 'Portal Signboard Cinema':
+      return `lounge:doorSign:${CINEMA_SCENE_ID}`;
+    case 'Portal Signboard TeaRoom':
+      return `lounge:doorSign:${TEAROOM_SCENE_ID}`;
+    case 'Portal Signboard Lobby':
+      return `lounge:doorSign:${LOBBY_SCENE_ID}`;
     default:
       return undefined;
   }
@@ -218,14 +349,15 @@ export function applyLoungeMaterialPreset(
   entity: pc.Entity,
   presetId: string,
   trackTexture: (tex: pc.Texture) => void,
-  trackMaterial?: (mat: pc.StandardMaterial) => void
+  trackMaterial?: (mat: pc.StandardMaterial) => void,
+  trackCleanup?: (fn: () => void) => void
 ): void {
   if (!entity.render) return;
 
   if (presetId === 'lounge:videoScreen') {
     const videoHandle = createVideoScreenMaterial(app, '/media/bello-ballo.mp4');
     videoHandle.material.name = 'lounge:videoScreen';
-    trackMaterial?.(videoHandle.material);
+    trackCleanup?.(videoHandle.destroy);
     entity.render.material = videoHandle.material;
     return;
   }
@@ -245,6 +377,24 @@ export function applyLoungeMaterialPreset(
     mat.useLighting = false;
     mat.emissiveMap = createMainScreenPosterTexture(app, trackTexture);
     mat.update();
+    return;
+  }
+
+  if (presetId.startsWith('lounge:doorSign:')) {
+    const targetSceneId = presetId.slice('lounge:doorSign:'.length);
+    const meta = getDoorSignMeta(targetSceneId);
+    mat.useLighting = false;
+    mat.emissive = new pc.Color(1, 1, 1);
+    mat.emissiveIntensity = 1.15;
+    mat.emissiveMap = createDoorSignTexture(
+      app,
+      trackTexture,
+      meta.title,
+      meta.subtitle,
+      meta.accentColor
+    );
+    mat.update();
+    trackMaterial?.(mat);
     return;
   }
 
@@ -328,7 +478,6 @@ export function createSharedLoungeMaterials(engine: EditorEngine): SharedLoungeM
     brass: makeMat(engine, { diffuse: [0.773, 0.608, 0.306], metalness: 0.7, gloss: 0.6 }),
     goldBorder: makeMat(engine, { diffuse: [0.831, 0.686, 0.216], metalness: 0.7, gloss: 0.6 }),
     rugDark: makeMat(engine, { diffuse: [0.098, 0.082, 0.075], metalness: 0, gloss: 0.08 }),
-    rugBar: makeMat(engine, { diffuse: [0.078, 0.094, 0.125], metalness: 0, gloss: 0.08 }),
     velvetRed: makeMat(engine, { diffuse: [0.345, 0.063, 0.118], metalness: 0, gloss: 0.04 }),
     stageDark: makeMat(engine, { diffuse: [0.102, 0.078, 0.067], metalness: 0.02, gloss: 0.32 }),
     stageStep1: makeMat(engine, { diffuse: [0.141, 0.106, 0.09], metalness: 0.02, gloss: 0.32 }),
@@ -408,7 +557,214 @@ function createBox(
   return e;
 }
 
-export function buildEnvironmentShell(
+export function buildScenePortalDoor(
+  engine: EditorEngine,
+  parent: pc.Entity,
+  mats: SharedLoungeMaterials,
+  config: PortalDoorConfig
+): pc.Entity {
+  const app = engine.getApp();
+  const trackTex = (tex: pc.Texture) => engine.registerExternalResources(() => tex.destroy());
+
+  const doorEntity = new pc.Entity(config.name);
+  doorEntity.setLocalPosition(config.position[0], config.position[1], config.position[2]);
+  doorEntity.setLocalEulerAngles(0, config.rotationY, 0);
+  doorEntity.tags.add('portal_door', `load_scene:${config.targetSceneId}`);
+
+  attachDoorInteractable(doorEntity, 'Interactable', [
+    { name: 'interactId', type: 'string', value: `load_scene:${config.targetSceneId}` },
+    { name: 'interactTitle', type: 'string', value: config.interactTitle },
+    { name: 'interactDistance', type: 'number', value: 3.4 },
+    { name: 'targetSceneId', type: 'string', value: config.targetSceneId },
+  ]);
+
+  const accentRgb = new pc.Color().fromString(config.accentColor);
+  const accentMat = makeMat(engine, {
+    diffuse: [accentRgb.r, accentRgb.g, accentRgb.b],
+    emissive: [accentRgb.r, accentRgb.g, accentRgb.b],
+    emissiveIntensity: 1.8,
+    useLighting: false,
+  });
+
+  // Architectural doorway frame
+  doorEntity.addChild(createBox('Door Pilaster Left', [-1.55, 1.9, 0], [0.26, 3.8, 0.34], mats.pilasterDark));
+  doorEntity.addChild(createBox('Door Pilaster Right', [1.55, 1.9, 0], [0.26, 3.8, 0.34], mats.pilasterDark));
+  doorEntity.addChild(createBox('Door Header', [0, 3.65, 0], [3.38, 0.36, 0.36], mats.timberDark));
+  doorEntity.addChild(createBox('Door Threshold', [0, 0.015, 0.1], [2.95, 0.03, 0.55], mats.brass));
+
+  // Glowing portal inner trim
+  doorEntity.addChild(createBox('Portal Trim Left', [-1.38, 1.75, 0.14], [0.05, 3.45, 0.05], accentMat));
+  doorEntity.addChild(createBox('Portal Trim Right', [1.38, 1.75, 0.14], [0.05, 3.45, 0.05], accentMat));
+  doorEntity.addChild(createBox('Portal Trim Top', [0, 3.45, 0.14], [2.8, 0.05, 0.05], accentMat));
+
+  // Double door leaves with static collider
+  doorEntity.addChild(
+    createBox('Door Leaf Left', [-0.67, 1.72, 0], [1.3, 3.4, 0.12], mats.woodBeam, { collider: true })
+  );
+  doorEntity.addChild(
+    createBox('Door Leaf Right', [0.67, 1.72, 0], [1.3, 3.4, 0.12], mats.woodBeam, { collider: true })
+  );
+  doorEntity.addChild(createBox('Door Handle Left', [-0.15, 1.45, 0.09], [0.05, 0.42, 0.05], mats.brass));
+  doorEntity.addChild(createBox('Door Handle Right', [0.15, 1.45, 0.09], [0.05, 0.42, 0.05], mats.brass));
+
+  // Illuminated signboard above the door
+  const signMeta = getDoorSignMeta(config.targetSceneId);
+  const signPresetId = `lounge:doorSign:${config.targetSceneId}`;
+  const signMat = makeMat(engine, {
+    diffuse: [0.08, 0.09, 0.12],
+    emissive: [1, 1, 1],
+    emissiveIntensity: 1.15,
+    useLighting: false,
+  });
+  signMat.name = signPresetId;
+  if (app) {
+    signMat.emissiveMap = createDoorSignTexture(
+      app,
+      trackTex,
+      config.title,
+      config.subtitle,
+      config.accentColor
+    );
+    signMat.update();
+  }
+
+  doorEntity.addChild(createBox('Signboard Backing', [0, 4.45, 0.1], [3.35, 1.1, 0.12], mats.cabinetDark));
+  doorEntity.addChild(createBox('Signboard Brass Trim', [0, 4.45, 0.15], [3.22, 1.0, 0.05], mats.brass));
+  doorEntity.addChild(createBox(signMeta.signEntityName, [0, 4.45, 0.19], [3.08, 0.88, 0.02], signMat));
+
+  // Dedicated portal spotlight
+  const spot = new pc.Entity('Portal Spotlight');
+  spot.addComponent('light', {
+    type: 'spot',
+    color: accentRgb,
+    intensity: 3.2,
+    range: 10,
+    innerConeAngle: 24,
+    outerConeAngle: 48,
+    castShadows: false,
+  });
+  spot.setLocalPosition(0, 5.4, 2.0);
+  spot.lookAt(0, 2.0, 0.2);
+  spot.rotateLocal(90, 0, 0);
+  doorEntity.addChild(spot);
+
+  parent.addChild(doorEntity);
+  return doorEntity;
+}
+
+export function buildLobbyEnvironmentShell(
+  engine: EditorEngine,
+  sceneRoot: pc.Entity,
+  mats: SharedLoungeMaterials
+): pc.Entity {
+  const shell = new pc.Entity('Environment_Shell');
+  sceneRoot.addChild(shell);
+
+  // Lobby Floor (26m x 22m)
+  const floor = new pc.Entity('Lobby Floor');
+  floor.addComponent('render', {
+    type: 'plane',
+    material: mats.floorWood,
+    castShadows: false,
+    receiveShadows: true,
+  });
+  floor.setLocalPosition(0, -0.001, 0);
+  floor.setLocalScale(26, 1, 22);
+  floor.addComponent('collision', {
+    type: 'box',
+    halfExtents: new pc.Vec3(13, 0.05, 11),
+  });
+  floor.addComponent('rigidbody', {
+    type: 'static',
+    mass: 0,
+    friction: 0.8,
+    restitution: 0.1,
+  });
+  shell.addChild(floor);
+
+  // T-shaped Red Velvet Carpet leading from Spawn to the 2 Portal Doors
+  const runnerGroup = new pc.Entity('Red_Velvet_Runner');
+  shell.addChild(runnerGroup);
+  runnerGroup.addChild(createBox('Center Velvet Stem', [0, 0.006, 2.0], [2.4, 0.004, 12.0], mats.velvetRed));
+  runnerGroup.addChild(createBox('Center Brass Left', [-1.24, 0.007, 2.0], [0.08, 0.004, 12.0], mats.goldBorder));
+  runnerGroup.addChild(createBox('Center Brass Right', [1.24, 0.007, 2.0], [0.08, 0.004, 12.0], mats.goldBorder));
+
+  runnerGroup.addChild(createBox('Cross Velvet Branch', [0, 0.006, -4.4], [11.4, 0.004, 2.0], mats.velvetRed));
+  runnerGroup.addChild(createBox('Left Door Velvet', [-4.5, 0.006, -7.2], [2.2, 0.004, 6.2], mats.velvetRed));
+  runnerGroup.addChild(createBox('Right Door Velvet', [4.5, 0.006, -7.2], [2.2, 0.004, 6.2], mats.velvetRed));
+
+  // Walls
+  const walls = new pc.Entity('Walls');
+  shell.addChild(walls);
+  walls.addChild(createBox('Wall North (Back)', [0, 3.5, -10.9], [26, 7.0, 0.2], mats.brickWall38, { collider: true }));
+  walls.addChild(createBox('Wall South', [0, 3.5, 10.9], [26, 7.0, 0.2], mats.brickWall38, { collider: true }));
+  walls.addChild(createBox('Wall West', [-12.9, 3.5, 0], [0.2, 7.0, 22], mats.brickWall34, { collider: true }));
+  walls.addChild(createBox('Wall East', [12.9, 3.5, 0], [0.2, 7.0, 22], mats.brickWall34, { collider: true }));
+
+  // Baseboards & Crown Moldings
+  walls.addChild(createBox('Baseboard North', [0, 0.11, -10.78], [25.6, 0.22, 0.05], mats.timberDark));
+  walls.addChild(createBox('Baseboard South', [0, 0.11, 10.78], [25.6, 0.22, 0.05], mats.timberDark));
+  walls.addChild(createBox('Baseboard West', [-12.78, 0.11, 0], [0.05, 0.22, 21.6], mats.timberDark));
+  walls.addChild(createBox('Baseboard East', [12.78, 0.11, 0], [0.05, 0.22, 21.6], mats.timberDark));
+
+  // Coffered Ceiling (Y = 7.0m) + Beams + Downlights
+  const ceiling = new pc.Entity('Ceiling_Coffered');
+  shell.addChild(ceiling);
+  ceiling.addChild(createBox('Ceiling Slab', [0, 7.05, 0], [26, 0.1, 22], mats.ceilingDark));
+
+  for (const x of [-8, 0, 8]) {
+    ceiling.addChild(createBox(`Beam Long ${x}`, [x, 6.82, 0], [0.35, 0.36, 22], mats.woodBeam, { castShadows: true }));
+  }
+  for (const z of [-6, 0, 6]) {
+    ceiling.addChild(createBox(`Beam Trans ${z}`, [0, 6.82, z], [26, 0.36, 0.35], mats.woodBeam, { castShadows: true }));
+  }
+
+  for (const x of [-8, 0, 8]) {
+    for (const z of [-6, 0, 6]) {
+      const fixture = new pc.Entity(`PF_Ceiling_Light_${x}_${z}`);
+      fixture.setLocalPosition(x, 6.95, z);
+      const ring = createBox('Trim', [0, 0, 0], [0.36, 0.04, 0.36], mats.brass);
+      const bulb = new pc.Entity('Bulb');
+      bulb.addComponent('render', { type: 'sphere', material: mats.bulbGlow, castShadows: false, receiveShadows: false });
+      bulb.setLocalPosition(0, -0.03, 0);
+      bulb.setLocalScale(0.18, 0.12, 0.18);
+      fixture.addChild(ring);
+      fixture.addChild(bulb);
+      ceiling.addChild(fixture);
+    }
+  }
+
+  // 2 Portal Doors on North Wall
+  const portals = new pc.Entity('Portal_Doors');
+  sceneRoot.addChild(portals);
+
+  buildScenePortalDoor(engine, portals, mats, {
+    name: 'Portal_Door_Cinema',
+    position: [-4.5, 0, -10.65],
+    rotationY: 0,
+    title: 'RẠP CHIẾU PHIM',
+    subtitle: 'MAIN STAGE • MÀN HÌNH LED LỚN',
+    accentColor: '#38bdf8',
+    targetSceneId: CINEMA_SCENE_ID,
+    interactTitle: 'Rạp Chiếu Phim',
+  });
+
+  buildScenePortalDoor(engine, portals, mats, {
+    name: 'Portal_Door_TeaRoom',
+    position: [4.5, 0, -10.65],
+    rotationY: 0,
+    title: 'PHÒNG TRÀ',
+    subtitle: 'ACOUSTIC STAGE • HÁT KARAOKE',
+    accentColor: '#f59e0b',
+    targetSceneId: TEAROOM_SCENE_ID,
+    interactTitle: 'Phòng Trà Acoustic',
+  });
+
+  return shell;
+}
+
+export function buildCinemaEnvironmentShell(
+  engine: EditorEngine,
   sceneRoot: pc.Entity,
   mats: SharedLoungeMaterials
 ): pc.Entity {
@@ -437,43 +793,26 @@ export function buildEnvironmentShell(
   });
   shell.addChild(floor);
 
-  // Seating & Bar Area Rugs with Brass Inlay
-  shell.addChild(createBox('Seating Rug Brass Trim', [9.0, 0.002, 3.0], [10.4, 0.004, 4.8], mats.brass));
-  shell.addChild(createBox('Seating Rug', [9.0, 0.005, 3.0], [10.2, 0.004, 4.6], mats.rugDark));
-  shell.addChild(createBox('Bar Rug Brass Trim', [-10.75, 0.002, 0], [6.8, 0.004, 10.4], mats.brass));
-  shell.addChild(createBox('Bar Rug', [-10.75, 0.005, 0], [6.6, 0.004, 10.2], mats.rugBar));
-
-  // Grand Red Velvet Runner + Gold Borders
+  // Grand Red Velvet Runner + Gold Borders leading to Main Stage
   const runnerGroup = new pc.Entity('Red_Velvet_Runner');
-  runnerGroup.setLocalPosition(0, 0.006, 1.815);
-  runnerGroup.addChild(createBox('Velvet Body', [0, 0, 0], [2.6, 0.004, 18.55], mats.velvetRed));
-  runnerGroup.addChild(createBox('Gold Border Left', [-1.24, 0.002, 0], [0.08, 0.004, 18.55], mats.goldBorder));
-  runnerGroup.addChild(createBox('Gold Border Right', [1.24, 0.002, 0], [0.08, 0.004, 18.55], mats.goldBorder));
+  runnerGroup.setLocalPosition(0, 0.006, 4.0);
+  runnerGroup.addChild(createBox('Velvet Body', [0, 0, 0], [2.6, 0.004, 24.0], mats.velvetRed));
+  runnerGroup.addChild(createBox('Gold Border Left', [-1.24, 0.002, 0], [0.08, 0.004, 24.0], mats.goldBorder));
+  runnerGroup.addChild(createBox('Gold Border Right', [1.24, 0.002, 0], [0.08, 0.004, 24.0], mats.goldBorder));
   shell.addChild(runnerGroup);
 
-  // Walls (Back, Left + Bar Backwall, Right, Front with Entrance Arch)
+  // Walls (Back, West, East, South)
   const walls = new pc.Entity('Walls');
   shell.addChild(walls);
   walls.addChild(createBox('Wall North (Back)', [0, 3.5, -16.9], [38, 7.0, 0.2], mats.brickWall38, { collider: true }));
-  walls.addChild(createBox('Wall West (Bar)', [-18.9, 3.5, 0], [0.2, 7.0, 34], mats.brickWall34, { collider: true }));
-  walls.addChild(createBox('Wall East (Stage)', [18.9, 3.5, 0], [0.2, 7.0, 34], mats.brickWall34, { collider: true }));
+  walls.addChild(createBox('Wall West', [-18.9, 3.5, 0], [0.2, 7.0, 34], mats.brickWall34, { collider: true }));
+  walls.addChild(createBox('Wall East', [18.9, 3.5, 0], [0.2, 7.0, 34], mats.brickWall34, { collider: true }));
   walls.addChild(createBox('Wall South Left', [-10.5, 3.5, 16.9], [17, 7.0, 0.2], mats.brickWall17, { collider: true }));
   walls.addChild(createBox('Wall South Right', [10.5, 3.5, 16.9], [17, 7.0, 0.2], mats.brickWall17, { collider: true }));
   walls.addChild(createBox('Entrance Arch Header', [0, 6.0, 16.9], [4.2, 2.0, 0.2], mats.brickWallArch));
   walls.addChild(createBox('Entrance Pilaster Left', [-2.1, 2.5, 16.8], [0.2, 5.0, 0.3], mats.pilasterDark));
   walls.addChild(createBox('Entrance Pilaster Right', [2.1, 2.5, 16.8], [0.2, 5.0, 0.3], mats.pilasterDark));
   walls.addChild(createBox('Entrance Threshold', [0, 0.01, 16.8], [4.2, 0.02, 0.3], mats.brass));
-
-  // Bar Backwall Timber Paneling + Brass Dividers + Glow Bar
-  const barBackwall = new pc.Entity('Bar_Backwall');
-  barBackwall.setLocalPosition(-18.75, 2.0, 0);
-  barBackwall.setLocalEulerAngles(0, 90, 0);
-  barBackwall.addChild(createBox('Timber Paneling', [0, 0, 0], [26, 4.0, 0.1], mats.timberDark));
-  for (const bx of [-10, -5, 0, 5, 10]) {
-    barBackwall.addChild(createBox(`Brass Divider ${bx}`, [bx, 0, 0.08], [0.08, 4.0, 0.06], mats.brass));
-  }
-  barBackwall.addChild(createBox('Liquor Glow Bar', [0, 0.8, 0.12], [22, 0.04, 0.04], mats.ledGold));
-  walls.addChild(barBackwall);
 
   // Baseboards & Crown Moldings
   walls.addChild(createBox('Baseboard North', [0, 0.11, -16.8], [37.8, 0.22, 0.05], mats.timberDark));
@@ -510,10 +849,122 @@ export function buildEnvironmentShell(
     }
   }
 
+  // Portal Door back to Lobby at South entrance
+  const portals = new pc.Entity('Portal_Doors');
+  sceneRoot.addChild(portals);
+  buildScenePortalDoor(engine, portals, mats, {
+    name: 'Portal_Door_Lobby',
+    position: [0, 0, 16.65],
+    rotationY: 180,
+    title: 'SẢNH CHỜ',
+    subtitle: 'QUAY LẠI CHỌN PHÒNG',
+    accentColor: '#e5c07b',
+    targetSceneId: LOBBY_SCENE_ID,
+    interactTitle: 'Về Sảnh Chờ',
+  });
+
   return shell;
 }
 
-export function buildLightingRig(sceneRoot: pc.Entity): pc.Entity {
+export function buildTeaRoomEnvironmentShell(
+  engine: EditorEngine,
+  sceneRoot: pc.Entity,
+  mats: SharedLoungeMaterials
+): pc.Entity {
+  const shell = new pc.Entity('Environment_Shell');
+  sceneRoot.addChild(shell);
+
+  // Tea Room Floor (24m x 24m centered at X=6.9, Z=3.0 so Acoustic_Stage sits flush on East wall X=18.9)
+  const floor = new pc.Entity('TeaRoom Floor');
+  floor.addComponent('render', {
+    type: 'plane',
+    material: mats.floorWood,
+    castShadows: false,
+    receiveShadows: true,
+  });
+  floor.setLocalPosition(6.9, -0.001, 3.0);
+  floor.setLocalScale(24, 1, 24);
+  floor.addComponent('collision', {
+    type: 'box',
+    halfExtents: new pc.Vec3(12, 0.05, 12),
+  });
+  floor.addComponent('rigidbody', {
+    type: 'static',
+    mass: 0,
+    friction: 0.8,
+    restitution: 0.1,
+  });
+  shell.addChild(floor);
+
+  // Red Velvet Runner leading from West entrance door toward Acoustic Stage
+  const runnerGroup = new pc.Entity('Red_Velvet_Runner');
+  runnerGroup.setLocalPosition(4.8, 0.006, 3.0);
+  runnerGroup.addChild(createBox('Velvet Body', [0, 0, 0], [18.4, 0.004, 2.4], mats.velvetRed));
+  runnerGroup.addChild(createBox('Gold Border North', [0, 0.002, -1.24], [18.4, 0.004, 0.08], mats.goldBorder));
+  runnerGroup.addChild(createBox('Gold Border South', [0, 0.002, 1.24], [18.4, 0.004, 0.08], mats.goldBorder));
+  shell.addChild(runnerGroup);
+
+  // Walls (X: -5.1 .. 18.9, Z: -9.0 .. 15.0)
+  const walls = new pc.Entity('Walls');
+  shell.addChild(walls);
+  walls.addChild(createBox('Wall East (Stage)', [18.9, 3.5, 3.0], [0.2, 7.0, 24], mats.brickWall34, { collider: true }));
+  walls.addChild(createBox('Wall West', [-5.1, 3.5, 3.0], [0.2, 7.0, 24], mats.brickWall34, { collider: true }));
+  walls.addChild(createBox('Wall North (Back)', [6.9, 3.5, -9.0], [24, 7.0, 0.2], mats.brickWall38, { collider: true }));
+  walls.addChild(createBox('Wall South', [6.9, 3.5, 15.0], [24, 7.0, 0.2], mats.brickWall38, { collider: true }));
+
+  walls.addChild(createBox('Baseboard East', [18.78, 0.11, 3.0], [0.05, 0.22, 23.6], mats.timberDark));
+  walls.addChild(createBox('Baseboard West', [-4.98, 0.11, 3.0], [0.05, 0.22, 23.6], mats.timberDark));
+  walls.addChild(createBox('Baseboard North', [6.9, 0.11, -8.88], [23.6, 0.22, 0.05], mats.timberDark));
+  walls.addChild(createBox('Baseboard South', [6.9, 0.11, 14.88], [23.6, 0.22, 0.05], mats.timberDark));
+
+  // Coffered Ceiling (Y = 7.0m)
+  const ceiling = new pc.Entity('Ceiling_Coffered');
+  shell.addChild(ceiling);
+  ceiling.addChild(createBox('Ceiling Slab', [6.9, 7.05, 3.0], [24, 0.1, 24], mats.ceilingDark));
+
+  for (const x of [0.9, 6.9, 12.9]) {
+    ceiling.addChild(createBox(`Beam Long ${x}`, [x, 6.82, 3.0], [0.35, 0.36, 24], mats.woodBeam, { castShadows: true }));
+  }
+  for (const z of [-3, 3, 9]) {
+    ceiling.addChild(createBox(`Beam Trans ${z}`, [6.9, 6.82, z], [24, 0.36, 0.35], mats.woodBeam, { castShadows: true }));
+  }
+
+  for (const x of [0.9, 6.9, 12.9]) {
+    for (const z of [-3, 3, 9]) {
+      const fixture = new pc.Entity(`PF_Ceiling_Light_${x}_${z}`);
+      fixture.setLocalPosition(x, 6.95, z);
+      const ring = createBox('Trim', [0, 0, 0], [0.36, 0.04, 0.36], mats.brass);
+      const bulb = new pc.Entity('Bulb');
+      bulb.addComponent('render', { type: 'sphere', material: mats.bulbGlow, castShadows: false, receiveShadows: false });
+      bulb.setLocalPosition(0, -0.03, 0);
+      bulb.setLocalScale(0.18, 0.12, 0.18);
+      fixture.addChild(ring);
+      fixture.addChild(bulb);
+      ceiling.addChild(fixture);
+    }
+  }
+
+  // Portal Door back to Lobby on West wall facing East (+X) toward Acoustic Stage
+  const portals = new pc.Entity('Portal_Doors');
+  sceneRoot.addChild(portals);
+  buildScenePortalDoor(engine, portals, mats, {
+    name: 'Portal_Door_Lobby',
+    position: [-4.85, 0, 3.0],
+    rotationY: 90,
+    title: 'SẢNH CHỜ',
+    subtitle: 'QUAY LẠI CHỌN PHÒNG',
+    accentColor: '#e5c07b',
+    targetSceneId: LOBBY_SCENE_ID,
+    interactTitle: 'Về Sảnh Chờ',
+  });
+
+  return shell;
+}
+
+export function buildLightingRig(
+  sceneRoot: pc.Entity,
+  variant: 'lobby' | 'cinema' | 'tearoom'
+): pc.Entity {
   const rig = new pc.Entity('Lighting_Rig');
   sceneRoot.addChild(rig);
 
@@ -529,67 +980,65 @@ export function buildLightingRig(sceneRoot: pc.Entity): pc.Entity {
     shadowResolution: 1024,
   });
   dirLight.setLocalPosition(15, 18, 12);
-  dirLight.lookAt(0, 0, 0);
+  dirLight.lookAt(variant === 'tearoom' ? 6.9 : 0, 0, variant === 'tearoom' ? 3.0 : 0);
   rig.addChild(dirLight);
 
-  const barSpot = new pc.Entity('Bar Spotlight');
-  barSpot.addComponent('light', {
-    type: 'spot',
-    color: new pc.Color(1, 0.655, 0.149),
-    intensity: 3.8,
-    range: 14,
-    innerConeAngle: 22,
-    outerConeAngle: 46,
-    castShadows: false,
-  });
-  barSpot.setLocalPosition(-10.2, 5.8, 0.8);
-  barSpot.lookAt(-10.2, 1.2, 0.8);
-  barSpot.rotateLocal(90, 0, 0);
-  rig.addChild(barSpot);
-
-  const receptionSpot = new pc.Entity('Reception Spotlight');
-  receptionSpot.addComponent('light', {
-    type: 'spot',
-    color: new pc.Color(1, 0.878, 0.698),
-    intensity: 2.8,
-    range: 12,
-    innerConeAngle: 18,
-    outerConeAngle: 36,
-    castShadows: false,
-  });
-  receptionSpot.setLocalPosition(0, 5.0, 9.5);
-  receptionSpot.lookAt(0, 1.2, 11.5);
-  receptionSpot.rotateLocal(90, 0, 0);
-  rig.addChild(receptionSpot);
-
-  const stageScreenGlow = new pc.Entity('Stage Screen PointLight');
-  stageScreenGlow.addComponent('light', {
-    type: 'point',
-    color: new pc.Color(1, 0.718, 0.302),
-    intensity: 2.4,
-    range: 14,
-    castShadows: false,
-  });
-  stageScreenGlow.setLocalPosition(0, 3.3, -14.62);
-  rig.addChild(stageScreenGlow);
-
-  const lampPoints: Array<[number, number, number]> = [
-    [-7.2, 1.8, -4.5],
-    [-7.2, 1.8, 5.5],
-    [2.5, 1.8, 0.5],
-  ];
-  lampPoints.forEach((pos, idx) => {
-    const pt = new pc.Entity(`Lamp PointLight ${idx + 1}`);
-    pt.addComponent('light', {
+  if (variant === 'lobby') {
+    const lobbyCenter = new pc.Entity('Lobby Center PointLight');
+    lobbyCenter.addComponent('light', {
       type: 'point',
-      color: new pc.Color(1, 0.718, 0.302),
-      intensity: 2.2,
-      range: 8,
+      color: new pc.Color(1, 0.82, 0.56),
+      intensity: 2.8,
+      range: 20,
       castShadows: false,
     });
-    pt.setLocalPosition(pos[0], pos[1], pos[2]);
-    rig.addChild(pt);
-  });
+    lobbyCenter.setLocalPosition(0, 5.2, 0);
+    rig.addChild(lobbyCenter);
+  } else if (variant === 'cinema') {
+    const stageScreenGlow = new pc.Entity('Stage Screen PointLight');
+    stageScreenGlow.addComponent('light', {
+      type: 'point',
+      color: new pc.Color(1, 0.718, 0.302),
+      intensity: 2.6,
+      range: 16,
+      castShadows: false,
+    });
+    stageScreenGlow.setLocalPosition(0, 3.3, -14.62);
+    rig.addChild(stageScreenGlow);
+
+    const hallPoint = new pc.Entity('Cinema Hall PointLight');
+    hallPoint.addComponent('light', {
+      type: 'point',
+      color: new pc.Color(1, 0.76, 0.45),
+      intensity: 2.0,
+      range: 22,
+      castShadows: false,
+    });
+    hallPoint.setLocalPosition(0, 5.5, 2.0);
+    rig.addChild(hallPoint);
+  } else {
+    const acousticGlow = new pc.Entity('Acoustic Stage PointLight');
+    acousticGlow.addComponent('light', {
+      type: 'point',
+      color: new pc.Color(1, 0.74, 0.38),
+      intensity: 3.2,
+      range: 18,
+      castShadows: false,
+    });
+    acousticGlow.setLocalPosition(14.5, 4.2, 3.0);
+    rig.addChild(acousticGlow);
+
+    const teaCenterGlow = new pc.Entity('TeaRoom Center PointLight');
+    teaCenterGlow.addComponent('light', {
+      type: 'point',
+      color: new pc.Color(1, 0.78, 0.48),
+      intensity: 2.4,
+      range: 20,
+      castShadows: false,
+    });
+    teaCenterGlow.setLocalPosition(5.5, 5.2, 3.0);
+    rig.addChild(teaCenterGlow);
+  }
 
   return rig;
 }
@@ -604,9 +1053,6 @@ function getMaterialRoughness(mat: pc.StandardMaterial): number {
   return mat.glossInvert ? mat.gloss : 1 - mat.gloss;
 }
 
-/**
- * PlayCanvas equivalent of `enhanceMeshMaterial` from `src/components/3d/Model.jsx:6-92`.
- */
 function enhanceStandardMaterial(
   mat: pc.StandardMaterial,
   url = '',
@@ -616,7 +1062,6 @@ function enhanceStandardMaterial(
   const mName = (meshName || '').toLowerCase();
   const u = (url || '').toLowerCase();
 
-  // 1. Botanical Foliage & Leaves (Tree.glb)
   if (matName.includes('leaves') || mName.includes('leaves')) {
     mat.diffuse = new pc.Color().fromString('#2d5a27');
     setMaterialRoughness(mat, 0.65);
@@ -627,7 +1072,6 @@ function enhanceStandardMaterial(
     return;
   }
 
-  // 2. Tree Bark & Organic Wood Trunks (Tree.glb)
   if (matName.includes('bark') || mName.includes('bark')) {
     mat.diffuse = new pc.Color().fromString('#3d2a1d');
     setMaterialRoughness(mat, 0.85);
@@ -637,51 +1081,6 @@ function enhanceStandardMaterial(
     return;
   }
 
-  // 3. Chandelier (Restaurant_chandelier.glb)
-  if (u.includes('chandelier') || matName.includes('chandelier') || mName.includes('chandelier')) {
-    mat.diffuse = new pc.Color().fromString('#cca45c');
-    mat.useMetalness = true;
-    mat.metalness = 0.82;
-    setMaterialRoughness(mat, 0.22);
-    mat.emissive = new pc.Color().fromString('#ffd885');
-    mat.emissiveIntensity = 0.25;
-    mat.update();
-    return;
-  }
-
-  // 4. Floor Lamp (Floor_Lamp.glb)
-  if (u.includes('floor_lamp') || matName.includes('lamp') || mName.includes('lamp')) {
-    mat.diffuse = new pc.Color().fromString('#26221f');
-    mat.useMetalness = true;
-    mat.metalness = 0.7;
-    setMaterialRoughness(mat, 0.35);
-    mat.emissive = new pc.Color().fromString('#ffa726');
-    mat.emissiveIntensity = 0.4;
-    mat.update();
-    return;
-  }
-
-  // 5. Rectangular Dining Table (Restaurant_Table_Rectangular.glb)
-  if (u.includes('table_rectangular') || matName.includes('table_rectangular')) {
-    mat.diffuse = new pc.Color().fromString('#2b1e16');
-    setMaterialRoughness(mat, 0.65);
-    mat.useMetalness = true;
-    mat.metalness = 0.02;
-    mat.update();
-    return;
-  }
-
-  // 6. Reception Desk (Restaurant_Reception_Desk.glb)
-  if (u.includes('reception_desk') || matName.includes('reception_desk')) {
-    mat.diffuse = new pc.Color().fromString('#221915');
-    setMaterialRoughness(mat, 0.68);
-    mat.useMetalness = true;
-    mat.metalness = 0.02;
-    mat.update();
-    return;
-  }
-
-  // 7. Generic Fallback for untextured flat-white GLTFs (color > 0.72 without texture map)
   if (!mat.diffuseMap && mat.diffuse && mat.diffuse.r > 0.72 && mat.diffuse.g > 0.72 && mat.diffuse.b > 0.72) {
     mat.diffuse = new pc.Color().fromString('#2e2824');
     setMaterialRoughness(mat, 0.70);
@@ -691,8 +1090,7 @@ function enhanceStandardMaterial(
     return;
   }
 
-  // 8. Universal Matte Finish: soften plastic shininess on standard non-metallic meshes
-  if (!mat.metalness || mat.metalness < 0.65) {
+  if (!u.includes('character') && (!mat.metalness || mat.metalness < 0.65)) {
     let changed = false;
     if (getMaterialRoughness(mat) < 0.62) {
       setMaterialRoughness(mat, 0.65);
@@ -709,10 +1107,6 @@ function enhanceStandardMaterial(
   }
 }
 
-/**
- * Clones and enhances all StandardMaterials on a loaded GLB entity hierarchy,
- * caching cloned materials per `(url, originalMaterial)` and registering them with `engine`.
- */
 export function enhanceGlbMaterials(
   engine: EditorEngine,
   root: pc.Entity,
@@ -743,16 +1137,11 @@ export function enhanceGlbMaterials(
         urlCache?.set(orig, enhanced);
       }
       mi.material = enhanced;
-      // Prevent premature frustum culling on scaled/offset multi-node GLBs (e.g. Acoustic Live Band Gear)
       mi.cull = false;
     }
   }
 }
 
-/**
- * PlayCanvas equivalent of `hideRoomShell` from `src/components/3d/LiveStageSet.jsx:201-225`.
- * Hides diorama pub tables, mannequins, crates, ceiling hangers, freestanding walls, and outer floor.
- */
 export function hideGigRoomShell(gigRoot: pc.Entity): void {
   const renders = gigRoot.findComponents('render') as pc.RenderComponent[];
   for (const render of renders) {
@@ -794,7 +1183,10 @@ export function hideGigRoomShell(gigRoot: pc.Entity): void {
   }
 }
 
-export async function buildMainAndAcousticStages(
+/**
+ * Builds ONLY Main_Stage for Cinema_Scene (does NOT fetch or create Acoustic_Stage).
+ */
+export async function buildMainStageOnly(
   engine: EditorEngine,
   sceneRoot: pc.Entity,
   mats: SharedLoungeMaterials,
@@ -806,7 +1198,6 @@ export async function buildMainAndAcousticStages(
   if (!app) return;
   const cache = matCache ?? new Map<string, Map<pc.Material, pc.StandardMaterial>>();
 
-  // ── 1. Main Stage ──
   const mainStage = new pc.Entity('Main_Stage');
   sceneRoot.addChild(mainStage);
 
@@ -829,17 +1220,14 @@ export async function buildMainAndAcousticStages(
     })
   );
 
-  // Red Carpet on Stage & Steps
   mainStage.addChild(createBox('Stage Carpet Step 1', [0, 0.125, -7.805], [2.6, 0.008, 0.42], mats.velvetRed));
   mainStage.addChild(createBox('Stage Carpet Step 2', [0, 0.245, -8.255], [2.6, 0.008, 0.42], mats.velvetRed));
   mainStage.addChild(createBox('Stage Carpet Deck', [0, 0.365, -12.0], [2.6, 0.008, 6.9], mats.velvetRed));
 
-  // Gold LED Edge Strips
   mainStage.addChild(createBox('LED Strip Step 1', [0, 0.136, -7.57], [14.6, 0.02, 0.02], mats.ledGold));
   mainStage.addChild(createBox('LED Strip Step 2', [0, 0.256, -8.02], [14.8, 0.02, 0.02], mats.ledGold));
   mainStage.addChild(createBox('LED Strip Stage', [0, 0.382, -8.47], [15.0, 0.02, 0.02], mats.ledGold));
 
-  // Stage Truss & Main YouTube LED Screen Frame
   const truss = new pc.Entity('Stage Lighting Truss');
   truss.addComponent('render', { type: 'cylinder', material: mats.trussMetal, castShadows: false, receiveShadows: false });
   truss.setLocalPosition(0, 6.3, -8.2);
@@ -851,7 +1239,6 @@ export async function buildMainAndAcousticStages(
   tvFrame.setLocalPosition(0, 3.9, -16.82);
   mainStage.addChild(tvFrame);
 
-  // 6 Steel Mounting Cylinders
   for (const bx of [-4.2, 0, 4.2]) {
     for (const by of [-1.9, 1.9]) {
       const mount = new pc.Entity(`Screen Mount ${bx}_${by}`);
@@ -862,14 +1249,20 @@ export async function buildMainAndAcousticStages(
       tvFrame.addChild(mount);
     }
   }
-  // Black Titanium Cabinet + Amber Halo Backlight + Champagne Gold Frame + Anodized Bezel + Screen
   tvFrame.addChild(createBox('Screen Titanium Cabinet', [0, 0, -0.04], [10.75, 6.15, 0.14], mats.stageDark, { castShadows: true }));
   tvFrame.addChild(createBox('Screen Halo Backlight', [0, 0, -0.1], [11.0, 6.4, 0.04], mats.ledGold));
   tvFrame.addChild(createBox('Screen Gold Trim', [0, 0, 0.02], [10.58, 6.0, 0.03], mats.brass));
   tvFrame.addChild(createBox('Screen Anodized Bezel', [0, 0, 0.03], [10.46, 5.9, 0.02], mats.screenBlack));
-  tvFrame.addChild(createBox('LED Screen Panel', [0, 0, 0.042], [10.4, 5.85, 0.01], mats.mainScreenPoster));
 
-  // 4x PF_PA_Speaker (Shared GLB Container)
+  const screenPanel = createBox('LED Screen Panel', [0, 0, 0.042], [10.4, 5.85, 0.01], mats.mainScreenPoster);
+  attachDoorInteractable(screenPanel, 'Interactable', [
+    { name: 'interactId', type: 'string', value: 'stage_screen' },
+    { name: 'interactTitle', type: 'string', value: 'Màn Hình LED Rạp Phim (YouTube)' },
+    { name: 'interactDistance', type: 'number', value: 12.0 },
+  ]);
+  tvFrame.addChild(screenPanel);
+
+  // 4x PF_PA_Speaker
   const speakerUrl = '/models/pa-speaker.glb';
   const speakerBuf = await fetchBuffer(speakerUrl);
   const speakerAssetId = assetIdByUrl.get(speakerUrl);
@@ -889,7 +1282,7 @@ export async function buildMainAndAcousticStages(
     }
   }
 
-  // 5x PF_Fresnel_LED (Shared GLB Container)
+  // 5x PF_Fresnel_LED
   const fresnelUrl = '/models/fresnel-led.glb';
   const fresnelBuf = await fetchBuffer(fresnelUrl);
   const fresnelAssetId = assetIdByUrl.get(fresnelUrl);
@@ -928,8 +1321,23 @@ export async function buildMainAndAcousticStages(
     }
     mainStage.addChild(fr);
   }
+}
 
-  // ── 2. Acoustic Stage (Right Live Stage) ──
+/**
+ * Builds ONLY Acoustic_Stage for TeaRoom_Scene (does NOT fetch or create Main_Stage).
+ */
+export async function buildAcousticStageOnly(
+  engine: EditorEngine,
+  sceneRoot: pc.Entity,
+  mats: SharedLoungeMaterials,
+  fetchBuffer: (url: string) => Promise<ArrayBuffer>,
+  assetIdByUrl: Map<string, string>,
+  matCache?: GlbMaterialCache
+): Promise<void> {
+  const app = engine.getApp();
+  if (!app) return;
+  const cache = matCache ?? new Map<string, Map<pc.Material, pc.StandardMaterial>>();
+
   const acousticStage = new pc.Entity('Acoustic_Stage');
   sceneRoot.addChild(acousticStage);
 
