@@ -1,6 +1,5 @@
 import * as pc from 'playcanvas';
 import { MultiplayerManager, type NetworkStageState } from '../../network/MultiplayerManager';
-import { computeExpectedPlaybackSec, computeStageSyncAction } from '../../utils/stageSync';
 
 export interface StageMediaState {
   sourceType: 'media' | 'youtube';
@@ -11,8 +10,6 @@ export interface StageMediaState {
   title: string;
   isPlaying: boolean;
   isScreenOn: boolean;
-  playbackStartedAt?: number;
-  pausedAtSec?: number;
   volume: number; // 0..1 (local client volume)
   isMuted: boolean; // local client mute
 }
@@ -156,8 +153,6 @@ export class StageAudioManager {
     title: 'Live Acoustic Session — Bello Ballo',
     isPlaying: true,
     isScreenOn: true,
-    playbackStartedAt: Date.now(),
-    pausedAtSec: 0,
     volume: 0.8,
     isMuted: false,
   };
@@ -168,8 +163,6 @@ export class StageAudioManager {
   private lastScreenProjectionSig = '';
   private lastUploadedVideoTime = -1;
   private cachedActiveCamera: pc.Entity | null = null;
-  private isCatchingUp = false;
-  private lastSyncCheckMs = 0;
 
   constructor(app: pc.Application, sceneRoot: pc.Entity) {
     this.app = app;
@@ -255,10 +248,6 @@ export class StageAudioManager {
     if (title) this.state.title = title;
     this.state.isPlaying = true;
     this.state.isScreenOn = true;
-    this.state.pausedAtSec = 0;
-    this.state.playbackStartedAt = Date.now();
-    this.isCatchingUp = false;
-    this.lastSyncCheckMs = 0;
     this.lastEmittedYtVolume = -1;
     this.ensureAudioGraph();
     this.applyMediaSource(trimmed);
@@ -278,12 +267,7 @@ export class StageAudioManager {
     this.state.title = title || `YouTube (${id})`;
     this.state.isPlaying = true;
     this.state.isScreenOn = true;
-    this.state.pausedAtSec = 0;
-    this.state.playbackStartedAt = Date.now();
-    this.isCatchingUp = false;
-    this.lastSyncCheckMs = 0;
     if (this.videoEl) {
-      this.videoEl.playbackRate = 1.0;
       this.videoEl.pause();
     }
     this.videoHasFrames = false;
@@ -301,23 +285,13 @@ export class StageAudioManager {
 
   setPlaying(playing: boolean): void {
     if (!MultiplayerManager.getInstance().isHost()) return;
-    const now = Date.now();
-    if (playing && !this.state.isPlaying) {
-      const resumeSec = this.state.pausedAtSec ?? 0;
-      this.state.playbackStartedAt = now - resumeSec * 1000;
-    } else if (!playing && this.state.isPlaying) {
-      this.state.pausedAtSec = computeExpectedPlaybackSec(this.state, now);
-    }
     this.state.isPlaying = playing;
-    this.isCatchingUp = false;
-    this.lastSyncCheckMs = 0;
     if (this.state.sourceType === 'media') {
       this.ensureAudioGraph();
       if (this.videoEl) {
         if (playing) {
           void this.tryPlayVideo();
         } else {
-          this.videoEl.playbackRate = 1.0;
           this.videoEl.pause();
         }
       }
@@ -366,17 +340,10 @@ export class StageAudioManager {
     this.state.title = remote.title;
     this.state.isPlaying = remote.isPlaying;
     this.state.isScreenOn = remote.isScreenOn;
-    this.state.playbackStartedAt = remote.playbackStartedAt ?? remote.updatedAt;
-    this.state.pausedAtSec = remote.pausedAtSec ?? 0;
-    this.isCatchingUp = false;
-    this.lastSyncCheckMs = 0;
 
     if (remote.sourceType === 'youtube') {
       this.state.domVideoFallback = false;
-      if (this.videoEl) {
-        this.videoEl.playbackRate = 1.0;
-        this.videoEl.pause();
-      }
+      this.videoEl?.pause();
       this.videoHasFrames = false;
       this.lastEmittedYtVolume = -1;
     } else if (mediaChanged) {
@@ -384,13 +351,8 @@ export class StageAudioManager {
       this.ensureAudioGraph();
       this.applyMediaSource(remote.mediaUrl);
     } else if (this.videoEl) {
-      if (remote.isPlaying) {
-        void this.tryPlayVideo();
-        this.syncLocalVideoTimeline(true);
-      } else {
-        this.videoEl.playbackRate = 1.0;
-        this.videoEl.pause();
-      }
+      if (remote.isPlaying) void this.tryPlayVideo();
+      else this.videoEl.pause();
     }
 
     this.syncScreenVisual();
@@ -408,19 +370,12 @@ export class StageAudioManager {
       title: this.state.title,
       isPlaying: this.state.isPlaying,
       isScreenOn: this.state.isScreenOn,
-      playbackStartedAt: this.state.playbackStartedAt,
-      pausedAtSec: this.state.pausedAtSec,
       updatedAt: Date.now(),
     });
   }
 
   update(): void {
     if (this.destroyed) return;
-
-    // Periodic local drift correction for direct media playback (1.5x catch-up <= 60s, seek > 60s)
-    if (this.state.sourceType === 'media' && !this.state.domVideoFallback) {
-      this.syncLocalVideoTimeline(false);
-    }
 
     // Upload current video frame to LED Screen Panel texture only when playing or frame time changed
     if (
@@ -689,67 +644,10 @@ export class StageAudioManager {
   private onVideoCanPlay = (): void => {
     if (this.destroyed) return;
     this.videoReady = true;
-    this.syncLocalVideoTimeline(true);
     if (this.state.isPlaying && !this.state.domVideoFallback) {
       void this.tryPlayVideo();
     }
   };
-
-  private syncLocalVideoTimeline(forceImmediate: boolean): void {
-    if (
-      this.destroyed ||
-      !this.videoEl ||
-      !this.videoReady ||
-      this.state.sourceType !== 'media' ||
-      this.state.domVideoFallback
-    ) {
-      return;
-    }
-
-    if (!this.state.isPlaying) {
-      if (this.videoEl.playbackRate !== 1.0) {
-        this.videoEl.playbackRate = 1.0;
-      }
-      this.isCatchingUp = false;
-      return;
-    }
-
-    const nowPerf = performance.now();
-    if (!forceImmediate && nowPerf - this.lastSyncCheckMs < 1000) {
-      return;
-    }
-    this.lastSyncCheckMs = nowPerf;
-
-    if (this.videoEl.paused && !forceImmediate) return;
-
-    const expectedSec = computeExpectedPlaybackSec(this.state, Date.now());
-    const duration = Number.isFinite(this.videoEl.duration) ? this.videoEl.duration : 0;
-    const action = computeStageSyncAction({
-      currentTime: this.videoEl.currentTime,
-      expectedSec,
-      duration,
-      isLooping: this.videoEl.loop,
-      isLive: false,
-      isCatchingUp: this.isCatchingUp,
-    });
-
-    if (action.type === 'seek') {
-      try {
-        this.videoEl.currentTime = action.targetTime;
-      } catch {
-        // Ignore seek errors while media metadata settles
-      }
-      if (this.videoEl.playbackRate !== 1.0) {
-        this.videoEl.playbackRate = 1.0;
-      }
-      this.isCatchingUp = false;
-    } else {
-      if (this.videoEl.playbackRate !== action.rate) {
-        this.videoEl.playbackRate = action.rate;
-      }
-      this.isCatchingUp = action.rate > 1.0;
-    }
-  }
 
   private onVideoError = (): void => {
     if (this.destroyed || this.state.sourceType !== 'media') return;

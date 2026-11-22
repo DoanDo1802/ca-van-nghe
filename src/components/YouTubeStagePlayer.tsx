@@ -1,6 +1,5 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import type { ScreenProjectionData, StageMediaState } from '../engine/runtime/StageAudioManager';
-import { computeExpectedPlaybackSec, computeStageSyncAction } from '../utils/stageSync';
 
 interface YTPlayerInstance {
   loadVideoById: (opts: { videoId: string; suggestedQuality?: string }) => void;
@@ -10,14 +9,6 @@ interface YTPlayerInstance {
   unMute: () => void;
   setVolume: (vol: number) => void;
   setPlaybackQuality: (quality: string) => void;
-  getCurrentTime?: () => number;
-  getDuration?: () => number;
-  seekTo?: (seconds: number, allowSeekAhead?: boolean) => void;
-  setPlaybackRate?: (suggestedRate: number) => void;
-  getPlaybackRate?: () => number;
-  getAvailablePlaybackRates?: () => number[];
-  getPlayerState?: () => number;
-  getVideoData?: () => { video_id?: string; title?: string; isLive?: boolean };
   destroy: () => void;
 }
 
@@ -88,8 +79,6 @@ export const YouTubeStagePlayer: React.FC = () => {
     isPlaying: boolean;
     isScreenOn: boolean;
     isMuted: boolean;
-    playbackStartedAt?: number;
-    pausedAtSec?: number;
   }>({
     videoId: null,
     domVideoUrl: null,
@@ -97,8 +86,6 @@ export const YouTubeStagePlayer: React.FC = () => {
     isPlaying: true,
     isScreenOn: true,
     isMuted: false,
-    playbackStartedAt: undefined,
-    pausedAtSec: 0,
   });
 
   const stagePlaneRef = useRef<HTMLDivElement>(null);
@@ -107,100 +94,8 @@ export const YouTubeStagePlayer: React.FC = () => {
   const playerRef = useRef<YTPlayerInstance | null>(null);
   const readyRef = useRef(false);
   const liveVolRef = useRef(80);
-  const catchingUpRef = useRef(false);
   const latestStateRef = useRef(stageState);
   latestStateRef.current = stageState;
-
-  const syncStagePlayerOnce = useCallback(() => {
-    const cur = latestStateRef.current;
-    if (!cur.isPlaying || !cur.isScreenOn) {
-      catchingUpRef.current = false;
-      if (readyRef.current && playerRef.current && (playerRef.current.getPlaybackRate?.() ?? 1) !== 1) {
-        playerRef.current.setPlaybackRate?.(1);
-      }
-      if (domVideoRef.current && domVideoRef.current.playbackRate !== 1) {
-        domVideoRef.current.playbackRate = 1;
-      }
-      return;
-    }
-
-    if (cur.videoId && readyRef.current && playerRef.current) {
-      const player = playerRef.current;
-      if (player.getPlayerState?.() !== 1) return;
-
-      const isLive = Boolean(player.getVideoData?.()?.isLive);
-      const duration = player.getDuration?.() ?? 0;
-      const currentTime = player.getCurrentTime?.() ?? 0;
-      if (!Number.isFinite(currentTime)) return;
-
-      const expectedSec = isLive
-        ? duration
-        : computeExpectedPlaybackSec(cur, Date.now());
-
-      const action = computeStageSyncAction({
-        currentTime,
-        expectedSec,
-        duration,
-        isLooping: !isLive,
-        isLive,
-        isCatchingUp: catchingUpRef.current,
-      });
-
-      if (action.type === 'seek') {
-        player.seekTo?.(action.targetTime, true);
-        if ((player.getPlaybackRate?.() ?? 1) !== 1) {
-          player.setPlaybackRate?.(1);
-        }
-        catchingUpRef.current = false;
-      } else if (action.rate > 1) {
-        const rates = player.getAvailablePlaybackRates?.() ?? [1];
-        if (rates.includes(action.rate)) {
-          if ((player.getPlaybackRate?.() ?? 1) !== action.rate) {
-            player.setPlaybackRate?.(action.rate);
-          }
-          catchingUpRef.current = true;
-        } else if (action.drift > 5) {
-          // Non-DVR live stream that disallows 1.5x: jump to live edge when noticeably behind
-          player.seekTo?.(action.targetTime, true);
-          catchingUpRef.current = false;
-        }
-      } else {
-        if ((player.getPlaybackRate?.() ?? 1) !== 1) {
-          player.setPlaybackRate?.(1);
-        }
-        catchingUpRef.current = false;
-      }
-      return;
-    }
-
-    if (cur.domVideoUrl && domVideoRef.current) {
-      const v = domVideoRef.current;
-      if (v.readyState < HTMLMediaElement.HAVE_METADATA || v.paused) return;
-      const duration = Number.isFinite(v.duration) ? v.duration : 0;
-      const expectedSec = computeExpectedPlaybackSec(cur, Date.now());
-      const action = computeStageSyncAction({
-        currentTime: v.currentTime,
-        expectedSec,
-        duration,
-        isLooping: v.loop,
-        isLive: false,
-        isCatchingUp: catchingUpRef.current,
-      });
-
-      if (action.type === 'seek') {
-        try {
-          v.currentTime = action.targetTime;
-        } catch {
-          // ignore
-        }
-        if (v.playbackRate !== 1) v.playbackRate = 1;
-        catchingUpRef.current = false;
-      } else {
-        if (v.playbackRate !== action.rate) v.playbackRate = action.rate;
-        catchingUpRef.current = action.rate > 1;
-      }
-    }
-  }, []);
 
   useEffect(() => {
     const onStageAudio = (e: Event) => {
@@ -213,11 +108,7 @@ export const YouTubeStagePlayer: React.FC = () => {
         isPlaying: detail.isPlaying,
         isScreenOn: detail.isScreenOn,
         isMuted: detail.isMuted,
-        playbackStartedAt: detail.playbackStartedAt,
-        pausedAtSec: detail.pausedAtSec,
       });
-      catchingUpRef.current = false;
-      window.setTimeout(() => syncStagePlayerOnce(), 0);
     };
 
     const onVolume = (e: Event) => {
@@ -346,12 +237,9 @@ export const YouTubeStagePlayer: React.FC = () => {
             if (cancelled) return;
             const cur = latestStateRef.current;
             // YT.PlayerState.PLAYING === 1, CUED === 5, UNSTARTED === -1
-            if (ev.data === 1) {
-              if (!cur.isMuted && cur.isPlaying && cur.isScreenOn) {
-                ev.target.unMute();
-                ev.target.setVolume(liveVolRef.current);
-              }
-              syncStagePlayerOnce();
+            if (ev.data === 1 && !cur.isMuted && cur.isPlaying && cur.isScreenOn) {
+              ev.target.unMute();
+              ev.target.setVolume(liveVolRef.current);
             } else if ((ev.data === 5 || ev.data === -1) && cur.isPlaying && cur.isScreenOn) {
               ev.target.mute();
               ev.target.playVideo();
@@ -408,14 +296,6 @@ export const YouTubeStagePlayer: React.FC = () => {
       }
     }
   }, [stageState.domVideoUrl, stageState.isPlaying, stageState.isScreenOn, stageState.isMuted]);
-
-  useEffect(() => {
-    if (!stageState.videoId && !stageState.domVideoUrl) return;
-    const timer = window.setInterval(() => {
-      syncStagePlayerOnce();
-    }, 1000);
-    return () => window.clearInterval(timer);
-  }, [stageState.videoId, stageState.domVideoUrl, syncStagePlayerOnce]);
 
   useEffect(() => {
     return () => {
