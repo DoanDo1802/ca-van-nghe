@@ -174,6 +174,12 @@ export class StageAudioManager {
     this.rightSpeaker = this.findEntityByName('PF_PA_Speaker (R Front)');
     this.screenEntity = this.findEntityByName('LED Screen Panel');
 
+    // Only activate Cinema Main Stage audio/video pipeline in scenes containing LED Screen Panel
+    if (!this.screenEntity) {
+      this.dispatchProjectionIfChanged(false, '');
+      return;
+    }
+
     if (this.screenEntity?.render) {
       const mi = this.screenEntity.render.meshInstances[0];
       if (mi) {

@@ -64,7 +64,10 @@ import {
 } from './runtime';
 import { PlayerControllerRuntime } from './runtime/PlayerControllerRuntime';
 import { configureAmmo, initAmmo, isAmmoLoaded } from './serialization/AmmoLoader';
-import { importCaVanNgheScene } from './serialization/CaVanNgheImporter';
+import {
+  importCaVanNgheSceneById,
+  type SceneLoadProgressCallback,
+} from './serialization/CaVanNgheImporter';
 import { getEntityMeta } from './serialization/EntityComponentHelper';
 import {
   clearGlbAssetBufferCache,
@@ -74,7 +77,13 @@ import {
   destroySubtreeResources,
   restoreGlbEntities,
 } from './serialization/SceneDeserializer';
+import {
+  emitSceneLoadingProgress,
+  getSceneDefinition,
+  getStartupSceneId,
+} from './serialization/SceneRegistry';
 import { serializeEntity, serializeScene } from './serialization/SceneSerializer';
+import { MultiplayerManager } from '../network/MultiplayerManager';
 
 export type PrimitiveType = 'box' | 'sphere' | 'plane' | 'cylinder' | 'capsule';
 export type SnapView = 'top' | 'front' | 'right' | 'iso';
@@ -134,8 +143,9 @@ export class EditorEngine {
   private playState: PlayModeState = 'edit';
   private playSnapshot: SceneSchema | null = null;
   private sceneGeneration = 0;
-  private currentSceneId = 'ca-van-nghe-lounge';
-  private currentSceneName = 'Ca Van Nghe';
+  private currentSceneId = getStartupSceneId();
+  private currentSceneName = getSceneDefinition(getStartupSceneId()).name;
+  private sceneTransitionLock = false;
   private autoDraftReady = false;
   private autoDraftTimer: number | null = null;
   private hasPendingAutoDraft = false;
@@ -209,7 +219,10 @@ export class EditorEngine {
 
   private constructor() {}
 
-  mount(canvas: HTMLCanvasElement, options?: { restoreAutoDraft?: boolean }): void {
+  mount(
+    canvas: HTMLCanvasElement,
+    options?: { restoreAutoDraft?: boolean; autoLoadScene?: boolean }
+  ): void {
     if (this.app) {
       if (this.canvas === canvas) return;
       this.unmount();
@@ -336,12 +349,15 @@ export class EditorEngine {
     this.emitHierarchyChanged();
 
     const gen = this.sceneGeneration;
+    if (options?.autoLoadScene === false) {
+      return;
+    }
     if (options?.restoreAutoDraft !== false) {
       void this.restoreStartupScene(gen, app, sceneRoot);
     } else {
-      void importCaVanNgheScene(this).catch((err) => {
+      void this.loadSceneById(getStartupSceneId()).catch((err) => {
         const msg = err instanceof Error ? err.message : String(err);
-        this.consoleBridge.error(`Failed to auto-load Ca Van Nghe scene: ${msg}`);
+        this.consoleBridge.error(`Failed to auto-load startup scene: ${msg}`);
       });
     }
   }
@@ -352,7 +368,10 @@ export class EditorEngine {
     sceneRoot: pc.Entity
   ): Promise<void> {
     try {
-      const draft = await ProjectRepository.loadAutoDraft();
+      const lastSceneId = ProjectRepository.getLastActiveSceneId();
+      const draft = lastSceneId
+        ? await ProjectRepository.loadSceneDraft(lastSceneId)
+        : await ProjectRepository.loadAutoDraft();
       if (
         this.sceneGeneration !== gen ||
         this.app !== app ||
@@ -362,7 +381,7 @@ export class EditorEngine {
         return;
       }
       if (draft) {
-        await this.syncUpdatedCharacterAsset();
+        await this.syncUpdatedCharacterAsset(draft.metadata?.id);
         if (
           this.sceneGeneration !== gen ||
           this.app !== app ||
@@ -391,15 +410,16 @@ export class EditorEngine {
     }
 
     try {
-      await importCaVanNgheScene(this);
+      await importCaVanNgheSceneById(this, getStartupSceneId());
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      this.consoleBridge.error(`Failed to auto-load Ca Van Nghe scene: ${msg}`);
+      this.consoleBridge.error(`Failed to auto-load startup scene: ${msg}`);
     }
   }
 
-  private async syncUpdatedCharacterAsset(): Promise<void> {
-    const syncNames = ['Character.glb', 'MicStand.glb', 'Microphone.glb'];
+  private async syncUpdatedCharacterAsset(sceneId?: string): Promise<void> {
+    const def = getSceneDefinition(sceneId ?? getStartupSceneId());
+    const syncNames = def.modelUrls.map((u) => u.split('/').pop() || '').filter(Boolean);
     try {
       const assets = await AssetRepository.listAssets();
       for (const name of syncNames) {
@@ -472,6 +492,10 @@ export class EditorEngine {
     }
   }
 
+  getSceneId(): string {
+    return this.currentSceneId;
+  }
+
   getSceneName(): string {
     return this.currentSceneName;
   }
@@ -491,6 +515,7 @@ export class EditorEngine {
     }
     this.autoDraftUnsubs = [];
     this.autoDraftReady = false;
+    this.sceneTransitionLock = false;
     this.sceneGeneration++;
 
     if (this.canvas) {
@@ -1045,7 +1070,23 @@ export class EditorEngine {
         consoleBridge: this.consoleBridge,
         getEntityById: (id) => this.getEntityById(id),
         onPlayKeyframeClip: (clipIdOrName) => this.playKeyframeClipFromRuntime(clipIdOrName),
-        onEntityClick: (entity) => this.scriptSandbox?.handleEntityClick(entity),
+        onEntityClick: (entity) => {
+          this.scriptSandbox?.handleEntityClick(entity);
+          let cur: pc.GraphNode | null = entity;
+          while (cur && cur !== this.sceneRoot) {
+            if (cur instanceof pc.Entity) {
+              const portalTag = cur.tags.list().find((t) => t.startsWith('load_scene:'));
+              if (portalTag) {
+                const targetSceneId = portalTag.slice('load_scene:'.length);
+                window.dispatchEvent(
+                  new CustomEvent('cavannghe:load-scene', { detail: { sceneId: targetSceneId } })
+                );
+                break;
+              }
+            }
+            cur = cur.parent;
+          }
+        },
       });
 
       this.scriptSandbox = new ScriptSandbox({
@@ -1090,6 +1131,7 @@ export class EditorEngine {
       this.remotePlayerPool?.destroy();
       this.remotePlayerPool = new RemotePlayerPool(this.app, this.sceneRoot);
 
+      void MultiplayerManager.getInstance().switchSceneRoom(this.currentSceneId);
       this.eventBus.emit('playmode:changed', { state: 'playing' });
     } catch (err) {
       this.consoleBridge.error('Failed to start Play Mode:', err);
@@ -1162,9 +1204,7 @@ export class EditorEngine {
     const hadSnapshot = Boolean(this.playSnapshot);
     if (this.playSnapshot) {
       const restored = deserializeScene(this.playSnapshot, this.app, this.sceneRoot);
-      for (const mat of restored.tracker.materials) {
-        this.trackedMaterials.add(mat);
-      }
+      this.registerTrackerResources(restored.tracker);
       this.animationClips = this.playSnapshot.animations
         ? structuredClone(this.playSnapshot.animations)
         : {};
@@ -1449,10 +1489,209 @@ export class EditorEngine {
     if (this.playState !== 'edit') {
       this.stop();
     }
-    void importCaVanNgheScene(this).catch((err) => {
+    void this.resetSceneById(this.currentSceneId).catch((err) => {
       const msg = err instanceof Error ? err.message : String(err);
-      this.consoleBridge.error(`Failed to reset Ca Van Nghe scene: ${msg}`);
+      this.consoleBridge.error(`Failed to reset scene: ${msg}`);
     });
+  }
+
+  async resetSceneById(sceneId: string): Promise<void> {
+    await ProjectRepository.deleteSceneDraft(sceneId);
+    if (sceneId === this.currentSceneId || !this.currentSceneId) {
+      await this.loadSceneById(sceneId, { resetToDefault: true });
+    }
+  }
+
+  /**
+   * Switches to a Unity-style scene by ID with real 0% -> 100% progress reporting,
+   * releasing previous scene GPU/GLB memory and fetching ONLY assets required by `sceneId`.
+   */
+  async loadSceneById(
+    sceneId: string,
+    options?: {
+      resetToDefault?: boolean;
+      keepPlayMode?: boolean;
+      onProgress?: SceneLoadProgressCallback;
+    }
+  ): Promise<void> {
+    if (!this.app || !this.sceneRoot) {
+      throw new Error('EditorEngine is not mounted');
+    }
+    if (this.sceneTransitionLock) return;
+    this.sceneTransitionLock = true;
+    const targetApp = this.app;
+
+    const sceneDef = getSceneDefinition(sceneId);
+    const report = (percent: number, label: string, loading = true) => {
+      if (this.app !== targetApp) return;
+      options?.onProgress?.({ percent, label });
+      emitSceneLoadingProgress({
+        loading,
+        sceneId: sceneDef.id,
+        sceneName: sceneDef.name,
+        percent,
+        label,
+      });
+    };
+
+    try {
+      report(2, `Đang chuẩn bị vào ${sceneDef.shortName}...`);
+
+      if (this.playState === 'edit' && this.autoDraftReady && !options?.resetToDefault) {
+        await this.saveAutoDraftNow();
+      }
+      if (this.app !== targetApp || !this.sceneRoot) return;
+
+      if (this.playState !== 'edit') {
+        this.teardownPlayRuntimesForSceneSwitch();
+      }
+
+      report(8, 'Đang giải phóng tài nguyên phòng cũ...');
+      this.clearSceneResources();
+      clearGlbContainerCache(this.app);
+      clearGlbAssetBufferCache();
+
+      const savedDraft = options?.resetToDefault
+        ? null
+        : await ProjectRepository.loadSceneDraft(sceneDef.id);
+      if (this.app !== targetApp || !this.sceneRoot) return;
+
+      if (savedDraft) {
+        report(18, `Đang đọc dữ liệu ${sceneDef.shortName}...`);
+        await this.loadSceneSchemaAsync(savedDraft, (loaded, total, name) => {
+          const pct = total > 0 ? 22 + (loaded / total) * 68 : 88;
+          report(pct, `Đang tải tài nguyên: ${name} (${Math.round(pct)}%)`);
+        });
+        if (this.app !== targetApp || !this.sceneRoot) return;
+        await useAssetStore.getState().loadAssets();
+      } else {
+        await importCaVanNgheSceneById(this, sceneDef.id, ({ percent, label }) => {
+          report(Math.min(94, percent), label);
+        });
+      }
+
+      if (this.app !== targetApp || !this.sceneRoot) return;
+
+      report(96, 'Đang hoàn tất dựng hình 3D...');
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      });
+      if (this.app !== targetApp || !this.sceneRoot) return;
+
+      if (options?.keepPlayMode) {
+        report(98, 'Đang khởi tạo nhân vật & âm thanh...');
+        await this.play();
+      } else {
+        await MultiplayerManager.getInstance().switchSceneRoom(sceneDef.id);
+      }
+
+      if (this.app !== targetApp) return;
+      ProjectRepository.setLastActiveSceneId(sceneDef.id);
+      report(100, `Đã sẵn sàng vào ${sceneDef.shortName}!`, false);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.consoleBridge.error(`Failed to load scene "${sceneDef.name}": ${msg}`);
+      report(100, `Lỗi tải scene: ${msg}`, false);
+      throw err;
+    } finally {
+      if (this.app === targetApp || !this.app) {
+        this.sceneTransitionLock = false;
+      }
+    }
+  }
+
+  /**
+   * Collects SceneSchemas for all checked scenes in Build Settings.
+   */
+  async collectSchemasForBuild(sceneIds: string[]): Promise<SceneSchema[]> {
+    if (!this.app || !this.sceneRoot) {
+      throw new Error('EditorEngine is not mounted');
+    }
+
+    const prevSceneId = this.currentSceneId;
+    const wasPlaying = this.playState !== 'edit';
+
+    if (this.playState === 'edit') {
+      await this.saveAutoDraftNow();
+    }
+
+    const schemas: SceneSchema[] = [];
+    let switchedScene = false;
+
+    try {
+      for (const id of sceneIds) {
+        if (id === this.currentSceneId && this.playState === 'edit') {
+          schemas.push(this.exportSceneSchema());
+          continue;
+        }
+        const saved = await ProjectRepository.loadSceneDraft(id);
+        if (saved) {
+          schemas.push(saved);
+          continue;
+        }
+        switchedScene = true;
+        if (this.playState !== 'edit') {
+          this.teardownPlayRuntimesForSceneSwitch();
+        }
+        await importCaVanNgheSceneById(this, id);
+        const builtSchema = this.exportSceneSchema();
+        await ProjectRepository.saveSceneDraft(id, builtSchema);
+        schemas.push(builtSchema);
+      }
+    } finally {
+      if (switchedScene && prevSceneId) {
+        await this.loadSceneById(prevSceneId, { keepPlayMode: wasPlaying });
+      }
+    }
+
+    return schemas;
+  }
+
+  private teardownPlayRuntimesForSceneSwitch(): void {
+    this.interactionRuntime?.destroy();
+    this.interactionRuntime = null;
+    this.scriptSandbox?.destroy();
+    this.scriptSandbox = null;
+    this.gameplayRuntime?.destroy();
+    this.gameplayRuntime = null;
+    this.playerController?.destroy();
+    this.playerController = null;
+    this.remotePlayerPool?.destroy();
+    this.remotePlayerPool = null;
+    this.stageAudioManager?.destroy();
+    this.stageAudioManager = null;
+
+    this.playSnapshot = null;
+    this.playModeClipTimes.clear();
+    this.playState = 'edit';
+
+    if (this.app) {
+      this.app.timeScale = 1;
+      if (this.app.systems.rigidbody && isAmmoLoaded()) {
+        this.app.systems.rigidbody.timeScale = 0;
+      }
+    }
+
+    if (this.cameraController) {
+      this.cameraController.cameraEntity.enabled = true;
+      if (this.cameraController.cameraEntity.camera) {
+        this.cameraController.cameraEntity.camera.enabled = true;
+      }
+    }
+    this.infiniteGrid?.setVisible(true);
+    this.eventBus.emit('playmode:changed', { state: 'edit' });
+  }
+
+  private registerTrackerResources(tracker: ReturnType<typeof createResourceTracker>): void {
+    for (const mat of tracker.materials) {
+      this.trackedMaterials.add(mat);
+    }
+    for (const tex of tracker.textures) {
+      this.glbDestroyCallbacks.push(() => tex.destroy());
+    }
+    for (const cleanup of tracker.cleanups) {
+      this.glbDestroyCallbacks.push(cleanup);
+    }
   }
 
   /**
@@ -1490,6 +1729,7 @@ export class EditorEngine {
     if (sceneName) {
       this.currentSceneName = sceneName;
     }
+    ProjectRepository.setLastActiveSceneId(this.currentSceneId);
     this.autoDraftReady = false;
     this.eventBus.emit('scene:loaded', { sceneId: this.currentSceneId });
     this.emitHierarchyChanged();
@@ -1513,6 +1753,15 @@ export class EditorEngine {
   }
 
   loadSceneSchema(schema: SceneSchema): void {
+    void this.loadSceneSchemaAsync(schema).catch((err) => {
+      this.consoleBridge.error('Failed to restore GLB entities on scene load:', err);
+    });
+  }
+
+  async loadSceneSchemaAsync(
+    schema: SceneSchema,
+    onGlbProgress?: (loadedCount: number, totalCount: number, assetName: string) => void
+  ): Promise<void> {
     if (!this.app || !this.sceneRoot) {
       throw new Error('EditorEngine is not mounted');
     }
@@ -1528,12 +1777,11 @@ export class EditorEngine {
     this.playModeClipTimes.clear();
 
     const restored = deserializeScene(schema, this.app, this.sceneRoot);
-    for (const mat of restored.tracker.materials) {
-      this.trackedMaterials.add(mat);
-    }
+    this.registerTrackerResources(restored.tracker);
 
     this.currentSceneId = schema.metadata?.id || crypto.randomUUID();
     this.currentSceneName = schema.metadata?.name || 'Untitled Scene';
+    ProjectRepository.setLastActiveSceneId(this.currentSceneId);
     this.autoDraftReady = false;
     this.commandManager.clear();
     this.selectEntities([]);
@@ -1547,21 +1795,17 @@ export class EditorEngine {
     const gen = this.sceneGeneration;
     const sceneRoot = this.sceneRoot;
     const app = this.app;
-    void restoreGlbEntities(sceneRoot, app, {
+    const restoredAny = await restoreGlbEntities(sceneRoot, app, {
       registerDestroy: (fn) => this.glbDestroyCallbacks.push(fn),
       shouldAbort: () => this.sceneGeneration !== gen || this.sceneRoot !== sceneRoot,
-    })
-      .then((restoredAny) => {
-        if (restoredAny && this.sceneGeneration === gen) {
-          const prevReady = this.autoDraftReady;
-          this.autoDraftReady = false;
-          this.emitHierarchyChanged();
-          this.autoDraftReady = prevReady;
-        }
-      })
-      .catch((err) => {
-        this.consoleBridge.error('Failed to restore GLB entities on scene load:', err);
-      });
+      onProgress: onGlbProgress,
+    });
+    if (restoredAny && this.sceneGeneration === gen) {
+      const prevReady = this.autoDraftReady;
+      this.autoDraftReady = false;
+      this.emitHierarchyChanged();
+      this.autoDraftReady = prevReady;
+    }
   }
 
   serializeEntityToPrefab(entityId: string): PrefabData | null {
@@ -1645,9 +1889,7 @@ export class EditorEngine {
       const clonedRoot = this.cloneEntityDataWithNewIds(prefab.root);
       const tracker = createResourceTracker();
       const entity = deserializeEntity(clonedRoot, tracker);
-      for (const mat of tracker.materials) {
-        this.trackedMaterials.add(mat);
-      }
+      this.registerTrackerResources(tracker);
 
       entity.setLocalPosition(dropPos.x, dropPos.y, dropPos.z);
 

@@ -67,6 +67,8 @@ export class MultiplayerManager {
 
   private channel: RealtimeChannel | null = null;
   private connected = false;
+  private baseRoomId = 'ca-van-nghe-1';
+  private sceneScopeId = '';
   private roomId = 'ca-van-nghe-1';
   private localPlayerId = `p_${Math.random().toString(36).slice(2, 10)}`;
   private localPlayerName = 'Khách';
@@ -91,20 +93,27 @@ export class MultiplayerManager {
     this.onRemoteStageCallback = cb;
   }
 
-  async joinRoom(roomId: string, playerName: string): Promise<boolean> {
+  async joinRoom(roomId: string, playerName: string, sceneId?: string): Promise<boolean> {
     const supabase = getSupabaseClient();
     if (!supabase) return false;
 
     await this.leaveRoom();
 
-    this.roomId = roomId.trim() || 'ca-van-nghe-1';
+    this.baseRoomId = roomId.trim() || 'ca-van-nghe-1';
+    if (sceneId !== undefined) {
+      this.sceneScopeId = sceneId;
+    }
+    this.roomId = this.baseRoomId;
     this.localPlayerName = playerName.trim() || 'Khách';
     this.joinedAt = Date.now();
     this.localChairId = null;
     this.remotePlayers.clear();
     this.presenceList = [];
 
-    const channel = supabase.channel(`room:${this.roomId}`, {
+    const channelTopic = this.sceneScopeId
+      ? `room:${this.baseRoomId}:${this.sceneScopeId}`
+      : `room:${this.baseRoomId}`;
+    const channel = supabase.channel(channelTopic, {
       config: {
         presence: { key: this.localPlayerId },
         broadcast: { self: false },
@@ -144,6 +153,14 @@ export class MultiplayerManager {
         }
       });
     });
+  }
+
+  async switchSceneRoom(sceneId: string): Promise<boolean> {
+    const nextScope = sceneId.trim();
+    if (this.sceneScopeId === nextScope) return true;
+    this.sceneScopeId = nextScope;
+    if (!this.connected) return true;
+    return this.joinRoom(this.baseRoomId, this.localPlayerName, nextScope);
   }
 
   async leaveRoom(): Promise<void> {

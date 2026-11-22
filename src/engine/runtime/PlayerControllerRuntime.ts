@@ -1,5 +1,4 @@
 import * as pc from 'playcanvas';
-import { CHAIRS_LIST, INTERACTABLES_LIST } from '../../data/sceneData';
 import { MultiplayerManager } from '../../network/MultiplayerManager';
 import { getEntityMeta } from '../serialization/EntityComponentHelper';
 import { KaraokeStageController } from './KaraokeStageController';
@@ -19,22 +18,28 @@ interface SolidBox {
   maxZ: number;
 }
 
-const STAGE_SURFACES: StageSurface[] = [
+const MAIN_STAGE_SURFACES: StageSurface[] = [
   { minX: -7.32, maxX: 7.32, minZ: -8.06, maxZ: -7.56, y: 0.12 },
   { minX: -7.42, maxX: 7.42, minZ: -8.51, maxZ: -8.0, y: 0.24 },
   { minX: -7.5, maxX: 7.5, minZ: -16.9, maxZ: -8.45, y: 0.36 },
+];
+
+const ACOUSTIC_STAGE_SURFACES: StageSurface[] = [
   { minX: 14.38, maxX: 14.98, minZ: -1.45, maxZ: 7.45, y: 0.18 },
   { minX: 14.92, maxX: 18.92, minZ: -1.75, maxZ: 7.75, y: 0.36 },
 ];
 
-const STAGE_SOLIDS: SolidBox[] = [
-  { minX: 16.35, maxX: 18.3, minZ: -0.72, maxZ: 1.12 },
-  { minX: 16.4, maxX: 18.28, minZ: 3.68, maxZ: 6.05 },
-  { minX: 18.02, maxX: 18.55, minZ: 1.55, maxZ: 3.82 },
+const MAIN_STAGE_SOLIDS: SolidBox[] = [
   { minX: -7.5, maxX: -5.38, minZ: -16.58, maxZ: -14.7 },
   { minX: 5.38, maxX: 7.5, minZ: -16.58, maxZ: -14.7 },
   { minX: -7.5, maxX: -5.38, minZ: -10.85, maxZ: -8.95 },
   { minX: 5.38, maxX: 7.5, minZ: -10.85, maxZ: -8.95 },
+];
+
+const ACOUSTIC_STAGE_SOLIDS: SolidBox[] = [
+  { minX: 16.35, maxX: 18.3, minZ: -0.72, maxZ: 1.12 },
+  { minX: 16.4, maxX: 18.28, minZ: 3.68, maxZ: 6.05 },
+  { minX: 18.02, maxX: 18.55, minZ: 1.55, maxZ: 3.82 },
 ];
 
 const STAGE_RADIUS = 0.25;
@@ -43,20 +48,11 @@ const RUN_SPEED = 7.5;
 const JUMP_VELOCITY = 6.2;
 const GRAVITY = -18.0;
 
-function groundAt(x: number, z: number): number {
-  let y = 0;
-  for (const s of STAGE_SURFACES) {
-    if (x >= s.minX && x <= s.maxX && z >= s.minZ && z <= s.maxZ && s.y > y) {
-      y = s.y;
-    }
-  }
-  return y;
-}
-
 export interface NearbyPromptData {
-  type: 'chair' | 'object';
+  type: 'chair' | 'object' | 'door';
   id: string;
   title: string;
+  targetSceneId?: string;
   chair?: {
     id: string;
     title: string;
@@ -92,6 +88,10 @@ export class PlayerControllerRuntime {
   private lastNetPos = new pc.Vec3(0, 0, 7);
   private hasLastNetPos = false;
   private dynamicInteractables: pc.Entity[] = [];
+  private lastPromptDoorSceneId: string | null = null;
+  private hasMainStage = false;
+  private hasAcousticStage = false;
+  private roomBounds = { minX: -18.2, maxX: 18.2, minZ: -16.2, maxZ: 16.2 };
 
   private readonly keys = new Set<string>();
   private isDraggingLook = false;
@@ -102,6 +102,7 @@ export class PlayerControllerRuntime {
   private destroyed = false;
 
   private readonly tempPos = new pc.Vec3();
+  private readonly tempSeatOffset = new pc.Vec3();
   private readonly karaoke: KaraokeStageController;
 
   constructor(sceneRoot: pc.Entity, canvas: HTMLCanvasElement) {
@@ -123,6 +124,7 @@ export class PlayerControllerRuntime {
     this.yaw = ((rot.y - 180) % 360 + 360) % 360;
 
     this.collectDynamicTargets();
+    this.detectRoomEnvironment();
     this.disablePlayerFrustumCulling(this.playerEntity);
 
     if (this.playerEntity.anim) {
@@ -249,11 +251,16 @@ export class PlayerControllerRuntime {
       const moveX = (fwdX * nf + rgtX * nr) * speed * dt;
       const moveZ = (fwdZ * nf + rgtZ * nr) * speed * dt;
 
-      x = pc.math.clamp(x + moveX, -18.2, 18.2);
-      z = pc.math.clamp(z + moveZ, -16.2, 16.2);
+      x = pc.math.clamp(x + moveX, this.roomBounds.minX, this.roomBounds.maxX);
+      z = pc.math.clamp(z + moveZ, this.roomBounds.minZ, this.roomBounds.maxZ);
+
+      const stageSolids = [
+        ...(this.hasMainStage ? MAIN_STAGE_SOLIDS : []),
+        ...(this.hasAcousticStage ? ACOUSTIC_STAGE_SOLIDS : []),
+      ];
 
       // Resolve solid boxes on stage
-      for (const box of STAGE_SOLIDS) {
+      for (const box of stageSolids) {
         if (
           x > box.minX - STAGE_RADIUS &&
           x < box.maxX + STAGE_RADIUS &&
@@ -287,7 +294,7 @@ export class PlayerControllerRuntime {
     }
 
     // Gravity & step-up
-    const floorY = groundAt(x, z);
+    const floorY = this.groundAt(x, z);
     if (this.grounded && this.keys.has('Space')) {
       this.velocityY = jumpVelocity;
       this.grounded = false;
@@ -353,7 +360,7 @@ export class PlayerControllerRuntime {
     const p = this.playerEntity.getLocalPosition();
     const interactRange = this.getNumberAttr(this.playerEntity, 'interactRange', 3.2);
 
-    // 1. Check nearby interactables (dynamic entities first, then static fallback)
+    // 1. Check nearby dynamic interactables (Portal Doors, Stage Screen, custom Editor interactables)
     let bestPrompt: NearbyPromptData | null = null;
     let bestDist = interactRange;
 
@@ -366,34 +373,33 @@ export class PlayerControllerRuntime {
       const d = Math.hypot(p.x - pos.x, p.z - pos.z);
       if (d <= maxDist && d < bestDist) {
         bestDist = d;
-        bestPrompt = {
-          type: 'object',
-          id: interactId,
-          title: this.getStringAttr(objEntity, 'interactTitle', objEntity.name),
-        };
+        if (interactId.startsWith('load_scene:')) {
+          const targetSceneId =
+            this.getStringAttr(objEntity, 'targetSceneId', '') ||
+            interactId.slice('load_scene:'.length);
+          bestPrompt = {
+            type: 'door',
+            id: interactId,
+            title: this.getStringAttr(objEntity, 'interactTitle', objEntity.name),
+            targetSceneId,
+          };
+        } else {
+          bestPrompt = {
+            type: 'object',
+            id: interactId,
+            title: this.getStringAttr(objEntity, 'interactTitle', objEntity.name),
+          };
+        }
       }
     }
 
-    for (const obj of INTERACTABLES_LIST) {
-      const dx = p.x - obj.position[0];
-      const dz = p.z - obj.position[2];
-      const d = Math.hypot(dx, dz);
-      if (d < bestDist) {
-        bestDist = d;
-        bestPrompt = { type: 'object', id: obj.id, title: obj.title };
-      }
-    }
-
-    // 2. Check nearby chairs (dynamic entities with isChair/seatOffset first, then CHAIRS_LIST fallback)
-    // Compete by distance against interactables so chairs near the bar/tables are never shadowed.
-    let matchedDynamicChair = false;
+    // 2. Check nearby dynamic chairs placed in Editor
     for (const chairEntity of this.dynamicChairs) {
       if (!chairEntity.enabled || !this.getBoolAttr(chairEntity, 'isChair', true)) continue;
       const maxDist = this.getNumberAttr(chairEntity, 'interactDistance', 2.0);
       const cPos = chairEntity.getPosition();
       const d = Math.hypot(p.x - cPos.x, p.z - cPos.z);
       if (d <= maxDist && d - 0.25 < bestDist) {
-        matchedDynamicChair = true;
         bestDist = d - 0.25;
         const seatOffset = this.getVec3Attr(chairEntity, 'seatOffset', [0, 0.83, 0]);
         this.tempSeatOffset.set(seatOffset[0], seatOffset[1], seatOffset[2]);
@@ -421,37 +427,18 @@ export class PlayerControllerRuntime {
       }
     }
 
-    if (!matchedDynamicChair) {
-      for (const ch of CHAIRS_LIST) {
-        const d = Math.hypot(p.x - ch.position[0], p.z - ch.position[2]);
-        if (d <= 2.0 && d - 0.25 < bestDist) {
-          bestDist = d - 0.25;
-          bestPrompt = {
-            type: 'chair',
-            id: ch.id,
-            title: ch.title,
-            chair: {
-              id: ch.id,
-              title: ch.title,
-              position: ch.position as [number, number, number],
-              seatPosition: ch.seatPosition as [number, number, number],
-              seatRotation: ch.seatRotation,
-            },
-          };
-        }
-      }
-    }
-
-    // 3. Right Red-Curtain Stage Karaoke Zone
-    if (!bestPrompt && this.karaoke.isOnRightStage(p.x, p.y, p.z)) {
+    // 3. Acoustic Stage Karaoke Zone (only when Acoustic_Stage exists in current scene)
+    if (!bestPrompt && this.hasAcousticStage && this.karaoke.isOnRightStage(p.x, p.y, p.z)) {
       bestPrompt = {
         type: 'object',
         id: 'karaoke_stage',
-        title: 'Sân Khấu Rèm Đỏ — Cầm Mic Hát Karaoke',
+        title: 'Sân Khấu Acoustic — Cầm Mic Hát Karaoke',
       };
     }
 
     this.lastPromptChair = bestPrompt?.type === 'chair' ? (bestPrompt.chair ?? null) : null;
+    this.lastPromptDoorSceneId =
+      bestPrompt?.type === 'door' ? (bestPrompt.targetSceneId ?? null) : null;
 
     const key = bestPrompt ? `${bestPrompt.type}:${bestPrompt.id}` : '';
     if (key !== this.lastPromptKey) {
@@ -505,26 +492,19 @@ export class PlayerControllerRuntime {
         this.onStandUp();
         return;
       }
+      if (this.lastPromptKey.startsWith('door:') && this.lastPromptDoorSceneId) {
+        const targetSceneId = this.lastPromptDoorSceneId;
+        window.dispatchEvent(
+          new CustomEvent('cavannghe:load-scene', { detail: { sceneId: targetSceneId } })
+        );
+        return;
+      }
       if (this.lastPromptKey === 'object:karaoke_stage' && this.playerEntity) {
         this.enterKaraoke();
         return;
       }
       if (this.lastPromptKey.startsWith('chair:')) {
-        const chairId = this.lastPromptKey.slice(6);
-        const ch =
-          this.lastPromptChair ??
-          (() => {
-            const found = CHAIRS_LIST.find((c) => c.id === chairId);
-            return found
-              ? {
-                  id: found.id,
-                  title: found.title,
-                  position: found.position as [number, number, number],
-                  seatPosition: found.seatPosition as [number, number, number],
-                  seatRotation: found.seatRotation,
-                }
-              : null;
-          })();
+        const ch = this.lastPromptChair;
         if (ch && this.playerEntity) {
           if (MultiplayerManager.getInstance().isChairOccupiedByOther(ch.id)) {
             return;
@@ -587,7 +567,7 @@ export class PlayerControllerRuntime {
 
   private onStandUp = (): void => {
     if (!this.isSitting || !this.playerEntity) return;
-    const ch = this.activeSeatChair ?? CHAIRS_LIST.find((c) => c.id === this.currentSeatId);
+    const ch = this.activeSeatChair;
     if (ch) {
       this.playerEntity.setLocalPosition(ch.position[0] + 0.6, ch.position[1], ch.position[2]);
     }
@@ -597,6 +577,43 @@ export class PlayerControllerRuntime {
     this.playAnim('Idle_Loop');
     window.dispatchEvent(new CustomEvent('cavannghe:sit', { detail: { sitting: false, chair: null } }));
   };
+
+  private groundAt(x: number, z: number): number {
+    let y = 0;
+    const surfaces = [
+      ...(this.hasMainStage ? MAIN_STAGE_SURFACES : []),
+      ...(this.hasAcousticStage ? ACOUSTIC_STAGE_SURFACES : []),
+    ];
+    for (const s of surfaces) {
+      if (x >= s.minX && x <= s.maxX && z >= s.minZ && z <= s.maxZ && s.y > y) {
+        y = s.y;
+      }
+    }
+    return y;
+  }
+
+  private detectRoomEnvironment(): void {
+    this.hasMainStage = Boolean(this.sceneRoot.findByName('Main_Stage'));
+    this.hasAcousticStage = Boolean(this.sceneRoot.findByName('Acoustic_Stage'));
+
+    const floorNames = ['Lobby Floor', 'Lounge Floor', 'TeaRoom Floor'];
+    for (const name of floorNames) {
+      const floor = this.sceneRoot.findByName(name);
+      if (floor instanceof pc.Entity) {
+        const pos = floor.getLocalPosition();
+        const scale = floor.getLocalScale();
+        const halfX = Math.max(2, scale.x * 0.5 - 0.6);
+        const halfZ = Math.max(2, scale.z * 0.5 - 0.6);
+        this.roomBounds = {
+          minX: pos.x - halfX,
+          maxX: pos.x + halfX,
+          minZ: pos.z - halfZ,
+          maxZ: pos.z + halfZ,
+        };
+        return;
+      }
+    }
+  }
 
   private onPostUpdate = (): void => {
     this.karaoke.applyArmPose();
