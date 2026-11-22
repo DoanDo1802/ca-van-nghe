@@ -1,9 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Box,
+  Check,
   ChevronDown,
   Download,
   Globe,
+  Layers,
   Loader2,
   Magnet,
   Maximize2,
@@ -21,13 +23,17 @@ import {
   Upload,
 } from 'lucide-react';
 import { EditorEngine } from '../../engine/EditorEngine';
-import { importCaVanNgheScene } from '../../engine/serialization/CaVanNgheImporter';
+import {
+  getAllSceneDefinitions,
+  getSceneDefinition,
+} from '../../engine/serialization/SceneRegistry';
 import { BundleExporter, ProjectRepository } from '../../storage';
 import { useAssetStore } from '../../store/useAssetStore';
 import { useConsoleStore } from '../../store/useConsoleStore';
 import { useEditorStore } from '../../store/useEditorStore';
 import type { TransformTool } from '../../types';
 import { saveCurrentProject } from '../utils/saveProject';
+import { BuildSettingsModal } from './BuildSettingsModal';
 
 export interface TopToolbarProps {
   viewportSize?: { width: number; height: number };
@@ -53,6 +59,7 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({ viewportSize }) => {
   const canUndo = useEditorStore((s) => s.canUndo);
   const canRedo = useEditorStore((s) => s.canRedo);
   const undoLabel = useEditorStore((s) => s.undoLabel);
+  const sceneId = useEditorStore((s) => s.sceneId);
   const sceneName = useEditorStore((s) => s.sceneName);
   const isDirty = useEditorStore((s) => s.isDirty);
 
@@ -64,23 +71,33 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({ viewportSize }) => {
   const loadAssets = useAssetStore((s) => s.loadAssets);
 
   const [fileMenuOpen, setFileMenuOpen] = useState(false);
+  const [sceneMenuOpen, setSceneMenuOpen] = useState(false);
+  const [buildSettingsOpen, setBuildSettingsOpen] = useState(false);
   const [caVanNgheLoading, setCaVanNgheLoading] = useState(false);
 
   const fileMenuRef = useRef<HTMLDivElement>(null);
+  const sceneMenuRef = useRef<HTMLDivElement>(null);
   const assetInputRef = useRef<HTMLInputElement>(null);
   const bundleInputRef = useRef<HTMLInputElement>(null);
 
   const engine = EditorEngine.getInstance();
+  const sceneDefs = getAllSceneDefinitions();
 
   useEffect(() => {
-    if (!fileMenuOpen) return;
+    if (!fileMenuOpen && !sceneMenuOpen) return;
     const handleClickOutside = (e: MouseEvent) => {
       if (fileMenuRef.current && !fileMenuRef.current.contains(e.target as Node)) {
         setFileMenuOpen(false);
       }
+      if (sceneMenuRef.current && !sceneMenuRef.current.contains(e.target as Node)) {
+        setSceneMenuOpen(false);
+      }
     };
     const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setFileMenuOpen(false);
+      if (e.key === 'Escape') {
+        setFileMenuOpen(false);
+        setSceneMenuOpen(false);
+      }
     };
     window.addEventListener('mousedown', handleClickOutside);
     window.addEventListener('keydown', handleKey);
@@ -88,32 +105,58 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({ viewportSize }) => {
       window.removeEventListener('mousedown', handleClickOutside);
       window.removeEventListener('keydown', handleKey);
     };
-  }, [fileMenuOpen]);
+  }, [fileMenuOpen, sceneMenuOpen]);
+
+  const handleSwitchEditorScene = async (targetSceneId: string) => {
+    if (caVanNgheLoading || targetSceneId === engine.getSceneId()) {
+      setSceneMenuOpen(false);
+      return;
+    }
+    setSceneMenuOpen(false);
+    setCaVanNgheLoading(true);
+    try {
+      await engine.loadSceneById(targetSceneId);
+    } catch (err) {
+      useConsoleStore.getState().addLog({
+        level: 'error',
+        source: 'Scene',
+        message: `Chuyển scene thất bại: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    } finally {
+      setCaVanNgheLoading(false);
+    }
+  };
 
   const handleResetCaVanNgheScene = async () => {
     if (caVanNgheLoading) return;
     setFileMenuOpen(false);
-    if (!window.confirm('Reset scene về mặc định "Ca Van Nghe"? Mọi thay đổi chưa export sẽ bị ghi đè.')) {
+    const activeId = engine.getSceneId();
+    const activeDef = getSceneDefinition(activeId);
+    if (
+      !window.confirm(
+        `Reset scene "${activeDef.name}" về mặc định? Mọi thay đổi trong scene này chưa export sẽ bị ghi đè.`
+      )
+    ) {
       return;
     }
     setCaVanNgheLoading(true);
     useConsoleStore.getState().addLog({
       level: 'log',
       source: 'File',
-      message: 'Resetting "Ca Van Nghe" lounge scene...',
+      message: `Resetting scene "${activeDef.name}"...`,
     });
     try {
-      await importCaVanNgheScene(engine);
+      await engine.resetSceneById(activeId);
       useConsoleStore.getState().addLog({
         level: 'log',
         source: 'File',
-        message: 'Reset "Ca Van Nghe" lounge scene.',
+        message: `Reset scene "${activeDef.name}" complete.`,
       });
     } catch (err) {
       useConsoleStore.getState().addLog({
         level: 'error',
         source: 'File',
-        message: `Reset "Ca Van Nghe" Scene failed: ${err instanceof Error ? err.message : String(err)}`,
+        message: `Reset scene failed: ${err instanceof Error ? err.message : String(err)}`,
       });
     } finally {
       setCaVanNgheLoading(false);
@@ -278,8 +321,19 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({ viewportSize }) => {
                   <Music className="w-3.5 h-3.5 text-rose-400" />
                 )}
                 <span>
-                  {caVanNgheLoading ? 'Resetting "Ca Van Nghe"...' : 'Reset "Ca Van Nghe" Scene'}
+                  {caVanNgheLoading ? 'Resetting Scene...' : 'Reset Current Scene'}
                 </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setFileMenuOpen(false);
+                  setBuildSettingsOpen(true);
+                }}
+                className="w-full px-3 py-1.5 text-left hover:bg-blue-600/40 flex items-center gap-2"
+              >
+                <Layers className="w-3.5 h-3.5 text-purple-400" />
+                <span>Build Settings...</span>
               </button>
 
               <div className="my-1 border-t border-[#2d3340]" />
@@ -348,18 +402,72 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({ viewportSize }) => {
           />
         </div>
 
-        {/* Scene Name + Unsaved Indicator (*) */}
-        <div
-          title={
-            isDirty
-              ? 'Unsaved changes — Press Ctrl+S to save'
-              : `Saved scene: ${sceneName}`
-          }
-          className="hidden sm:flex items-center gap-1 px-2 h-7 rounded bg-[#12151b] border border-[#2b313d] text-[11px] text-gray-300 max-w-[160px]"
-        >
-          <span className="truncate">{sceneName}</span>
-          {isDirty && (
-            <span className="text-amber-400 font-bold text-sm leading-none">*</span>
+        {/* Multi-Scene Switcher Dropdown */}
+        <div ref={sceneMenuRef} className="relative hidden sm:block">
+          <button
+            type="button"
+            onClick={() => setSceneMenuOpen((v) => !v)}
+            title={
+              isDirty
+                ? 'Unsaved changes — Click to switch Scene'
+                : `Scene đang mở: ${sceneName} (Click để chuyển Scene)`
+            }
+            className={`flex items-center gap-1.5 px-2.5 h-7 rounded border text-[11px] max-w-[190px] transition-colors ${
+              sceneMenuOpen
+                ? 'bg-[#252b36] border-amber-500/60 text-white'
+                : 'bg-[#12151b] border-[#2b313d] text-gray-200 hover:bg-[#252b36]'
+            }`}
+          >
+            <Layers className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+            <span className="truncate">{sceneName}</span>
+            {isDirty && (
+              <span className="text-amber-400 font-bold text-sm leading-none">*</span>
+            )}
+            <ChevronDown className="w-3 h-3 text-gray-400 shrink-0" />
+          </button>
+
+          {sceneMenuOpen && (
+            <div className="absolute left-0 top-full mt-1 z-50 w-64 py-1 rounded-md bg-[#1e232d] border border-[#323948] shadow-xl text-xs text-gray-200">
+              <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider text-gray-400 border-b border-[#2d3340]">
+                Scenes (Chuyển nhanh)
+              </div>
+              {sceneDefs.map((def, idx) => {
+                const isCurrent = sceneId === def.id;
+                return (
+                  <button
+                    key={def.id}
+                    type="button"
+                    onClick={() => void handleSwitchEditorScene(def.id)}
+                    className={`w-full px-3 py-1.5 text-left hover:bg-blue-600/35 flex items-center justify-between gap-2 ${
+                      isCurrent ? 'bg-amber-500/10 text-amber-200' : ''
+                    }`}
+                  >
+                    <div className="min-w-0">
+                      <div className="font-medium truncate">
+                        <span className="font-mono text-[10px] text-gray-400 mr-1.5">
+                          [{idx}]
+                        </span>
+                        {def.name}
+                      </div>
+                      <div className="text-[10px] text-gray-400 truncate">{def.path}</div>
+                    </div>
+                    {isCurrent && <Check className="w-3.5 h-3.5 text-amber-400 shrink-0" />}
+                  </button>
+                );
+              })}
+              <div className="my-1 border-t border-[#2d3340]" />
+              <button
+                type="button"
+                onClick={() => {
+                  setSceneMenuOpen(false);
+                  setBuildSettingsOpen(true);
+                }}
+                className="w-full px-3 py-1.5 text-left hover:bg-purple-600/30 text-purple-300 flex items-center gap-2 text-[11px]"
+              >
+                <Layers className="w-3.5 h-3.5" />
+                <span>Mở Unity Build Settings...</span>
+              </button>
+            </div>
           )}
         </div>
 
@@ -549,18 +657,12 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({ viewportSize }) => {
       <div className="flex items-center gap-2 shrink-0">
         <button
           type="button"
-          onClick={() => {
-            void handleExportBundle();
-            useConsoleStore.getState().addLog({
-              level: 'log',
-              source: 'Build',
-              message: 'Đã xuất Web Bundle (.json). Chạy "npm run build:player" để build bản Player tách riêng ra thư mục dist-player/.',
-            });
-          }}
-          title="Xuất Scene Bundle cho bản Player độc lập (kết hợp npm run build:player)"
-          className="px-2 py-0.5 rounded bg-purple-500/15 border border-purple-500/30 text-purple-300 hover:bg-purple-500/25 text-[11px] font-medium transition-colors"
+          onClick={() => setBuildSettingsOpen(true)}
+          title="Mở Build Settings để chọn các Scene cần Build (giống Unity Build Settings)"
+          className="px-2 py-0.5 rounded bg-purple-500/15 border border-purple-500/30 text-purple-300 hover:bg-purple-500/25 text-[11px] font-medium transition-colors flex items-center gap-1"
         >
-          Build Player
+          <Layers className="w-3 h-3" />
+          <span>Build Player</span>
         </button>
         <a
           href="?play=1"
@@ -590,6 +692,11 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({ viewportSize }) => {
           {resolutionLabel}
         </span>
       </div>
+
+      <BuildSettingsModal
+        isOpen={buildSettingsOpen}
+        onClose={() => setBuildSettingsOpen(false)}
+      />
     </header>
   );
 };

@@ -24,6 +24,23 @@ export async function saveCurrentProject(): Promise<boolean> {
     const schema = engine.exportSceneSchema();
     await ProjectRepository.saveProject(schema);
     await ProjectRepository.saveAutoDraft(schema);
+
+    if (import.meta.env.DEV) {
+      const res = await fetch('/api/dev/save-scene', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: schema.metadata.name, schema }),
+      });
+      if (res.ok) {
+        const result = await res.json();
+        useConsoleStore.getState().addLog({
+          level: 'log',
+          source: 'File',
+          message: `Saved scene file to ${result.path}`,
+        });
+      }
+    }
+
     store.setDirty(false);
     useConsoleStore.getState().addLog({
       level: 'log',

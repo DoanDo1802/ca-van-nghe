@@ -387,62 +387,70 @@ export default function SettingsModal({
               </div>
 
               {/* Quick Actions */}
-              <div className="grid grid-cols-2 gap-3">
-                <button
-                  onClick={() => {
-                    onClose();
-                    if (onOpenMenu) onOpenMenu();
-                  }}
-                  className="p-3.5 rounded-xl bg-white/[0.03] hover:bg-white/[0.07] border border-white/10 text-left transition flex items-center space-x-3"
-                >
-                  <div className="p-2 rounded-lg bg-amber-500/20 text-amber-300">
-                    <Utensils className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <div className="font-medium text-xs text-neutral-200">Xem Thực Đơn</div>
-                    <div className="text-[11px] text-neutral-400">Đồ uống & Món ăn</div>
-                  </div>
-                </button>
+              {(onOpenMenu || onOpenReservation) && (
+                <div className="grid grid-cols-2 gap-3">
+                  {onOpenMenu && (
+                    <button
+                      onClick={() => {
+                        onClose();
+                        onOpenMenu();
+                      }}
+                      className="p-3.5 rounded-xl bg-white/[0.03] hover:bg-white/[0.07] border border-white/10 text-left transition flex items-center space-x-3"
+                    >
+                      <div className="p-2 rounded-lg bg-amber-500/20 text-amber-300">
+                        <Utensils className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <div className="font-medium text-xs text-neutral-200">Xem Thực Đơn</div>
+                        <div className="text-[11px] text-neutral-400">Đồ uống & Món ăn</div>
+                      </div>
+                    </button>
+                  )}
 
-                <button
-                  onClick={() => {
-                    onClose();
-                    if (onOpenReservation) onOpenReservation();
-                  }}
-                  className="p-3.5 rounded-xl bg-white/[0.03] hover:bg-white/[0.07] border border-white/10 text-left transition flex items-center space-x-3"
-                >
-                  <div className="p-2 rounded-lg bg-emerald-500/20 text-emerald-300">
-                    <Calendar className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <div className="font-medium text-xs text-neutral-200">Đặt Bàn Lounge</div>
-                    <div className="text-[11px] text-neutral-400">Chọn vị trí ngồi VIP</div>
-                  </div>
-                </button>
-              </div>
+                  {onOpenReservation && (
+                    <button
+                      onClick={() => {
+                        onClose();
+                        onOpenReservation();
+                      }}
+                      className="p-3.5 rounded-xl bg-white/[0.03] hover:bg-white/[0.07] border border-white/10 text-left transition flex items-center space-x-3"
+                    >
+                      <div className="p-2 rounded-lg bg-emerald-500/20 text-emerald-300">
+                        <Calendar className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <div className="font-medium text-xs text-neutral-200">Đặt Bàn Lounge</div>
+                        <div className="text-[11px] text-neutral-400">Chọn vị trí ngồi VIP</div>
+                      </div>
+                    </button>
+                  )}
+                </div>
+              )}
 
               {/* Reset Layout */}
-              <div className="p-4 rounded-xl bg-red-950/20 border border-red-500/20 flex items-center justify-between">
-                <div>
-                  <h4 className="font-semibold text-red-200 text-xs flex items-center gap-1.5">
-                    <RotateCcw className="w-3.5 h-3.5 text-red-400" />
-                    Khôi Phục Bố Cục Bàn Ghế Gốc
-                  </h4>
-                  <p className="text-[11px] text-neutral-400 mt-0.5">
-                    Đặt lại toàn bộ vị trí bàn ghế, quầy bar và đồ trang trí về chuẩn ban đầu
-                  </p>
+              {onResetLayout && (
+                <div className="p-4 rounded-xl bg-red-950/20 border border-red-500/20 flex items-center justify-between">
+                  <div>
+                    <h4 className="font-semibold text-red-200 text-xs flex items-center gap-1.5">
+                      <RotateCcw className="w-3.5 h-3.5 text-red-400" />
+                      Khôi Phục Bố Cục Bàn Ghế Gốc
+                    </h4>
+                    <p className="text-[11px] text-neutral-400 mt-0.5">
+                      Đặt lại toàn bộ vị trí bàn ghế và đồ trang trí về chuẩn ban đầu
+                    </p>
+                  </div>
+                  <button
+                    onClick={handleResetClick}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition ${
+                      resetConfirm
+                        ? 'bg-red-600 text-white border-red-500 font-bold animate-pulse'
+                        : 'bg-red-900/30 text-red-300 border-red-500/30 hover:bg-red-900/50'
+                    }`}
+                  >
+                    {resetConfirm ? 'Xác nhận đặt lại?' : 'Khôi phục'}
+                  </button>
                 </div>
-                <button
-                  onClick={handleResetClick}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition ${
-                    resetConfirm
-                      ? 'bg-red-600 text-white border-red-500 font-bold animate-pulse'
-                      : 'bg-red-900/30 text-red-300 border-red-500/30 hover:bg-red-900/50'
-                  }`}
-                >
-                  {resetConfirm ? 'Xác nhận đặt lại?' : 'Khôi phục'}
-                </button>
-              </div>
+              )}
             </div>
           )}
 

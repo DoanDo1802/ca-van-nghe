@@ -3,6 +3,7 @@ import { EditorEngine } from '../../engine/EditorEngine';
 import { useEditorStore } from '../../store/useEditorStore';
 import { GameOverlayUI } from './GameOverlayUI';
 import { YouTubeStagePlayer } from '../../components/YouTubeStagePlayer';
+import { SceneLoadingOverlay } from '../../components/SceneLoadingOverlay';
 
 export type CameraSnapView = 'top' | 'front' | 'right' | 'iso';
 
@@ -255,6 +256,9 @@ export const ViewportPanel: React.FC<ViewportPanelProps> = ({ onViewportResize }
 
       {/* Play Mode Game UI Overlay */}
       {playState !== 'edit' && <GameOverlayUI />}
+
+      {/* Scene Transition Loading Bar */}
+      <SceneLoadingOverlay />
     </div>
   );
 };

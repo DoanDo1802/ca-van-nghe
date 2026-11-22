@@ -1,9 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import NavigationHUD from '../../components/NavigationHUD';
 import MobileControls from '../../components/MobileControls';
 import DetailModal from '../../components/DetailModal';
-import MenuDrawer from '../../components/MenuDrawer';
-import ReservationModal from '../../components/ReservationModal';
 import StageScreenModal from '../../components/StageScreenModal';
 import SettingsModal from '../../components/SettingsModal';
 import { KaraokeOverlay } from './KaraokeOverlay';
@@ -12,18 +10,24 @@ import { MultiplayerManager, type RoomStatusSnapshot } from '../../network/Multi
 import { INTERACTIVE_OBJECTS } from '../../data/sceneData';
 import { loungeAudio } from '../../utils/audio';
 import { EditorEngine } from '../../engine/EditorEngine';
+import {
+  getSceneDefinition,
+  isSceneEnabledInBuild,
+  LOBBY_SCENE_ID,
+} from '../../engine/serialization/SceneRegistry';
 import type { StageMediaState } from '../../engine/runtime';
 import type { NearbyPromptData } from '../../engine/runtime/PlayerControllerRuntime';
 
 export const GameOverlayUI: React.FC = () => {
+  const engine = EditorEngine.getInstance();
+  const [currentSceneId, setCurrentSceneId] = useState(() => engine.getSceneId());
+  const [currentSceneName, setCurrentSceneName] = useState(() => engine.getSceneName());
   const [nearbyPrompt, setNearbyPrompt] = useState<NearbyPromptData | null>(null);
   const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
   const [isSitting, setIsSitting] = useState(false);
   const [cameraMode, setCameraMode] = useState<'third' | 'first'>('third');
   const [isNightMode, setIsNightMode] = useState(false);
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
-  const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const [isReservationOpen, setIsReservationOpen] = useState(false);
   const [isStageModalOpen, setIsStageModalOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [stageSourceType, setStageSourceType] = useState<'media' | 'youtube'>('media');
@@ -41,16 +45,49 @@ export const GameOverlayUI: React.FC = () => {
   const [isRoomHost, setIsRoomHost] = useState(() => MultiplayerManager.getInstance().isHost());
   const [stageErrorToast, setStageErrorToast] = useState<string | null>(null);
 
+  const requestSceneTransition = useCallback((targetSceneId: string) => {
+    const cleanId = targetSceneId.trim();
+    if (!cleanId) return;
+    if (!isSceneEnabledInBuild(cleanId)) {
+      const def = getSceneDefinition(cleanId);
+      setStageErrorToast(
+        `Scene "${def.name}" chưa được tích chọn trong Build Settings (Scenes In Build).`
+      );
+      return;
+    }
+
+    setNearbyPrompt(null);
+    setSelectedObjectId(null);
+    setIsSitting(false);
+    setIsKaraokeOpen(false);
+    setIsStageModalOpen(false);
+    void EditorEngine.getInstance().loadSceneById(cleanId, { keepPlayMode: true });
+  }, []);
+
   useEffect(() => {
+    const unsubScene = EditorEngine.getInstance().eventBus.on('scene:loaded', ({ sceneId }) => {
+      const inst = EditorEngine.getInstance();
+      setCurrentSceneId(sceneId);
+      setCurrentSceneName(inst.getSceneName());
+    });
+
     const onProximity = (e: Event) => {
       setNearbyPrompt((e as CustomEvent<NearbyPromptData | null>).detail);
     };
     const onInteract = (e: Event) => {
       const objId = (e as CustomEvent<string>).detail;
-      if (objId === 'stage_screen') {
+      if (objId?.startsWith('load_scene:')) {
+        requestSceneTransition(objId.slice('load_scene:'.length));
+      } else if (objId === 'stage_screen') {
         setIsStageModalOpen(true);
       } else {
         setSelectedObjectId(objId);
+      }
+    };
+    const onLoadSceneEvent = (e: Event) => {
+      const detail = (e as CustomEvent<{ sceneId?: string }>).detail;
+      if (detail?.sceneId) {
+        requestSceneTransition(detail.sceneId);
       }
     };
     const onSit = (e: Event) => {
@@ -102,6 +139,7 @@ export const GameOverlayUI: React.FC = () => {
 
     window.addEventListener('cavannghe:proximity', onProximity);
     window.addEventListener('cavannghe:interact', onInteract);
+    window.addEventListener('cavannghe:load-scene', onLoadSceneEvent);
     window.addEventListener('cavannghe:sit', onSit);
     window.addEventListener('cavannghe:camera-mode', onCamMode);
     window.addEventListener('cavannghe:karaoke', onKaraoke);
@@ -111,8 +149,10 @@ export const GameOverlayUI: React.FC = () => {
     window.addEventListener('keydown', onKeyDown);
 
     return () => {
+      unsubScene();
       window.removeEventListener('cavannghe:proximity', onProximity);
       window.removeEventListener('cavannghe:interact', onInteract);
+      window.removeEventListener('cavannghe:load-scene', onLoadSceneEvent);
       window.removeEventListener('cavannghe:sit', onSit);
       window.removeEventListener('cavannghe:camera-mode', onCamMode);
       window.removeEventListener('cavannghe:karaoke', onKaraoke);
@@ -121,7 +161,7 @@ export const GameOverlayUI: React.FC = () => {
       window.removeEventListener('cavannghe:room-status', onRoomStatus);
       window.removeEventListener('keydown', onKeyDown);
     };
-  }, []);
+  }, [requestSceneTransition]);
 
   const handleToggleNight = () => {
     setIsNightMode((prev) => {
@@ -139,6 +179,10 @@ export const GameOverlayUI: React.FC = () => {
   const handleTriggerInteract = () => {
     if (isSitting) {
       window.dispatchEvent(new CustomEvent('cavannghe:stand-up'));
+      return;
+    }
+    if (nearbyPrompt?.type === 'door' && nearbyPrompt.targetSceneId) {
+      requestSceneTransition(nearbyPrompt.targetSceneId);
       return;
     }
     if (nearbyPrompt?.type === 'object') {
@@ -181,6 +225,9 @@ export const GameOverlayUI: React.FC = () => {
           cameraMode={cameraMode}
           isDecoMode={false}
           hideHeader={isKaraokeOpen}
+          currentSceneId={currentSceneId}
+          currentSceneName={currentSceneName}
+          onGoToLobby={() => requestSceneTransition(LOBBY_SCENE_ID)}
         />
 
         <MobileControls
@@ -200,22 +247,13 @@ export const GameOverlayUI: React.FC = () => {
             item={interactiveItem}
             onClose={() => setSelectedObjectId(null)}
             onActionClick={(item: { actionText?: string }) => {
-              if (item.actionText === 'Đặt Bàn Ngay' || item.actionText === 'Đặt Chỗ Nghe Nhạc') {
-                setSelectedObjectId(null);
-                setIsReservationOpen(true);
-              } else if (item.actionText === 'Xem Menu Vang' || item.actionText === 'Gọi Món Này') {
-                setSelectedObjectId(null);
-                setIsMenuOpen(true);
-              } else if (item.actionText === 'Đổi Video Sân Khấu') {
+              if (item.actionText === 'Đổi Video Sân Khấu') {
                 setSelectedObjectId(null);
                 setIsStageModalOpen(true);
               }
             }}
           />
         )}
-
-        <MenuDrawer isOpen={isMenuOpen} onClose={() => setIsMenuOpen(false)} />
-        <ReservationModal isOpen={isReservationOpen} onClose={() => setIsReservationOpen(false)} />
 
         <StageScreenModal
           isOpen={isStageModalOpen}
@@ -306,9 +344,9 @@ export const GameOverlayUI: React.FC = () => {
           onToggleNightMode={handleToggleNight}
           isAudioPlaying={isAudioPlaying}
           onToggleAudio={handleToggleAudio}
-          onOpenMenu={() => setIsMenuOpen(true)}
-          onOpenReservation={() => setIsReservationOpen(true)}
-          onResetLayout={() => {}}
+          onOpenMenu={undefined}
+          onOpenReservation={undefined}
+          onResetLayout={undefined}
           activeEmote={activeEmote}
           onTriggerEmote={handleTriggerEmote}
         />
