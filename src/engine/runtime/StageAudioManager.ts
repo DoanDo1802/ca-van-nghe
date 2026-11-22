@@ -486,6 +486,20 @@ export class StageAudioManager {
     this.holeScreenMat = null;
     this.videoTexture?.destroy();
     this.videoTexture = null;
+
+    this.state = {
+      sourceType: 'media',
+      mediaUrl: '',
+      domVideoFallback: false,
+      youtubeVideoId: null,
+      youtubeQuality: 'hd720',
+      title: '',
+      isPlaying: false,
+      isScreenOn: false,
+      volume: this.state.volume,
+      isMuted: this.state.isMuted,
+    };
+    this.dispatchProjectionIfChanged(false, '');
     this.emitStateChanged();
   }
 

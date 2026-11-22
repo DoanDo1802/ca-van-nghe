@@ -1576,6 +1576,9 @@ export class EditorEngine {
       if (this.playState !== 'edit') {
         this.teardownPlayRuntimesForSceneSwitch();
       }
+      if (MultiplayerManager.getInstance().isConnected()) {
+        await MultiplayerManager.getInstance().switchSceneRoom(sceneDef.id);
+      }
 
       report(8, 'Đang giải phóng tài nguyên phòng cũ...');
       this.clearSceneResources();

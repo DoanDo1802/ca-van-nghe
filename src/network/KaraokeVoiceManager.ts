@@ -193,6 +193,19 @@ export class KaraokeVoiceManager {
     const status = (e as CustomEvent<RoomStatusSnapshot>).detail;
     if (!status) return;
 
+    if (!status.connected) {
+      if (this.isBroadcasting) {
+        this.stopBroadcasting();
+      }
+      for (const id of [...this.incomingPeers.keys()]) {
+        this.cleanupIncomingPeer(id);
+      }
+      for (const id of [...this.voiceSinks.keys()]) {
+        this.cleanupIncomingPeer(id);
+      }
+      return;
+    }
+
     const activeIds = new Set(status.players.filter((p) => !p.isLocal).map((p) => p.id));
 
     for (const [id, pc] of this.outgoingPeers.entries()) {
