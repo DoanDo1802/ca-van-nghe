@@ -34,7 +34,7 @@ export const SCENE_DEFINITIONS: SceneDefinition[] = [
     name: 'Sảnh Chờ (Lobby)',
     shortName: 'Sảnh Chờ',
     path: 'Scenes/Lobby_Scene.unity',
-    description: 'Sảnh chờ trung tâm với 2 cửa chọn phòng: Rạp Chiếu Phim & Phòng Trà.',
+    description: 'Sảnh chờ trung tâm của phòng Lobby với 2 khu vực hoạt động: Rạp Chiếu Phim & Phòng Trà.',
     modelUrls: ['/models/Character.glb'],
   },
   {

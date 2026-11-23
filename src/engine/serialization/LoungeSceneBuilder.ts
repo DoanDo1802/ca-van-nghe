@@ -70,7 +70,7 @@ function getDoorSignMeta(targetSceneId: string): {
   }
   return {
     title: 'SẢNH CHỜ',
-    subtitle: 'QUAY LẠI CHỌN PHÒNG',
+    subtitle: 'QUAY LẠI SẢNH CHỜ',
     accentColor: '#e5c07b',
     signEntityName: 'Portal Signboard Lobby',
   };
@@ -784,8 +784,8 @@ export function buildLobbyEnvironmentShell(
     const tex = createDoorSignTexture(
       app,
       (t) => engine.registerExternalResources(() => t.destroy()),
-      'QUẦY PHÒNG & TÀI KHOẢN',
-      'RẠP PHIM • KARAOKE • ĐỔI MÀU',
+      'QUẦY LOBBY & NHÂN VẬT',
+      'ĐỔI PHÒNG • TÀI KHOẢN • ĐỔI MÀU',
       '#e5c07b'
     );
     kioskScreenMat.emissiveMap = tex;
@@ -798,7 +798,7 @@ export function buildLobbyEnvironmentShell(
 
   attachDoorInteractable(kiosk, 'Interactable', [
     { name: 'interactId', type: 'string', value: 'lobby_hub_kiosk' },
-    { name: 'interactTitle', type: 'string', value: 'Quầy Chọn Phòng & Tài Khoản' },
+    { name: 'interactTitle', type: 'string', value: 'Quầy Lobby & Nhân Vật' },
     { name: 'interactDistance', type: 'number', value: 3.4 },
   ]);
 
@@ -899,7 +899,7 @@ export function buildCinemaEnvironmentShell(
     position: [0, 0, 16.65],
     rotationY: 180,
     title: 'SẢNH CHỜ',
-    subtitle: 'QUAY LẠI CHỌN PHÒNG',
+    subtitle: 'QUAY LẠI SẢNH CHỜ',
     accentColor: '#e5c07b',
     targetSceneId: LOBBY_SCENE_ID,
     interactTitle: 'Về Sảnh Chờ',
@@ -994,7 +994,7 @@ export function buildTeaRoomEnvironmentShell(
     position: [-4.85, 0, 3.0],
     rotationY: 90,
     title: 'SẢNH CHỜ',
-    subtitle: 'QUAY LẠI CHỌN PHÒNG',
+    subtitle: 'QUAY LẠI SẢNH CHỜ',
     accentColor: '#e5c07b',
     targetSceneId: LOBBY_SCENE_ID,
     interactTitle: 'Về Sảnh Chờ',

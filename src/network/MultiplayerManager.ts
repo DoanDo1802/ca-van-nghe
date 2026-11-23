@@ -198,7 +198,7 @@ export class MultiplayerManager {
   }
 
   private sendUnloadCleanup(): void {
-    if (!this.desiredRoomActive || !this.baseRoomId || this.baseRoomId === PUBLIC_LOBBY_ROOM_ID) return;
+    if (!this.desiredRoomActive || !this.baseRoomId) return;
     const cfg = getSupabaseRestConfig();
     if (!cfg) return;
     const headers = {
@@ -278,7 +278,7 @@ export class MultiplayerManager {
     roomId: string,
     playerName: string,
     sceneId?: string,
-    options?: { password?: string; bypassLimits?: boolean }
+    options?: { password?: string; bypassLimits?: boolean; isSceneSwitch?: boolean }
   ): Promise<boolean> {
     const supabase = getSupabaseClient();
     if (!supabase) {
@@ -288,11 +288,11 @@ export class MultiplayerManager {
 
     const targetRoomId = roomId.trim() || 'ca-van-nghe-1';
     const targetPassword = options?.password?.trim() ?? this.roomPassword;
-    const isPublicLobby = targetRoomId === PUBLIC_LOBBY_ROOM_ID;
+    const isSceneSwitch = Boolean(options?.isSceneSwitch) && targetRoomId === this.baseRoomId;
     const isAdminBypass = this.localIsAdmin && (options?.bypassLimits !== false);
 
     this.lastJoinError = '';
-    if (!isPublicLobby) {
+    if (!isSceneSwitch) {
       const check = await AdminService.checkCanJoinRoom(
         targetRoomId,
         targetPassword,
@@ -310,7 +310,7 @@ export class MultiplayerManager {
 
     DebugLogger.log('Multiplayer', `Joining room "${targetRoomId}" (scene=${(sceneId ?? this.sceneScopeId) || 'default'}) as "${playerName.trim() || 'Khách'}"`);
     this.clearReconnectTimer();
-    await this.leaveRoom();
+    await this.leaveRoom({ preserveRoomMembership: isSceneSwitch });
 
     const sessionId = ++this.roomSessionId;
     this.desiredRoomActive = true;
@@ -620,12 +620,17 @@ export class MultiplayerManager {
   async switchSceneRoom(sceneId: string): Promise<boolean> {
     const nextScope = sceneId.trim();
     if (this.sceneScopeId === nextScope) return true;
-    this.sceneScopeId = nextScope;
-    if (!this.connected && !this.desiredRoomActive) return true;
-    return this.joinRoom(this.baseRoomId, this.localPlayerName, nextScope);
+    if (!this.connected && !this.desiredRoomActive) {
+      this.sceneScopeId = nextScope;
+      return true;
+    }
+    return this.joinRoom(this.baseRoomId, this.localPlayerName, nextScope, {
+      isSceneSwitch: true,
+    });
   }
 
-  async leaveRoom(): Promise<void> {
+  async leaveRoom(options?: { preserveRoomMembership?: boolean }): Promise<void> {
+    const preserveRoomMembership = Boolean(options?.preserveRoomMembership);
     this.roomSessionId += 1;
     this.desiredRoomActive = false;
     this.clearReconnectTimer();
@@ -678,7 +683,9 @@ export class MultiplayerManager {
           detail: this.voicePolicy,
         })
       );
-      window.dispatchEvent(new CustomEvent('cavannghe:room-left'));
+      if (!preserveRoomMembership) {
+        window.dispatchEvent(new CustomEvent('cavannghe:room-left'));
+      }
 
       if (ch) {
         try {
@@ -698,7 +705,7 @@ export class MultiplayerManager {
         }
       }
 
-      if (prevBaseRoomId && prevBaseRoomId !== PUBLIC_LOBBY_ROOM_ID) {
+      if (prevBaseRoomId && !preserveRoomMembership) {
         DebugLogger.log('Multiplayer', `Left room "${prevBaseRoomId}" (scene=${prevScene || 'default'})`);
         await AdminService.removeRoomPlayer(prevBaseRoomId, this.localPlayerId);
         if (!hadOtherLocalPeers) {
@@ -733,10 +740,8 @@ export class MultiplayerManager {
     if (!this.connected) {
       // Offline mode: local user controls stage; during transient reconnect in a room, keep last role
       if (!this.desiredRoomActive) return true;
-      if (this.baseRoomId === PUBLIC_LOBBY_ROOM_ID) return false;
       return this.hostId === this.localPlayerId;
     }
-    if (this.baseRoomId === PUBLIC_LOBBY_ROOM_ID) return false;
     return this.hostId === this.localPlayerId;
   }
 
@@ -1277,9 +1282,9 @@ export class MultiplayerManager {
 
   private startRoomHeartbeat(): void {
     this.stopRoomHeartbeat();
-    if (!this.desiredRoomActive || this.baseRoomId === PUBLIC_LOBBY_ROOM_ID) return;
+    if (!this.desiredRoomActive) return;
     const beat = () => {
-      if (!this.desiredRoomActive || this.baseRoomId === PUBLIC_LOBBY_ROOM_ID) return;
+      if (!this.desiredRoomActive) return;
       void this.syncSelfPlayerRow();
       if (this.isHost()) {
         void this.syncRoomRegistry();
@@ -1297,7 +1302,7 @@ export class MultiplayerManager {
   }
 
   private async syncSelfPlayerRow(): Promise<void> {
-    if (!this.desiredRoomActive || this.baseRoomId === PUBLIC_LOBBY_ROOM_ID) return;
+    if (!this.desiredRoomActive) return;
     await AdminService.upsertRoomPlayer({
       roomId: this.baseRoomId,
       playerId: this.localPlayerId,
@@ -1310,20 +1315,24 @@ export class MultiplayerManager {
   }
 
   private async syncRoomRegistry(): Promise<void> {
-    if (!this.desiredRoomActive || this.baseRoomId === PUBLIC_LOBBY_ROOM_ID) return;
-    const count = Math.max(1, this.presenceList.length, this.remotePlayers.size + 1);
-    await Promise.all([
-      this.syncSelfPlayerRow(),
-      AdminService.upsertRoomHeartbeat({
-        roomId: this.baseRoomId,
-        roomName: this.baseRoomId,
-        hostName: this.hostName || this.localPlayerName,
-        sceneId: this.sceneScopeId || 'ca-van-nghe-lobby',
-        playerCount: count,
-        hasPassword: Boolean(this.roomPassword),
-        password: this.roomPassword,
-      }),
-    ]);
+    if (!this.desiredRoomActive) return;
+    await this.syncSelfPlayerRow();
+    const roomPlayers = await AdminService.fetchRoomPlayers(this.baseRoomId);
+    const count = Math.max(
+      1,
+      roomPlayers.length,
+      this.presenceList.length,
+      this.remotePlayers.size + 1
+    );
+    await AdminService.upsertRoomHeartbeat({
+      roomId: this.baseRoomId,
+      roomName: this.baseRoomId,
+      hostName: this.hostName || this.localPlayerName,
+      sceneId: this.sceneScopeId || 'ca-van-nghe-lobby',
+      playerCount: count,
+      hasPassword: Boolean(this.roomPassword),
+      password: this.roomPassword,
+    });
   }
 
   private handleRemotePlayerState(payload: RemotePlayerState): void {

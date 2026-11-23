@@ -14,6 +14,7 @@ import { LOBBY_SCENE_ID } from '../engine/serialization/SceneRegistry';
  *   currentSceneId?: string;
  *   currentSceneName?: string;
  *   onGoToLobby?: () => void;
+ *   onOpenLobbyHub?: () => void;
  *   roomStatus?: {
  *     connected: boolean;
  *     roomId: string;
@@ -36,6 +37,7 @@ export default function NavigationHUD({
   currentSceneId = LOBBY_SCENE_ID,
   currentSceneName = 'Sảnh Chờ (Lobby)',
   onGoToLobby,
+  onOpenLobbyHub,
   roomStatus = null,
   canOpenSettings = true,
 }) {
@@ -162,6 +164,21 @@ export default function NavigationHUD({
                   >
                     <DoorOpen className="w-3.5 h-3.5 text-neutral-400" />
                     <span>Về Sảnh Chờ</span>
+                  </button>
+                )}
+
+                {/* Lobby Room / Account / Avatar Hub */}
+                {onOpenLobbyHub && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsMenuOpen(false);
+                      onOpenLobbyHub();
+                    }}
+                    className="w-full flex items-center gap-2 px-3 py-2 rounded-xl hover:bg-white/10 text-neutral-100 font-medium transition"
+                  >
+                    <Users className="w-3.5 h-3.5 text-neutral-400" />
+                    <span>Phòng Lobby & Nhân vật</span>
                   </button>
                 )}
 

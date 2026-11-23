@@ -12,20 +12,15 @@ import { VoiceChatBar } from '../../components/VoiceChatBar';
 import { LobbyHubModal, type LobbyHubTab } from '../../components/LobbyHubModal';
 import {
   MultiplayerManager,
-  PUBLIC_LOBBY_ROOM_ID,
   type RoomStatusSnapshot,
 } from '../../network/MultiplayerManager';
-import { AdminService } from '../../network/AdminService';
-import { isSupabaseConfigured } from '../../network/supabaseClient';
 import { INTERACTIVE_OBJECTS } from '../../data/sceneData';
 import { loungeAudio } from '../../utils/audio';
 import { EditorEngine } from '../../engine/EditorEngine';
 import {
-  CINEMA_SCENE_ID,
   getSceneDefinition,
   isSceneEnabledInBuild,
   LOBBY_SCENE_ID,
-  TEAROOM_SCENE_ID,
 } from '../../engine/serialization/SceneRegistry';
 import type { StageMediaState } from '../../engine/runtime';
 import type { NearbyPromptData } from '../../engine/runtime/PlayerControllerRuntime';
@@ -65,7 +60,7 @@ export const GameOverlayUI: React.FC = () => {
   canOpenSettingsRef.current = canOpenSettings;
   const [stageErrorToast, setStageErrorToast] = useState<string | null>(null);
   const [isHubModalOpen, setIsHubModalOpen] = useState(false);
-  const [hubInitialTab, setHubInitialTab] = useState<LobbyHubTab>('cinema');
+  const [hubInitialTab, setHubInitialTab] = useState<LobbyHubTab>('lobby');
   const currentSceneIdRef = useRef(currentSceneId);
   currentSceneIdRef.current = currentSceneId;
 
@@ -97,33 +92,8 @@ export const GameOverlayUI: React.FC = () => {
         return;
       }
 
-      // From Lobby, entering Cinema or TeaRoom goes through the Room & Account Hub Modal
-      if (
-        isSupabaseConfigured() &&
-        currentSceneIdRef.current === LOBBY_SCENE_ID &&
-        (cleanId === CINEMA_SCENE_ID || cleanId === TEAROOM_SCENE_ID)
-      ) {
-        setHubInitialTab(cleanId === TEAROOM_SCENE_ID ? 'tearoom' : 'cinema');
-        setIsHubModalOpen(true);
-        return;
-      }
-
-      // Returning from Cinema/TeaRoom back to Shared Public Lobby Hall
-      if (cleanId === LOBBY_SCENE_ID && isSupabaseConfigured()) {
-        const mp = MultiplayerManager.getInstance();
-        const saved = AdminService.getSavedPlayerAccount();
-        const displayName =
-          saved?.display_name ||
-          saved?.username ||
-          localStorage.getItem('cavannghe:player-name') ||
-          'Khách Lounge';
-        enterSceneDirect(LOBBY_SCENE_ID);
-        void mp.joinRoom(PUBLIC_LOBBY_ROOM_ID, displayName, LOBBY_SCENE_ID, {
-          bypassLimits: true,
-        });
-        return;
-      }
-
+      // Cinema, TeaRoom, and Lobby are all areas inside the same hosted Lobby room.
+      // EditorEngine.loadSceneById calls MultiplayerManager.switchSceneRoom(cleanId) automatically.
       enterSceneDirect(cleanId);
     },
     [enterSceneDirect]
@@ -144,7 +114,7 @@ export const GameOverlayUI: React.FC = () => {
       if (objId?.startsWith('load_scene:')) {
         requestSceneTransition(objId.slice('load_scene:'.length));
       } else if (objId === 'lobby_hub_kiosk') {
-        setHubInitialTab('cinema');
+        setHubInitialTab('lobby');
         setIsHubModalOpen(true);
       } else if (objId === 'stage_screen') {
         setIsStageModalOpen(true);
@@ -273,7 +243,7 @@ export const GameOverlayUI: React.FC = () => {
       if (nearbyPrompt.id === 'karaoke_stage') {
         window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyE' }));
       } else if (nearbyPrompt.id === 'lobby_hub_kiosk') {
-        setHubInitialTab('cinema');
+        setHubInitialTab('lobby');
         setIsHubModalOpen(true);
       } else if (nearbyPrompt.id === 'stage_screen') {
         setIsStageModalOpen(true);
@@ -318,6 +288,10 @@ export const GameOverlayUI: React.FC = () => {
           currentSceneId={currentSceneId}
           currentSceneName={currentSceneName}
           onGoToLobby={() => requestSceneTransition(LOBBY_SCENE_ID)}
+          onOpenLobbyHub={() => {
+            setHubInitialTab('lobby');
+            setIsHubModalOpen(true);
+          }}
           roomStatus={roomStatus}
           canOpenSettings={canOpenSettings}
         />
@@ -466,7 +440,7 @@ export const GameOverlayUI: React.FC = () => {
           isOpen={isHubModalOpen}
           initialTab={hubInitialTab}
           onClose={() => setIsHubModalOpen(false)}
-          onEnterModeRoom={(sceneId) => enterSceneDirect(sceneId)}
+          onSwitchedRoom={() => enterSceneDirect(LOBBY_SCENE_ID)}
         />
 
         {stageErrorToast && (
