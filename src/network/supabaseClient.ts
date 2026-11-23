@@ -8,10 +8,15 @@ function normalizeSupabaseUrl(raw: string | undefined): string | null {
   return trimmed || null;
 }
 
-export function isSupabaseConfigured(): boolean {
+export function getSupabaseRestConfig(): { url: string; anonKey: string } | null {
   const url = normalizeSupabaseUrl(import.meta.env.VITE_SUPABASE_URL);
-  const key = import.meta.env.VITE_SUPABASE_ANON_KEY?.trim();
-  return Boolean(url && key);
+  const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY?.trim();
+  if (!url || !anonKey) return null;
+  return { url, anonKey };
+}
+
+export function isSupabaseConfigured(): boolean {
+  return Boolean(getSupabaseRestConfig());
 }
 
 export function getSupabaseClient(): SupabaseClient | null {

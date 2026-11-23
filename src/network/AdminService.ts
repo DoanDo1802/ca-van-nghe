@@ -291,7 +291,7 @@ export const AdminService = {
   async fetchActiveRooms(): Promise<ActiveRoomInfo[]> {
     const supabase = getSupabaseClient();
     if (!supabase) return [];
-    const cutoff = new Date(Date.now() - 3 * 60 * 1000).toISOString();
+    const cutoff = new Date(Date.now() - 45 * 1000).toISOString();
     const { data, error } = await supabase
       .from('active_rooms')
       .select('*')
@@ -301,6 +301,19 @@ export const AdminService = {
 
     if (error || !data) return [];
     return data as ActiveRoomInfo[];
+  },
+
+  async closeOwnedRoom(
+    roomId: string,
+    hostName: string,
+    sceneId = 'ca-van-nghe-lobby'
+  ): Promise<void> {
+    await this.upsertRoomHeartbeat({
+      roomId,
+      hostName,
+      sceneId,
+      playerCount: 0,
+    });
   },
 
   async fetchAccounts(): Promise<AdminAccount[]> {
@@ -386,44 +399,58 @@ export const AdminService = {
       }
     }
 
-    if (currentTotal >= maxTotal) {
-      return {
-        allowed: false,
-        reason: `Hệ thống đã đạt giới hạn tối đa (${currentTotal}/${maxTotal} người chơi).`,
-        maxPlayersPerRoom: maxPerRoom,
-        maxTotalPlayers: maxTotal,
-      };
-    }
-
-    const cutoff = new Date(Date.now() - 3 * 60 * 1000).toISOString();
+    const cutoff = new Date(Date.now() - 45 * 1000).toISOString();
     const { data: roomRow } = await supabase
       .from('active_rooms')
-      .select('player_count, has_password')
+      .select('player_count, has_password, host_name')
       .eq('room_id', roomId)
       .gte('last_active_at', cutoff)
       .maybeSingle();
 
-    if (roomRow && Number(roomRow.player_count) >= maxPerRoom) {
-      return {
-        allowed: false,
-        reason: `Phòng "${roomId}" đã đầy (${roomRow.player_count}/${maxPerRoom} người).`,
-        maxPlayersPerRoom: maxPerRoom,
-        maxTotalPlayers: maxTotal,
-      };
-    }
+    const isOwnReclaim = Boolean(
+      roomRow &&
+        playerName &&
+        roomRow.host_name &&
+        roomRow.host_name.trim().toLowerCase() === playerName.trim().toLowerCase() &&
+        Number(roomRow.player_count) <= 1
+    );
 
-    if (roomRow?.has_password) {
-      const { data: passOk } = await supabase.rpc('verify_room_password', {
-        p_room_id: roomId,
-        p_password: password.trim(),
-      });
-      if (!passOk) {
+    if (!isOwnReclaim) {
+      if (currentTotal >= maxTotal) {
+        const liveRooms = await this.fetchActiveRooms();
+        const liveTotal = liveRooms.reduce((sum, r) => sum + Number(r.player_count || 0), 0);
+        if (liveTotal >= maxTotal) {
+          return {
+            allowed: false,
+            reason: `Hệ thống đã đạt giới hạn tối đa (${liveTotal}/${maxTotal} người chơi).`,
+            maxPlayersPerRoom: maxPerRoom,
+            maxTotalPlayers: maxTotal,
+          };
+        }
+      }
+
+      if (roomRow && Number(roomRow.player_count) >= maxPerRoom) {
         return {
           allowed: false,
-          reason: 'Mật khẩu phòng không đúng.',
+          reason: `Phòng "${roomId}" đã đầy (${roomRow.player_count}/${maxPerRoom} người).`,
           maxPlayersPerRoom: maxPerRoom,
           maxTotalPlayers: maxTotal,
         };
+      }
+
+      if (roomRow?.has_password) {
+        const { data: passOk } = await supabase.rpc('verify_room_password', {
+          p_room_id: roomId,
+          p_password: password.trim(),
+        });
+        if (!passOk) {
+          return {
+            allowed: false,
+            reason: 'Mật khẩu phòng không đúng.',
+            maxPlayersPerRoom: maxPerRoom,
+            maxTotalPlayers: maxTotal,
+          };
+        }
       }
     }
 
@@ -464,7 +491,7 @@ export const AdminService = {
   async fetchRoomPlayers(roomId?: string): Promise<RoomPlayerInfo[]> {
     const supabase = getSupabaseClient();
     if (!supabase) return [];
-    const cutoff = new Date(Date.now() - 3 * 60 * 1000).toISOString();
+    const cutoff = new Date(Date.now() - 45 * 1000).toISOString();
     let q = supabase
       .from('room_players')
       .select('*')

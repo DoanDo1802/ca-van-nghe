@@ -132,6 +132,7 @@ export class EditorEngine {
   private selectionPicker: SelectionPicker | null = null;
 
   private resizeObserver: ResizeObserver | null = null;
+  private viewportResizeCleanup: (() => void) | null = null;
   private trackedMaterials = new Set<pc.StandardMaterial>();
   private glbDestroyCallbacks: Array<() => void> = [];
   private entityGuidCache = new Map<string, pc.Entity>();
@@ -282,6 +283,20 @@ export class EditorEngine {
     syncSize();
     this.resizeObserver = new ResizeObserver(syncSize);
     this.resizeObserver.observe(resizeTarget);
+
+    const onOrientationChange = () => {
+      syncSize();
+      window.setTimeout(syncSize, 120);
+      window.setTimeout(syncSize, 320);
+    };
+    window.addEventListener('resize', syncSize);
+    window.addEventListener('orientationchange', onOrientationChange);
+    window.visualViewport?.addEventListener('resize', syncSize);
+    this.viewportResizeCleanup = () => {
+      window.removeEventListener('resize', syncSize);
+      window.removeEventListener('orientationchange', onOrientationChange);
+      window.visualViewport?.removeEventListener('resize', syncSize);
+    };
 
     const editorLayer = new pc.Layer({ name: 'EditorLayer' });
     app.scene.layers.push(editorLayer);
@@ -565,6 +580,8 @@ export class EditorEngine {
 
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
+    this.viewportResizeCleanup?.();
+    this.viewportResizeCleanup = null;
 
     this.interactionRuntime?.destroy();
     this.interactionRuntime = null;

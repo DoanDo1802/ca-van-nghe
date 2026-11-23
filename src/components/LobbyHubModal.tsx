@@ -10,6 +10,7 @@ import {
   Plus,
   RefreshCw,
   ShieldCheck,
+  Trash2,
   Unlock,
   UserPlus,
   Users,
@@ -58,6 +59,7 @@ export const LobbyHubModal: React.FC<LobbyHubModalProps> = ({
   const [newRoomPassword, setNewRoomPassword] = useState('');
   const [roomError, setRoomError] = useState('');
   const [joiningRoomId, setJoiningRoomId] = useState<string | null>(null);
+  const [closingRoomId, setClosingRoomId] = useState<string | null>(null);
 
   const [avatarColor, setAvatarColor] = useState<string>(() => getSavedAvatarColor());
 
@@ -186,6 +188,18 @@ export const LobbyHubModal: React.FC<LobbyHubModalProps> = ({
     }
   };
 
+  const handleCloseRoom = async (room: ActiveRoomInfo) => {
+    setRoomError('');
+    setClosingRoomId(room.room_id);
+    await AdminService.closeOwnedRoom(
+      room.room_id,
+      room.host_name || account?.display_name || account?.username || '',
+      room.scene_id
+    );
+    setClosingRoomId(null);
+    await loadRooms();
+  };
+
   const handleCreateRoom = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!account) return;
@@ -203,6 +217,27 @@ export const LobbyHubModal: React.FC<LobbyHubModalProps> = ({
       : `${prefix}-${Math.random().toString(36).slice(2, 6)}`;
 
     setJoiningRoomId('__new__');
+    const myDisplayName = (account.display_name || account.username).trim().toLowerCase();
+    const latestRooms = await AdminService.fetchActiveRooms();
+    const existing = latestRooms.find((r) => r.room_id === roomId);
+    if (existing) {
+      const ownedByMe =
+        Boolean(existing.host_name && existing.host_name.trim().toLowerCase() === myDisplayName) ||
+        isAdmin;
+      if (!ownedByMe) {
+        setJoiningRoomId(null);
+        setRoomError(
+          `Phòng "${roomId}" đang có người khác làm chủ. Hãy chọn tên khác hoặc vào phòng ở danh sách trên.`
+        );
+        return;
+      }
+      await AdminService.closeOwnedRoom(
+        roomId,
+        existing.host_name || account.display_name || account.username,
+        existing.scene_id
+      );
+    }
+
     const mp = MultiplayerManager.getInstance();
     mp.setLocalIsAdmin(account.role === 'admin');
     const ok = await mp.joinRoom(
@@ -484,9 +519,19 @@ export const LobbyHubModal: React.FC<LobbyHubModalProps> = ({
                 ) : (
                   <div className="space-y-2">
                     {filteredRooms.map((room) => {
+                      const myDisplayName = (account.display_name || account.username)
+                        .trim()
+                        .toLowerCase();
+                      const isMyRoom = Boolean(
+                        room.host_name && room.host_name.trim().toLowerCase() === myDisplayName
+                      );
                       const needsPasswordPrompt =
-                        room.has_password && !isAdmin && joinPasswordRoomId === room.room_id;
+                        room.has_password &&
+                        !isAdmin &&
+                        !isMyRoom &&
+                        joinPasswordRoomId === room.room_id;
                       const busy = joiningRoomId === room.room_id;
+                      const closing = closingRoomId === room.room_id;
                       return (
                         <div
                           key={room.room_id}
@@ -520,25 +565,48 @@ export const LobbyHubModal: React.FC<LobbyHubModalProps> = ({
                               </div>
                             </div>
 
-                            <button
-                              type="button"
-                              disabled={busy}
-                              onClick={() => {
-                                if (room.has_password && !isAdmin) {
-                                  setJoinPasswordRoomId(
-                                    joinPasswordRoomId === room.room_id ? null : room.room_id
-                                  );
-                                  setJoinPassword('');
-                                  setRoomError('');
-                                } else {
-                                  void handleJoinExistingRoom(room);
-                                }
-                              }}
-                              className="px-3.5 py-1.5 rounded-lg bg-white hover:bg-neutral-200 disabled:opacity-60 text-black text-xs font-semibold flex items-center gap-1.5 transition"
-                            >
-                              <span>{busy ? 'Đang vào...' : isAdmin && room.has_password ? 'Vào (Admin)' : 'Vào phòng'}</span>
-                              <ArrowRight className="w-3.5 h-3.5" />
-                            </button>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              {(isMyRoom || isAdmin) && (
+                                <button
+                                  type="button"
+                                  disabled={closing || busy}
+                                  onClick={() => void handleCloseRoom(room)}
+                                  title="Đóng phòng cũ để tạo lại"
+                                  className="px-2.5 py-1.5 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 disabled:opacity-60 text-rose-200 text-xs font-medium flex items-center gap-1 transition"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                  <span>{closing ? 'Đang đóng...' : 'Đóng'}</span>
+                                </button>
+                              )}
+
+                              <button
+                                type="button"
+                                disabled={busy || closing}
+                                onClick={() => {
+                                  if (room.has_password && !isAdmin && !isMyRoom) {
+                                    setJoinPasswordRoomId(
+                                      joinPasswordRoomId === room.room_id ? null : room.room_id
+                                    );
+                                    setJoinPassword('');
+                                    setRoomError('');
+                                  } else {
+                                    void handleJoinExistingRoom(room);
+                                  }
+                                }}
+                                className="px-3.5 py-1.5 rounded-lg bg-white hover:bg-neutral-200 disabled:opacity-60 text-black text-xs font-semibold flex items-center gap-1.5 transition"
+                              >
+                                <span>
+                                  {busy
+                                    ? 'Đang vào...'
+                                    : isMyRoom
+                                      ? 'Vào lại'
+                                      : isAdmin && room.has_password
+                                        ? 'Vào (Admin)'
+                                        : 'Vào phòng'}
+                                </span>
+                                <ArrowRight className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
                           </div>
 
                           {needsPasswordPrompt && (

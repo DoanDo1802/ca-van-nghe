@@ -39,6 +39,44 @@ export const WebGamePlayer: React.FC = () => {
   });
 
   useEffect(() => {
+    const docEl = document.documentElement;
+    const body = document.body;
+    docEl.classList.add('game-viewport-lock');
+    body.classList.add('game-viewport-lock');
+
+    const resetScroll = () => {
+      if (window.scrollX !== 0 || window.scrollY !== 0) {
+        window.scrollTo(0, 0);
+      }
+      docEl.scrollTop = 0;
+      body.scrollTop = 0;
+    };
+    resetScroll();
+
+    const onOrientationChange = () => {
+      resetScroll();
+      window.setTimeout(resetScroll, 120);
+      window.setTimeout(resetScroll, 320);
+    };
+
+    window.addEventListener('resize', resetScroll);
+    window.addEventListener('orientationchange', onOrientationChange);
+    window.addEventListener('scroll', resetScroll, { passive: true });
+    window.visualViewport?.addEventListener('resize', resetScroll);
+    window.visualViewport?.addEventListener('scroll', resetScroll);
+
+    return () => {
+      docEl.classList.remove('game-viewport-lock');
+      body.classList.remove('game-viewport-lock');
+      window.removeEventListener('resize', resetScroll);
+      window.removeEventListener('orientationchange', onOrientationChange);
+      window.removeEventListener('scroll', resetScroll);
+      window.visualViewport?.removeEventListener('resize', resetScroll);
+      window.visualViewport?.removeEventListener('scroll', resetScroll);
+    };
+  }, []);
+
+  useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
 
@@ -144,7 +182,7 @@ export const WebGamePlayer: React.FC = () => {
   }, []);
 
   return (
-    <div className="relative w-[100dvw] h-[100dvh] overflow-hidden bg-[#0c0e14]">
+    <div className="fixed inset-0 w-full h-full overflow-hidden overscroll-none bg-[#0c0e14]">
       <YouTubeStagePlayer />
       <canvas ref={canvasRef} className="relative z-[1] w-full h-full block outline-none touch-none" />
       <SceneLoadingOverlay initialProgress={!ready ? initialProgress : null} />

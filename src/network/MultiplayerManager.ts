@@ -1,5 +1,5 @@
 import type { RealtimeChannel } from '@supabase/supabase-js';
-import { getSupabaseClient } from './supabaseClient';
+import { getSupabaseClient, getSupabaseRestConfig } from './supabaseClient';
 import { AdminService } from './AdminService';
 import { getSavedAvatarColor, saveAvatarColor } from '../utils/avatarColor';
 
@@ -154,7 +154,50 @@ export class MultiplayerManager {
   private onRtcSignalCallback: ((msg: RtcSignalMessage) => void) | null = null;
   private onVoiceSignalCallback: ((msg: RtcSignalMessage) => void) | null = null;
 
-  private constructor() {}
+  private constructor() {
+    if (typeof window !== 'undefined') {
+      window.addEventListener('pagehide', () => this.sendUnloadCleanup());
+      window.addEventListener('beforeunload', () => this.sendUnloadCleanup());
+    }
+  }
+
+  private sendUnloadCleanup(): void {
+    if (!this.connected || !this.baseRoomId || this.baseRoomId === PUBLIC_LOBBY_ROOM_ID) return;
+    const cfg = getSupabaseRestConfig();
+    if (!cfg) return;
+    const headers = {
+      apikey: cfg.anonKey,
+      Authorization: `Bearer ${cfg.anonKey}`,
+      'Content-Type': 'application/json',
+    };
+    try {
+      void fetch(`${cfg.url}/rest/v1/rpc/remove_room_player`, {
+        method: 'POST',
+        keepalive: true,
+        headers,
+        body: JSON.stringify({
+          p_room_id: this.baseRoomId,
+          p_player_id: this.localPlayerId,
+        }),
+      });
+      if (this.presenceList.length <= 1) {
+        void fetch(`${cfg.url}/rest/v1/rpc/upsert_room_heartbeat`, {
+          method: 'POST',
+          keepalive: true,
+          headers,
+          body: JSON.stringify({
+            p_room_id: this.baseRoomId,
+            p_room_name: this.baseRoomId,
+            p_host_name: this.hostName || this.localPlayerName,
+            p_scene_id: this.sceneScopeId || 'ca-van-nghe-lobby',
+            p_player_count: 0,
+          }),
+        });
+      }
+    } catch {
+      // ignore unload network errors
+    }
+  }
 
   setOnRemoteStage(cb: ((state: NetworkStageState) => void) | null): void {
     this.onRemoteStageCallback = cb;
@@ -406,6 +449,7 @@ export class MultiplayerManager {
           this.emitRoomStatus();
           resolve(true);
         } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          this.stopRoomHeartbeat();
           this.connected = false;
           this.emitRoomStatus();
           resolve(false);
@@ -930,7 +974,7 @@ export class MultiplayerManager {
           void this.syncRoomRegistry();
         }
       }
-    }, 30_000);
+    }, 15_000);
   }
 
   private stopRoomHeartbeat(): void {
