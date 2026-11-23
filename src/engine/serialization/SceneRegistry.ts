@@ -55,6 +55,7 @@ export const SCENE_DEFINITIONS: SceneDefinition[] = [
       '/models/every_other_gig_ever.glb',
       '/models/MicStand.glb',
       '/models/Microphone.glb',
+      '/models/fresnel-led.glb',
       '/models/Character.glb',
     ],
   },

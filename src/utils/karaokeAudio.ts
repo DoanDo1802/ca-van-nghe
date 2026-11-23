@@ -103,6 +103,8 @@ class KaraokeAudioEngine {
   private micStream: MediaStream | null = null;
   private micSource: MediaStreamAudioSourceNode | null = null;
   private micBroadcastDest: MediaStreamAudioDestinationNode | null = null;
+  private localMonitorGain: GainNode | null = null;
+  private localMonitorEnabled = true;
 
   private audioEl: HTMLAudioElement | null = null;
   private mediaSource: MediaElementAudioSourceNode | null = null;
@@ -274,27 +276,35 @@ class KaraokeAudioEngine {
       this.micGain.connect(comp);
       comp.connect(this.micAnalyser);
 
+      const monitorGain = ctx.createGain();
+      monitorGain.gain.value = this.localMonitorEnabled ? 1.0 : 0.0;
+      monitorGain.connect(this.masterGain!);
+      this.localMonitorGain = monitorGain;
+
       makeup.connect(dry);
-      dry.connect(this.masterGain!);
+      dry.connect(monitorGain);
 
       makeup.connect(convolver);
       convolver.connect(wet);
-      wet.connect(this.masterGain!);
+      wet.connect(monitorGain);
 
       makeup.connect(delay);
       delay.connect(delayFilter);
       delayFilter.connect(delayFeedback);
       delayFeedback.connect(delay);
       delayFilter.connect(delayOut);
-      delayOut.connect(this.masterGain!);
+      delayOut.connect(monitorGain);
 
       const broadcastDest = ctx.createMediaStreamDestination();
       dry.connect(broadcastDest);
       wet.connect(broadcastDest);
       delayOut.connect(broadcastDest);
+      if (this.musicGain) {
+        this.musicGain.connect(broadcastDest);
+      }
       this.micBroadcastDest = broadcastDest;
 
-      this.micNodes = [hp, warmth, presence, comp, makeup, dry, convolver, wet, delay, delayFilter, delayFeedback, delayOut, broadcastDest];
+      this.micNodes = [hp, warmth, presence, comp, makeup, dry, convolver, wet, delay, delayFilter, delayFeedback, delayOut, monitorGain, broadcastDest];
       return true;
     } catch {
       return false;
@@ -328,7 +338,26 @@ class KaraokeAudioEngine {
       this.micStream.getTracks().forEach((t) => t.stop());
       this.micStream = null;
     }
+    if (this.musicGain && this.micBroadcastDest) {
+      try {
+        this.musicGain.disconnect(this.micBroadcastDest);
+      } catch {
+        // ignore
+      }
+    }
+    this.localMonitorGain = null;
     this.micBroadcastDest = null;
+  }
+
+  setLocalMonitor(enabled: boolean): void {
+    this.localMonitorEnabled = enabled;
+    if (this.localMonitorGain && this.ctx) {
+      this.localMonitorGain.gain.setTargetAtTime(enabled ? 1.0 : 0.0, this.ctx.currentTime, 0.02);
+    }
+  }
+
+  isLocalMonitorEnabled(): boolean {
+    return this.localMonitorEnabled;
   }
 
   getBroadcastStream(): MediaStream | null {

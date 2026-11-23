@@ -11,7 +11,7 @@ function formatTime(ts: number): string {
   return `${hh}:${mm}`;
 }
 
-export const ChatBox: React.FC = () => {
+export const ChatBox: React.FC<{ hideOnMobile?: boolean }> = ({ hideOnMobile = false }) => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isOpen, setIsOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -120,15 +120,19 @@ export const ChatBox: React.FC = () => {
 
   if (!isOpen) {
     return (
-      <div className="fixed top-14 left-3 z-30 pointer-events-auto hidden sm:block">
+      <div
+        className={`fixed left-3 z-30 pointer-events-auto bottom-36 sm:bottom-3 ${
+          hideOnMobile ? 'hidden sm:block' : ''
+        }`}
+      >
         <button
           type="button"
           onClick={handleOpen}
-          className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-black/35 hover:bg-black/50 backdrop-blur-md border border-white/15 text-xs font-medium text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)] shadow-lg transition"
+          className="inline-flex items-center gap-1.5 sm:gap-2 px-3 sm:px-3.5 py-2 rounded-xl bg-black/45 hover:bg-black/60 backdrop-blur-md border border-white/15 text-xs font-medium text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)] shadow-lg transition"
         >
           <MessageSquare className="w-3.5 h-3.5 text-cyan-300" />
           <span>Chat</span>
-          <kbd className="px-1.5 py-0.5 rounded bg-black/35 text-[10px] font-mono text-amber-200 border border-white/10">
+          <kbd className="hidden sm:inline-block px-1.5 py-0.5 rounded bg-black/35 text-[10px] font-mono text-amber-200 border border-white/10">
             T
           </kbd>
           {unreadCount > 0 && (
@@ -142,13 +146,17 @@ export const ChatBox: React.FC = () => {
   }
 
   return (
-    <div className="fixed top-14 left-3 z-30 pointer-events-auto w-72 sm:w-80 rounded-2xl bg-black/30 backdrop-blur-md border border-white/15 shadow-2xl overflow-hidden flex flex-col hidden sm:flex">
+    <div
+      className={`fixed left-3 z-30 pointer-events-auto bottom-36 sm:bottom-3 w-[calc(100vw-1.5rem)] max-w-80 rounded-2xl bg-black/45 sm:bg-black/30 backdrop-blur-md border border-white/15 shadow-2xl overflow-hidden flex-col ${
+        hideOnMobile ? 'hidden sm:flex' : 'flex'
+      }`}
+    >
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-white/10 bg-black/20">
         <div className="flex items-center gap-1.5 text-xs font-semibold text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)]">
           <MessageSquare className="w-3.5 h-3.5 text-cyan-300" />
           <span>Khung Chat</span>
-          <span className="text-[10px] font-normal text-amber-200/80">(Enter / T)</span>
+          <span className="hidden sm:inline text-[10px] font-normal text-amber-200/80">(Enter / T)</span>
         </div>
         <button
           type="button"
@@ -163,7 +171,7 @@ export const ChatBox: React.FC = () => {
       {/* Messages */}
       <div
         ref={listRef}
-        className="h-44 overflow-y-auto px-3 py-2 space-y-1.5 text-xs scrollbar-thin"
+        className="h-36 sm:h-44 overflow-y-auto px-3 py-2 space-y-1.5 text-xs scrollbar-thin"
       >
         {messages.length === 0 ? (
           <p className="text-[11px] text-white/85 drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)] text-center py-10">
@@ -220,7 +228,7 @@ export const ChatBox: React.FC = () => {
             }
           }}
           placeholder="Nhập tin nhắn..."
-          className="flex-1 min-w-0 px-2.5 py-1.5 rounded-xl bg-black/30 border border-white/15 text-xs text-white placeholder:text-neutral-300/80 focus:outline-none focus:border-cyan-400/60"
+          className="flex-1 min-w-0 px-2.5 py-1.5 rounded-xl bg-black/30 border border-white/15 text-base sm:text-xs text-white placeholder:text-neutral-300/80 focus:outline-none focus:border-cyan-400/60"
         />
         <button
           type="submit"

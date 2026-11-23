@@ -13,6 +13,47 @@ const RTC_CONFIG: RTCConfiguration = {
   ],
 };
 
+/**
+ * Upgrades Opus SDP parameters to high-bitrate stereo Music Mode (128kbps)
+ * so singing vocals + reverb/echo stay warm and clear instead of phone-call mono.
+ */
+function preferOpusMusicSdp(sdp?: string): string | undefined {
+  if (!sdp) return sdp;
+  const lines = sdp.split('\r\n');
+  let opusPayload: string | null = null;
+  for (const line of lines) {
+    const m = line.match(/^a=rtpmap:(\d+)\s+opus\/48000/i);
+    if (m) {
+      opusPayload = m[1];
+      break;
+    }
+  }
+  if (!opusPayload) return sdp;
+
+  const extraParams = 'stereo=1;sprop-stereo=1;maxaveragebitrate=128000;useinbandfec=1;usedtx=0';
+  let patched = false;
+  const out = lines.map((line) => {
+    if (line.startsWith(`a=fmtp:${opusPayload} `)) {
+      patched = true;
+      const base = line
+        .replace(/;?stereo=\d/g, '')
+        .replace(/;?sprop-stereo=\d/g, '')
+        .replace(/;?maxaveragebitrate=\d+/g, '')
+        .replace(/;?usedtx=\d/g, '');
+      return `${base};${extraParams}`;
+    }
+    return line;
+  });
+
+  if (!patched) {
+    const idx = out.findIndex((l) => l.startsWith(`a=rtpmap:${opusPayload} `));
+    if (idx >= 0) {
+      out.splice(idx + 1, 0, `a=fmtp:${opusPayload} minptime=10;${extraParams}`);
+    }
+  }
+  return out.join('\r\n');
+}
+
 interface SpatialVoiceSink {
   audioEl: HTMLAudioElement;
   source: MediaStreamAudioSourceNode | null;
@@ -264,11 +305,15 @@ export class KaraokeVoiceManager {
 
     try {
       const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
+      const tunedOffer: RTCSessionDescriptionInit = {
+        type: offer.type,
+        sdp: preferOpusMusicSdp(offer.sdp),
+      };
+      await pc.setLocalDescription(tunedOffer);
       MultiplayerManager.getInstance().sendRtcSignal({
         targetId: peerId,
         kind: 'offer',
-        sdp: pc.localDescription?.toJSON() ?? offer,
+        sdp: pc.localDescription?.toJSON() ?? tunedOffer,
       });
     } catch {
       pc.close();
@@ -314,11 +359,15 @@ export class KaraokeVoiceManager {
       try {
         await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
         const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
+        const tunedAnswer: RTCSessionDescriptionInit = {
+          type: answer.type,
+          sdp: preferOpusMusicSdp(answer.sdp),
+        };
+        await pc.setLocalDescription(tunedAnswer);
         mp.sendRtcSignal({
           targetId: msg.fromId,
           kind: 'answer',
-          sdp: pc.localDescription?.toJSON() ?? answer,
+          sdp: pc.localDescription?.toJSON() ?? tunedAnswer,
         });
       } catch {
         this.cleanupIncomingPeer(msg.fromId);

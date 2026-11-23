@@ -1,5 +1,6 @@
 import * as pc from 'playcanvas';
 import { MultiplayerManager, type RemotePlayerState } from '../../network/MultiplayerManager';
+import { applyAvatarColor } from '../../utils/avatarColor';
 import { loadGlbFromArrayBuffer } from '../animation/GlbAnimExtractor';
 
 export interface NameplateEntry {
@@ -8,6 +9,9 @@ export interface NameplateEntry {
   x: number;
   y: number;
   isHost: boolean;
+  isAdmin: boolean;
+  distance?: number;
+  isLocal?: boolean;
 }
 
 interface SnapshotSample {
@@ -33,6 +37,7 @@ interface RemoteAvatarInstance {
   desiredYaw: number;
   currentAnim: string;
   pendingAnim: string;
+  avatarColor?: string;
   lastSeq: number;
   snapshots: SnapshotSample[];
 }
@@ -92,6 +97,10 @@ export class RemotePlayerPool {
       const existing = this.avatars.get(id);
       if (existing) {
         existing.name = state.name;
+        if (state.avatarColor && state.avatarColor !== existing.avatarColor) {
+          existing.avatarColor = state.avatarColor;
+          applyAvatarColor(existing.entity, state.avatarColor);
+        }
         if (state.seq !== existing.lastSeq) {
           existing.lastSeq = state.seq;
           existing.snapshots.push({
@@ -113,16 +122,6 @@ export class RemotePlayerPool {
         this.spawningIds.add(id);
         void this.spawnAvatar(state);
       }
-    }
-
-    if (this.avatars.size === 0) {
-      if (this.lastNameplateSig !== '') {
-        this.lastNameplateSig = '';
-        window.dispatchEvent(
-          new CustomEvent<NameplateEntry[]>('cavannghe:remote-nameplates', { detail: [] })
-        );
-      }
-      return;
     }
 
     // 3. Evaluate Snapshot Interpolation Buffer + smooth micro-damping at 60fps
@@ -152,9 +151,10 @@ export class RemotePlayerPool {
       }
 
       if (cam?.camera) {
+        const avatarHeadOffset = avatar.entity.getLocalScale().y * 1.98;
         _headWorld.set(
           avatar.currentPos.x,
-          avatar.currentPos.y + 2.05,
+          avatar.currentPos.y + avatarHeadOffset,
           avatar.currentPos.z
         );
         cam.camera.worldToScreen(_headWorld, _headScreen);
@@ -162,15 +162,51 @@ export class RemotePlayerPool {
           const sx = Math.round(_headScreen.x);
           const sy = Math.round(_headScreen.y);
           const isHost = avatar.id === hostId;
+          const isAdmin = Boolean(
+            status.players.find((p) => p.id === avatar.id)?.isAdmin ||
+              remotes.get(avatar.id)?.isAdmin
+          );
           nameplates.push({
             id: avatar.id,
             name: avatar.name,
             x: sx,
             y: sy,
             isHost,
+            isAdmin,
+            distance: _headScreen.z,
           });
           if (sig) sig += '|';
-          sig += `${avatar.id}:${sx},${sy},${isHost ? 1 : 0}`;
+          sig += `${avatar.id}:${sx},${sy},${isHost ? 1 : 0},${isAdmin ? 1 : 0}`;
+        }
+      }
+    }
+
+    // Also project local player head position for overhead chat bubbles
+    if (cam?.camera) {
+      const localPlayer =
+        (this.sceneRoot.findByTag('player')[0] as pc.Entity | undefined) ??
+        (this.sceneRoot.findByName('Player') as pc.Entity | null);
+      if (localPlayer) {
+        const lp = localPlayer.getPosition();
+        const localHeadOffset = localPlayer.getLocalScale().y * 1.98;
+        _headWorld.set(lp.x, lp.y + localHeadOffset, lp.z);
+        cam.camera.worldToScreen(_headWorld, _headScreen);
+        if (_headScreen.z > 0.2 && _headScreen.z < 45) {
+          const sx = Math.round(_headScreen.x);
+          const sy = Math.round(_headScreen.y);
+          const localId = mp.getLocalPlayerId();
+          nameplates.push({
+            id: localId,
+            name: '',
+            x: sx,
+            y: sy,
+            isHost: status.isHost,
+            isAdmin: status.localIsAdmin,
+            distance: _headScreen.z,
+            isLocal: true,
+          });
+          if (sig) sig += '|';
+          sig += `${localId}:${sx},${sy}:local`;
         }
       }
     }
@@ -285,6 +321,7 @@ export class RemotePlayerPool {
 
       entity.setLocalPosition(state.x, state.y, state.z);
       entity.setLocalEulerAngles(0, state.yaw, 0);
+      applyAvatarColor(entity, state.avatarColor);
 
       entity.findComponents('render').forEach((comp) => {
         const rc = comp as pc.RenderComponent;
@@ -313,6 +350,7 @@ export class RemotePlayerPool {
         desiredYaw: state.yaw,
         currentAnim: '',
         pendingAnim: state.anim || 'Idle_Loop',
+        avatarColor: state.avatarColor,
         lastSeq: state.seq,
         snapshots: [
           {

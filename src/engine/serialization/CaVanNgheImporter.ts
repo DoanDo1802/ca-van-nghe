@@ -1,5 +1,6 @@
 import * as pc from 'playcanvas';
 import { AssetRepository } from '../../storage';
+import { applyAvatarColor, getSavedAvatarColor } from '../../utils/avatarColor';
 import { useAssetStore } from '../../store/useAssetStore';
 import type { PrefabData, ScriptAttributeValue } from '../../types';
 import type { EditorEngine } from '../EditorEngine';
@@ -13,6 +14,7 @@ import {
   buildLobbyEnvironmentShell,
   buildMainStageOnly,
   buildTeaRoomEnvironmentShell,
+  buildTeaRoomGalaTheatreDeco,
   createSharedLoungeMaterials,
   type GlbMaterialCache,
 } from './LoungeSceneBuilder';
@@ -174,6 +176,7 @@ async function spawnPlayerAndCamera(options: {
     playerEntity.setLocalEulerAngles(0, playerRotY, 0);
     playerEntity.setLocalScale(0.62, 0.62, 0.62);
     playerEntity.tags.add('player');
+    applyAvatarColor(playerEntity, getSavedAvatarColor());
     if (charLoaded.animTracks.length > 0) {
       const meta = getEntityMeta(playerEntity);
       meta.anim = {
@@ -403,6 +406,7 @@ export async function importCaVanNgheSceneById(
     buildLightingRig(sceneRoot, 'tearoom');
     report(82, 'Đang dựng sân khấu Phòng Trà (Acoustic_Stage)...');
     await buildAcousticStageOnly(engine, sceneRoot, mats, fetchBuffer, assetIdByUrl, glbMaterialCache);
+    await buildTeaRoomGalaTheatreDeco(engine, sceneRoot, mats, fetchBuffer, assetIdByUrl, glbMaterialCache);
     await spawnPlayerAndCamera({
       app,
       engine,

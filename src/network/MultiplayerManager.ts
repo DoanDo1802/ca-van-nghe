@@ -1,5 +1,9 @@
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import { getSupabaseClient } from './supabaseClient';
+import { AdminService } from './AdminService';
+import { getSavedAvatarColor, saveAvatarColor } from '../utils/avatarColor';
+
+export const PUBLIC_LOBBY_ROOM_ID = 'public-lobby';
 
 export interface NetworkStageState {
   sourceType: 'media' | 'youtube';
@@ -8,6 +12,7 @@ export interface NetworkStageState {
   title: string;
   isPlaying: boolean;
   isScreenOn: boolean;
+  isMuted?: boolean;
   updatedAt: number;
 }
 
@@ -65,6 +70,8 @@ export interface RemotePlayerState {
   emote: string | null;
   isSitting: boolean;
   chairId: string | null;
+  isAdmin?: boolean;
+  avatarColor?: string;
   joinedAt: number;
   seq: number;
 }
@@ -74,16 +81,19 @@ export interface RoomStatusSnapshot {
   roomId: string;
   localPlayerId: string;
   localPlayerName: string;
+  localIsAdmin: boolean;
   isHost: boolean;
   hostId: string | null;
   hostName: string | null;
   playerCount: number;
-  players: Array<{ id: string; name: string; isHost: boolean; isLocal: boolean }>;
+  players: Array<{ id: string; name: string; isHost: boolean; isLocal: boolean; isAdmin: boolean }>;
 }
 
 interface PresencePayload {
   playerId: string;
   name: string;
+  isAdmin?: boolean;
+  avatarColor?: string;
   joinedAt: number;
   chairId: string | null;
   stageState?: NetworkStageState;
@@ -114,7 +124,13 @@ export class MultiplayerManager {
   private sceneScopeId = '';
   private roomId = 'ca-van-nghe-1';
   private localPlayerId = `p_${Math.random().toString(36).slice(2, 10)}`;
+  private readonly localDeviceId = AdminService.getOrCreateDeviceId();
   private localPlayerName = 'Khách';
+  private localAvatarColor = getSavedAvatarColor();
+  private localIsAdmin = false;
+  private roomPassword = '';
+  private lastJoinError = '';
+  private roomHeartbeatTimer: number | null = null;
   private joinedAt = Date.now();
   private localChairId: string | null = null;
   private hostStageState: NetworkStageState | null = null;
@@ -160,13 +176,71 @@ export class MultiplayerManager {
     this.onVoiceSignalCallback = cb;
   }
 
-  async joinRoom(roomId: string, playerName: string, sceneId?: string): Promise<boolean> {
+  setLocalIsAdmin(isAdmin: boolean): void {
+    this.localIsAdmin = isAdmin;
+    this.emitRoomStatus();
+  }
+
+  setLocalPlayerName(name: string): void {
+    const clean = name.trim();
+    if (!clean) return;
+    this.localPlayerName = clean;
+    if (this.connected) {
+      void this.trackLocalPresence();
+    }
+    this.emitRoomStatus();
+  }
+
+  getLocalAvatarColor(): string {
+    return this.localAvatarColor;
+  }
+
+  setLocalAvatarColor(hexColor: string): void {
+    this.localAvatarColor = saveAvatarColor(hexColor);
+    this.lastSentSig = '';
+    if (this.connected) {
+      void this.trackLocalPresence();
+    }
+  }
+
+  getLastJoinError(): string {
+    return this.lastJoinError;
+  }
+
+  async joinRoom(
+    roomId: string,
+    playerName: string,
+    sceneId?: string,
+    options?: { password?: string; bypassLimits?: boolean }
+  ): Promise<boolean> {
     const supabase = getSupabaseClient();
     if (!supabase) return false;
 
+    const targetRoomId = roomId.trim() || 'ca-van-nghe-1';
+    const targetPassword = options?.password?.trim() ?? this.roomPassword;
+    const isPublicLobby = targetRoomId === PUBLIC_LOBBY_ROOM_ID;
+    const isAdminBypass = this.localIsAdmin && (options?.bypassLimits !== false);
+
+    this.lastJoinError = '';
+    if (!isPublicLobby) {
+      const check = await AdminService.checkCanJoinRoom(
+        targetRoomId,
+        targetPassword,
+        isAdminBypass,
+        this.localPlayerId,
+        playerName,
+        this.localDeviceId
+      );
+      if (!check.allowed) {
+        this.lastJoinError = check.reason || 'Không thể tham gia phòng.';
+        return false;
+      }
+    }
+
     await this.leaveRoom();
 
-    this.baseRoomId = roomId.trim() || 'ca-van-nghe-1';
+    this.baseRoomId = targetRoomId;
+    this.roomPassword = targetPassword;
     if (sceneId !== undefined) {
       this.sceneScopeId = sceneId;
     }
@@ -200,7 +274,7 @@ export class MultiplayerManager {
     });
 
     channel.on('broadcast', { event: 'stage:sync' }, ({ payload }) => {
-      if (this.channel !== channel || this.isHost()) return;
+      if (this.channel !== channel) return;
       const stage = payload as NetworkStageState;
       if (stage) {
         this.hostStageState = stage;
@@ -209,8 +283,20 @@ export class MultiplayerManager {
     });
 
     channel.on('broadcast', { event: 'stage:sync-live' }, () => {
-      if (this.channel !== channel || this.isHost()) return;
+      if (this.channel !== channel) return;
       this.onRemoteStageLiveSyncCallback?.();
+    });
+
+    channel.on('broadcast', { event: 'lounge:audio' }, ({ payload }) => {
+      if (this.channel !== channel) return;
+      const data = payload as { playing?: boolean } | undefined;
+      if (typeof data?.playing === 'boolean') {
+        window.dispatchEvent(
+          new CustomEvent<{ playing: boolean }>('cavannghe:remote-lounge-audio', {
+            detail: { playing: data.playing },
+          })
+        );
+      }
     });
 
     channel.on('broadcast', { event: 'karaoke:sync' }, ({ payload }) => {
@@ -273,6 +359,41 @@ export class MultiplayerManager {
       );
     });
 
+    channel.on('broadcast', { event: 'admin:moderation' }, ({ payload }) => {
+      if (this.channel !== channel) return;
+      const mod = payload as {
+        action: 'kick' | 'ban';
+        targetPlayerId: string;
+        hostPlayerId?: string;
+        closeRoom?: boolean;
+        targetPlayerName?: string;
+        reason?: string;
+      };
+      if (!mod) return;
+      const isRoomClosed = Boolean(mod.closeRoom || mod.targetPlayerId === '*');
+      const isTarget = mod.targetPlayerId === this.localPlayerId;
+      if (!isRoomClosed && !isTarget) return;
+
+      if (isRoomClosed && mod.hostPlayerId !== this.localPlayerId) {
+        this.lastJoinError = 'Phòng đã bị giải tán do Admin mời Chủ phòng ra khỏi phòng.';
+      } else {
+        this.lastJoinError =
+          mod.action === 'ban'
+            ? `Bạn đã bị Admin cấm vào phòng (${mod.reason || 'Vi phạm quy định'}).`
+            : `Bạn đã bị Admin đá khỏi phòng (${mod.reason || 'Bị mời ra khỏi phòng'}).`;
+      }
+      void this.leaveRoom().then(() => {
+        window.dispatchEvent(new CustomEvent('cavannghe:kicked', { detail: mod }));
+      });
+    });
+
+    channel.on('broadcast', { event: 'stage:applause' }, ({ payload }) => {
+      if (this.channel !== channel) return;
+      const ev = payload as { playerId: string; playerName: string; x?: number; z?: number };
+      if (!ev || ev.playerId === this.localPlayerId) return;
+      window.dispatchEvent(new CustomEvent('cavannghe:remote-applause', { detail: ev }));
+    });
+
     this.channel = channel;
 
     return new Promise<boolean>((resolve) => {
@@ -280,6 +401,8 @@ export class MultiplayerManager {
         if (status === 'SUBSCRIBED') {
           this.connected = true;
           await this.trackLocalPresence();
+          this.startRoomHeartbeat();
+          void this.syncRoomRegistry();
           this.emitRoomStatus();
           resolve(true);
         } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
@@ -300,9 +423,14 @@ export class MultiplayerManager {
   }
 
   async leaveRoom(): Promise<void> {
+    this.stopRoomHeartbeat();
     if (this.channel) {
       const ch = this.channel;
       const hadRemoteKaraoke = this.remoteKaraokeState;
+      const wasLastInRoom = this.presenceList.length <= 1;
+      const prevBaseRoomId = this.baseRoomId;
+      const prevHostName = this.hostName || this.localPlayerName;
+      const prevScene = this.sceneScopeId;
       this.channel = null;
       this.connected = false;
       this.remotePlayers.clear();
@@ -346,6 +474,15 @@ export class MultiplayerManager {
       } catch {
         // ignore
       }
+      void AdminService.removeRoomPlayer(prevBaseRoomId, this.localPlayerId);
+      if (wasLastInRoom) {
+        void AdminService.upsertRoomHeartbeat({
+          roomId: prevBaseRoomId,
+          hostName: prevHostName,
+          sceneId: prevScene,
+          playerCount: 0,
+        });
+      }
       this.emitRoomStatus();
     }
   }
@@ -356,7 +493,12 @@ export class MultiplayerManager {
 
   isHost(): boolean {
     if (!this.connected) return true; // Offline mode: local user controls stage
+    if (this.baseRoomId === PUBLIC_LOBBY_ROOM_ID) return false;
     return this.hostId === this.localPlayerId;
+  }
+
+  isLocalAdmin(): boolean {
+    return this.localIsAdmin;
   }
 
   getLocalPlayerId(): string {
@@ -380,6 +522,7 @@ export class MultiplayerManager {
       name: p.name,
       isHost: p.playerId === this.hostId,
       isLocal: p.playerId === this.localPlayerId,
+      isAdmin: Boolean(p.isAdmin),
     }));
 
     return {
@@ -387,6 +530,7 @@ export class MultiplayerManager {
       roomId: this.roomId,
       localPlayerId: this.localPlayerId,
       localPlayerName: this.localPlayerName,
+      localIsAdmin: this.localIsAdmin,
       isHost: this.isHost(),
       hostId: this.hostId,
       hostName: this.hostName,
@@ -419,7 +563,7 @@ export class MultiplayerManager {
       return;
     }
 
-    const sig = `${state.x.toFixed(2)},${state.y.toFixed(2)},${state.z.toFixed(2)},${state.yaw.toFixed(1)},${state.anim},${state.emote ?? ''},${state.isSitting ? 1 : 0},${state.chairId ?? ''}`;
+    const sig = `${state.x.toFixed(2)},${state.y.toFixed(2)},${state.z.toFixed(2)},${state.yaw.toFixed(1)},${state.anim},${state.emote ?? ''},${state.isSitting ? 1 : 0},${state.chairId ?? ''},${this.localAvatarColor}`;
 
     if (sig === this.lastSentSig && now - this.lastBroadcastTime < 1500) {
       return;
@@ -442,6 +586,7 @@ export class MultiplayerManager {
       emote: state.emote,
       isSitting: state.isSitting,
       chairId: state.chairId,
+      avatarColor: this.localAvatarColor,
       joinedAt: this.joinedAt,
       seq: this.localSeq,
     };
@@ -455,7 +600,7 @@ export class MultiplayerManager {
 
   broadcastStageState(stage: NetworkStageState): void {
     this.hostStageState = stage;
-    if (!this.connected || !this.channel || !this.isHost()) return;
+    if (!this.connected || !this.channel || (!this.isHost() && !this.localIsAdmin)) return;
 
     void this.channel.send({
       type: 'broadcast',
@@ -472,11 +617,20 @@ export class MultiplayerManager {
   }
 
   broadcastStageLiveSync(): void {
-    if (!this.connected || !this.channel || !this.isHost()) return;
+    if (!this.connected || !this.channel || (!this.isHost() && !this.localIsAdmin)) return;
     void this.channel.send({
       type: 'broadcast',
       event: 'stage:sync-live',
       payload: { updatedAt: Date.now() },
+    });
+  }
+
+  broadcastLoungeAudio(playing: boolean): void {
+    if (!this.connected || !this.channel || (!this.isHost() && !this.localIsAdmin)) return;
+    void this.channel.send({
+      type: 'broadcast',
+      event: 'lounge:audio',
+      payload: { playing, updatedAt: Date.now() },
     });
   }
 
@@ -531,6 +685,21 @@ export class MultiplayerManager {
       type: 'broadcast',
       event: 'voice:signal',
       payload,
+    });
+  }
+
+  broadcastApplause(x = 0, z = 0): void {
+    if (!this.connected || !this.channel) return;
+    void this.channel.send({
+      type: 'broadcast',
+      event: 'stage:applause',
+      payload: {
+        playerId: this.localPlayerId,
+        playerName: this.localPlayerName,
+        x,
+        z,
+        timestamp: Date.now(),
+      },
     });
   }
 
@@ -616,6 +785,8 @@ export class MultiplayerManager {
     const payload: PresencePayload = {
       playerId: this.localPlayerId,
       name: this.localPlayerName,
+      isAdmin: this.localIsAdmin,
+      avatarColor: this.localAvatarColor,
       joinedAt: this.joinedAt,
       chairId: this.localChairId,
       ...(this.isHost() && this.hostStageState ? { stageState: this.hostStageState } : {}),
@@ -720,6 +891,8 @@ export class MultiplayerManager {
       if (existing) {
         existing.name = p.name;
         existing.chairId = p.chairId;
+        existing.isAdmin = Boolean(p.isAdmin);
+        if (p.avatarColor) existing.avatarColor = p.avatarColor;
       } else {
         this.remotePlayers.set(p.playerId, {
           id: p.playerId,
@@ -734,13 +907,67 @@ export class MultiplayerManager {
           emote: null,
           isSitting: false,
           chairId: p.chairId,
+          isAdmin: Boolean(p.isAdmin),
+          avatarColor: p.avatarColor,
           joinedAt: p.joinedAt,
           seq: 0,
         });
       }
     }
 
+    if (this.isHost()) {
+      void this.syncRoomRegistry();
+    }
     this.emitRoomStatus();
+  }
+
+  private startRoomHeartbeat(): void {
+    this.stopRoomHeartbeat();
+    this.roomHeartbeatTimer = window.setInterval(() => {
+      if (this.connected) {
+        void this.syncSelfPlayerRow();
+        if (this.isHost()) {
+          void this.syncRoomRegistry();
+        }
+      }
+    }, 30_000);
+  }
+
+  private stopRoomHeartbeat(): void {
+    if (this.roomHeartbeatTimer !== null) {
+      window.clearInterval(this.roomHeartbeatTimer);
+      this.roomHeartbeatTimer = null;
+    }
+  }
+
+  private async syncSelfPlayerRow(): Promise<void> {
+    if (!this.connected || this.baseRoomId === PUBLIC_LOBBY_ROOM_ID) return;
+    await AdminService.upsertRoomPlayer({
+      roomId: this.baseRoomId,
+      playerId: this.localPlayerId,
+      playerName: this.localPlayerName,
+      deviceId: this.localDeviceId,
+      sceneId: this.sceneScopeId || 'ca-van-nghe-lobby',
+      isHost: this.isHost(),
+      isAdmin: this.localIsAdmin,
+    });
+  }
+
+  private async syncRoomRegistry(): Promise<void> {
+    if (!this.connected || this.baseRoomId === PUBLIC_LOBBY_ROOM_ID) return;
+    const count = Math.max(1, this.presenceList.length);
+    await Promise.all([
+      this.syncSelfPlayerRow(),
+      AdminService.upsertRoomHeartbeat({
+        roomId: this.baseRoomId,
+        roomName: this.baseRoomId,
+        hostName: this.hostName || this.localPlayerName,
+        sceneId: this.sceneScopeId || 'ca-van-nghe-lobby',
+        playerCount: count,
+        hasPassword: Boolean(this.roomPassword),
+        password: this.roomPassword,
+      }),
+    ]);
   }
 
   private handleRemotePlayerState(payload: RemotePlayerState): void {
@@ -758,6 +985,7 @@ export class MultiplayerManager {
       existing.emote = payload.emote;
       existing.isSitting = payload.isSitting;
       existing.chairId = payload.chairId;
+      if (payload.avatarColor) existing.avatarColor = payload.avatarColor;
       existing.seq = payload.seq ?? existing.seq + 1;
     } else {
       this.remotePlayers.set(payload.id, { ...payload });

@@ -8,15 +8,27 @@ class AmbientLoungeAudio {
     this.timer = null;
     this.currentChord = 0;
     this.lastFootstepTime = 0;
+    this.duckFactor = 1.0;
+    this.busGain = null;
   }
 
   init() {
     if (!this.ctx) {
       const AudioContext = window.AudioContext || window.webkitAudioContext;
       this.ctx = new AudioContext();
+      this.busGain = this.ctx.createGain();
+      this.busGain.gain.value = this.duckFactor;
+      this.busGain.connect(this.ctx.destination);
     }
     if (this.ctx.state === 'suspended') {
       this.ctx.resume();
+    }
+  }
+
+  setDucked(ducked) {
+    this.duckFactor = ducked ? 0.12 : 1.0;
+    if (this.ctx && this.busGain) {
+      this.busGain.gain.setTargetAtTime(this.duckFactor, this.ctx.currentTime, 0.25);
     }
   }
 
@@ -41,7 +53,7 @@ class AmbientLoungeAudio {
     filter.Q.setValueAtTime(1.2, now);
 
     masterGain.connect(filter);
-    filter.connect(this.ctx.destination);
+    filter.connect(this.busGain || this.ctx.destination);
 
     notes.forEach((freq, idx) => {
       const osc = this.ctx.createOscillator();
@@ -146,30 +158,46 @@ class AmbientLoungeAudio {
     osc.stop(now + 0.19);
   }
 
-  // Applause / clap sound effect
-  playClapSound() {
+  // Layered applause / clap sound effect with optional stereo pan & distance gain
+  playClapSound(pan = 0, distanceGain = 1.0) {
+    this.init();
     if (!this.ctx) return;
     const now = this.ctx.currentTime;
-    const osc = this.ctx.createOscillator();
-    const gain = this.ctx.createGain();
-    const filter = this.ctx.createBiquadFilter();
+    const clampedGain = Math.max(0.05, Math.min(1.0, distanceGain));
+    const panner =
+      typeof this.ctx.createStereoPanner === 'function' ? this.ctx.createStereoPanner() : null;
+    if (panner) {
+      panner.pan.setValueAtTime(Math.max(-1, Math.min(1, pan)), now);
+      panner.connect(this.ctx.destination);
+    }
+    const dest = panner || this.ctx.destination;
 
-    osc.type = 'triangle';
-    osc.frequency.setValueAtTime(350, now);
-    osc.frequency.exponentialRampToValueAtTime(120, now + 0.05);
+    // 4 quick layered noise claps to feel like real lounge applause
+    for (let i = 0; i < 4; i++) {
+      const t = now + i * 0.11 + Math.random() * 0.03;
+      const bufSize = Math.floor(this.ctx.sampleRate * 0.07);
+      const buffer = this.ctx.createBuffer(1, bufSize, this.ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let j = 0; j < bufSize; j++) {
+        data[j] = (Math.random() * 2 - 1) * Math.exp(-j / (bufSize * 0.28));
+      }
+      const src = this.ctx.createBufferSource();
+      src.buffer = buffer;
 
-    filter.type = 'highpass';
-    filter.frequency.setValueAtTime(600, now);
+      const bp = this.ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.setValueAtTime(1100 + Math.random() * 500, t);
+      bp.Q.setValueAtTime(1.4, t);
 
-    gain.gain.setValueAtTime(0.08, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.06);
+      const g = this.ctx.createGain();
+      g.gain.setValueAtTime(0.18 * clampedGain, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.075);
 
-    osc.connect(filter);
-    filter.connect(gain);
-    gain.connect(this.ctx.destination);
-
-    osc.start(now);
-    osc.stop(now + 0.07);
+      src.connect(bp);
+      bp.connect(g);
+      g.connect(dest);
+      src.start(t);
+    }
   }
 
   start() {

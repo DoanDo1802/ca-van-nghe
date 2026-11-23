@@ -1,9 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  GripHorizontal,
   ListMusic,
   Loader2,
   LogOut,
   Maximize2,
+  Menu,
   Mic,
   MicOff,
   Minimize2,
@@ -19,6 +21,7 @@ import {
   Youtube,
 } from 'lucide-react';
 import { KARAOKE_SONGS, karaokeAudio, type KaraokeSong } from '../../utils/karaokeAudio';
+import { loungeAudio } from '../../utils/audio';
 import { MultiplayerManager } from '../../network/MultiplayerManager';
 import { KaraokeVoiceManager } from '../../network/KaraokeVoiceManager';
 
@@ -53,15 +56,19 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
   const [queue, setQueue] = useState<KaraokeSong[]>([KARAOKE_SONGS[1], KARAOKE_SONGS[2]]);
   const [youtubeVideoId, setYoutubeVideoId] = useState<string | null>(null);
   const [customFileName, setCustomFileName] = useState<string | null>(null);
-  const [isPlayerCompact, setIsPlayerCompact] = useState(false);
+  const [isPlayerCompact, setIsPlayerCompact] = useState(true);
+  const [playerPos, setPlayerPos] = useState<{ x: number; y: number } | null>(null);
+  const [isDraggingPlayer, setIsDraggingPlayer] = useState(false);
 
   const [isFilePlaying, setIsFilePlaying] = useState(false);
   const [micEnabled, setMicEnabled] = useState(false);
   const [micError, setMicError] = useState<string | null>(null);
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isMixerOpen, setIsMixerOpen] = useState(false);
   const [inputDevices, setInputDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState('');
   const [echoCancellation, setEchoCancellation] = useState(true);
+  const [localMonitor, setLocalMonitor] = useState(() => karaokeAudio.isLocalMonitorEnabled());
   const [micGain, setMicGain] = useState(3.4);
   const [echoAmount, setEchoAmount] = useState(0.55);
   const [bassDb, setBassDb] = useState(3.5);
@@ -73,6 +80,67 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const ytIframeRef = useRef<HTMLIFrameElement>(null);
+  const lastYtPlayingRef = useRef<boolean | null>(null);
+  const playerBoxRef = useRef<HTMLDivElement>(null);
+  const dragStateRef = useRef<{
+    pointerId: number;
+    offsetX: number;
+    offsetY: number;
+  } | null>(null);
+
+  const clampPlayerPos = (x: number, y: number) => {
+    const boxW = playerBoxRef.current?.offsetWidth ?? 240;
+    const boxH = playerBoxRef.current?.offsetHeight ?? 165;
+    const maxX = Math.max(8, window.innerWidth - boxW - 8);
+    const maxY = Math.max(8, window.innerHeight - boxH - 8);
+    return {
+      x: Math.max(8, Math.min(maxX, x)),
+      y: Math.max(8, Math.min(maxY, y)),
+    };
+  };
+
+  useEffect(() => {
+    const onResize = () => {
+      setPlayerPos((prev) => (prev ? clampPlayerPos(prev.x, prev.y) : null));
+    };
+    window.addEventListener('resize', onResize);
+    window.addEventListener('orientationchange', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      window.removeEventListener('orientationchange', onResize);
+    };
+  }, []);
+
+  const handlePlayerPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if ((e.target as HTMLElement).closest('button')) return;
+    const box = playerBoxRef.current;
+    if (!box) return;
+    const rect = box.getBoundingClientRect();
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+    dragStateRef.current = {
+      pointerId: e.pointerId,
+      offsetX: e.clientX - rect.left,
+      offsetY: e.clientY - rect.top,
+    };
+    setIsDraggingPlayer(true);
+    setPlayerPos(clampPlayerPos(rect.left, rect.top));
+  };
+
+  const handlePlayerPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const drag = dragStateRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+    setPlayerPos(clampPlayerPos(e.clientX - drag.offsetX, e.clientY - drag.offsetY));
+  };
+
+  const handlePlayerPointerEnd = (e: React.PointerEvent<HTMLDivElement>) => {
+    const drag = dragStateRef.current;
+    if (!drag || drag.pointerId !== e.pointerId) return;
+    dragStateRef.current = null;
+    setIsDraggingPlayer(false);
+    if (e.currentTarget.hasPointerCapture?.(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+  };
 
   const applyYoutubeVolume = (vol: number) => {
     const win = ytIframeRef.current?.contentWindow;
@@ -84,10 +152,12 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
   };
 
   useEffect(() => {
+    loungeAudio.setDucked(isOpen);
     if (!isOpen) {
       karaokeAudio.stop();
       karaokeAudio.disableMic();
       setMicEnabled(false);
+      setIsMenuOpen(false);
       setIsMixerOpen(false);
       setIsFilePlaying(false);
       setYoutubeVideoId(null);
@@ -128,8 +198,56 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
       });
       karaokeAudio.disableMic();
       karaokeAudio.stop();
+      loungeAudio.setDucked(false);
     };
   }, []);
+
+  useEffect(() => {
+    if (!isOpen || !youtubeVideoId) {
+      lastYtPlayingRef.current = null;
+      return;
+    }
+    const onMessage = (e: MessageEvent) => {
+      if (
+        typeof e.origin === 'string' &&
+        !e.origin.includes('youtube.com') &&
+        !e.origin.includes('youtube-nocookie.com')
+      ) {
+        return;
+      }
+      if (typeof e.data !== 'string') return;
+      let parsed: { event?: string; info?: number | { playerState?: number } } | null = null;
+      try {
+        parsed = JSON.parse(e.data);
+      } catch {
+        return;
+      }
+      if (!parsed) return;
+      let playerState: number | undefined;
+      if (
+        parsed.event === 'infoDelivery' &&
+        typeof parsed.info === 'object' &&
+        parsed.info !== null &&
+        typeof parsed.info.playerState === 'number'
+      ) {
+        playerState = parsed.info.playerState;
+      } else if (parsed.event === 'onStateChange' && typeof parsed.info === 'number') {
+        playerState = parsed.info;
+      }
+      if (playerState === undefined) return;
+      const nextPlaying = playerState === 1 ? true : playerState === 2 || playerState === 0 ? false : null;
+      if (nextPlaying === null || lastYtPlayingRef.current === nextPlaying) return;
+      lastYtPlayingRef.current = nextPlaying;
+      MultiplayerManager.getInstance().broadcastKaraokeState({
+        active: true,
+        youtubeVideoId,
+        title: activeSong?.title ?? 'YouTube Karaoke',
+        isPlaying: nextPlaying,
+      });
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, [isOpen, youtubeVideoId, activeSong?.title]);
 
   const displayedSongs = useMemo(() => {
     if (ytResults) return ytResults;
@@ -201,6 +319,7 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
     setIsFilePlaying(false);
     setActiveSong(song);
     setYoutubeVideoId(song.youtubeId);
+    lastYtPlayingRef.current = true;
     setIsPickerOpen(false);
     MultiplayerManager.getInstance().broadcastKaraokeState({
       active: true,
@@ -220,10 +339,17 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
     karaokeAudio.play(() => setIsFilePlaying(false));
     setIsFilePlaying(true);
     setIsPickerOpen(false);
+    MultiplayerManager.getInstance().broadcastKaraokeState({
+      active: true,
+      youtubeVideoId: null,
+      title: name,
+      isPlaying: true,
+    });
     e.target.value = '';
   };
 
   const handleToggleFilePlay = () => {
+    const next = !isFilePlaying;
     if (isFilePlaying) {
       karaokeAudio.pause();
       setIsFilePlaying(false);
@@ -231,6 +357,12 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
       karaokeAudio.play(() => setIsFilePlaying(false));
       setIsFilePlaying(true);
     }
+    MultiplayerManager.getInstance().broadcastKaraokeState({
+      active: true,
+      youtubeVideoId: null,
+      title: customFileName ?? 'Nhạc tải lên',
+      isPlaying: next,
+    });
   };
 
   const handleToggleMic = async () => {
@@ -323,29 +455,43 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
   };
 
   return (
-    <div className="fixed inset-0 pointer-events-none flex flex-col justify-between p-3 sm:p-5 z-30">
-      {/* Top Bar: Player + Stage Pill Controls */}
-      <div className="flex items-start justify-between gap-3">
+    <div className="fixed inset-0 pointer-events-none flex flex-col justify-between p-2.5 sm:p-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-[max(0.75rem,env(safe-area-inset-top))] z-30">
+      {/* Top Bar: Draggable Compact Player + Single-Row Controls */}
+      <div className="flex flex-col sm:flex-row items-start justify-between gap-2 sm:gap-3">
         {/* Live YouTube Karaoke Video Player */}
         {youtubeVideoId ? (
           <div
-            className={`pointer-events-auto rounded-xl overflow-hidden bg-black border border-white/15 shadow-2xl transition-all ${
-              isPlayerCompact ? 'w-60 sm:w-72' : 'w-80 sm:w-[440px]'
+            ref={playerBoxRef}
+            style={playerPos ? { left: playerPos.x, top: playerPos.y } : undefined}
+            className={`pointer-events-auto rounded-xl overflow-hidden bg-black/95 border border-white/15 shadow-2xl ${
+              playerPos ? 'fixed z-40' : 'relative'
+            } ${
+              isPlayerCompact
+                ? 'w-[215px] sm:w-[240px]'
+                : 'w-[min(295px,calc(100vw-1.25rem))] sm:w-[360px]'
             }`}
           >
-            <div className="flex items-center justify-between gap-2 px-3 py-1.5 bg-[#0f0f0f] text-xs text-neutral-200">
-              <span className="inline-flex items-center gap-1.5 font-medium truncate">
+            <div
+              onPointerDown={handlePlayerPointerDown}
+              onPointerMove={handlePlayerPointerMove}
+              onPointerUp={handlePlayerPointerEnd}
+              onPointerCancel={handlePlayerPointerEnd}
+              title="Kéo để di chuyển khung video"
+              className="flex items-center justify-between gap-1.5 px-2.5 py-1 bg-[#0f0f0f] text-[11px] text-neutral-200 touch-none cursor-grab active:cursor-grabbing select-none"
+            >
+              <span className="inline-flex items-center gap-1 font-medium truncate min-w-0">
+                <GripHorizontal className="w-3.5 h-3.5 text-neutral-500 shrink-0" />
                 <Youtube className="w-3.5 h-3.5 text-red-500 shrink-0" />
                 <span className="truncate">{activeSong?.title ?? 'YouTube Karaoke'}</span>
               </span>
-              <div className="flex items-center gap-1 shrink-0">
+              <div className="flex items-center gap-0.5 shrink-0">
                 {queue.length > 0 && (
                   <button
                     onClick={handleNextInQueue}
-                    className="px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 text-[10px] font-semibold"
+                    className="px-1.5 py-0.5 rounded bg-white/10 hover:bg-white/20 text-[10px] font-semibold"
                     title="Bài tiếp theo trong hàng chờ"
                   >
-                    Bài tiếp ({queue.length})
+                    Tiếp ({queue.length})
                   </button>
                 )}
                 <button
@@ -353,25 +499,39 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
                   className="p-1 text-neutral-400 hover:text-white"
                   title={isPlayerCompact ? 'Phóng to màn hình hát' : 'Thu nhỏ màn hình hát'}
                 >
-                  {isPlayerCompact ? <Maximize2 className="w-3.5 h-3.5" /> : <Minimize2 className="w-3.5 h-3.5" />}
+                  {isPlayerCompact ? <Maximize2 className="w-3 h-3" /> : <Minimize2 className="w-3 h-3" />}
                 </button>
                 <button
-                  onClick={() => setYoutubeVideoId(null)}
+                  onClick={() => {
+                    setYoutubeVideoId(null);
+                    setActiveSong(null);
+                    MultiplayerManager.getInstance().broadcastKaraokeState({
+                      active: false,
+                      youtubeVideoId: null,
+                      title: '',
+                      isPlaying: false,
+                    });
+                  }}
                   className="p-1 text-neutral-400 hover:text-white"
                 >
-                  <X className="w-3.5 h-3.5" />
+                  <X className="w-3 h-3" />
                 </button>
               </div>
             </div>
             <iframe
               ref={ytIframeRef}
               key={youtubeVideoId}
-              className="w-full aspect-video"
-              src={`https://www.youtube.com/embed/${youtubeVideoId}?autoplay=1&rel=0&modestbranding=1&enablejsapi=1`}
+              className={`w-full aspect-video ${isDraggingPlayer ? 'pointer-events-none' : ''}`}
+              src={`https://www.youtube.com/embed/${youtubeVideoId}?autoplay=1&rel=0&modestbranding=1&enablejsapi=1&origin=${encodeURIComponent(window.location.origin)}`}
               title="YouTube Karaoke Player"
               allow="autoplay; encrypted-media; picture-in-picture"
               allowFullScreen
               onLoad={() => {
+                const win = ytIframeRef.current?.contentWindow;
+                win?.postMessage(
+                  JSON.stringify({ event: 'listening', id: 1, channel: 'widget' }),
+                  '*'
+                );
                 applyYoutubeVolume(musicVolume);
                 window.setTimeout(() => applyYoutubeVolume(musicVolume), 600);
                 window.setTimeout(() => applyYoutubeVolume(musicVolume), 1500);
@@ -391,6 +551,13 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
               onClick={() => {
                 karaokeAudio.stop();
                 setCustomFileName(null);
+                setIsFilePlaying(false);
+                MultiplayerManager.getInstance().broadcastKaraokeState({
+                  active: false,
+                  youtubeVideoId: null,
+                  title: '',
+                  isPlaying: false,
+                });
               }}
               className="text-neutral-400 hover:text-white"
             >
@@ -401,90 +568,132 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
           <div />
         )}
 
-        <div className="pointer-events-auto relative flex flex-col items-end">
-          <div className="flex flex-wrap items-center justify-end gap-2">
-            <button
-              onClick={() => setIsPickerOpen((p) => !p)}
-              className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold backdrop-blur-xl border transition shadow-lg ${
-                isPickerOpen
-                  ? 'bg-red-600 text-white border-red-400/50'
-                  : 'bg-neutral-950/80 hover:bg-neutral-900 text-white border-white/15'
-              }`}
-            >
-              <Search className="w-3.5 h-3.5" />
-              Chọn bài hát
-              {queue.length > 0 && (
-                <span className="ml-0.5 px-1.5 rounded-full bg-white/20 text-[10px]">
-                  {queue.length}
+        <div className="pointer-events-auto fixed top-[max(0.75rem,env(safe-area-inset-top))] right-3 z-40">
+          <button
+            type="button"
+            onClick={() => {
+              if (isMixerOpen) {
+                setIsMixerOpen(false);
+                setIsMenuOpen(true);
+              } else {
+                setIsMenuOpen((o) => !o);
+              }
+            }}
+            aria-label="Mở menu Karaoke"
+            className="relative w-10 h-10 rounded-xl bg-[#121212]/90 hover:bg-[#1e1e1e] border border-white/15 text-white backdrop-blur-xl shadow-xl flex items-center justify-center transition"
+          >
+            {isMenuOpen || isMixerOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
+            {micEnabled && (
+              <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            )}
+          </button>
+
+          {isMenuOpen && (
+            <div className="absolute right-0 top-full mt-2 w-56 rounded-2xl bg-[#121212]/95 backdrop-blur-2xl border border-white/15 shadow-2xl p-1.5 space-y-1 text-xs text-neutral-200">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsPickerOpen((p) => !p);
+                  setIsMenuOpen(false);
+                }}
+                className={`w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl font-medium transition ${
+                  isPickerOpen ? 'bg-red-600/85 text-white' : 'hover:bg-white/10 text-neutral-100'
+                }`}
+              >
+                <span className="flex items-center gap-2">
+                  <Search className="w-3.5 h-3.5" />
+                  <span>Chọn bài hát</span>
                 </span>
-              )}
-            </button>
+                {queue.length > 0 && (
+                  <span className="px-1.5 py-0.5 rounded-full bg-white/15 text-[10px] font-mono">
+                    {queue.length}
+                  </span>
+                )}
+              </button>
 
-            <button
-              onClick={handleToggleMic}
-              title={micError ?? 'Bật Micro thật với hiệu ứng Echo'}
-              className={`inline-flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold backdrop-blur-xl border transition shadow-lg ${
-                micEnabled
-                  ? 'bg-emerald-600/85 text-white border-emerald-400/50'
-                  : 'bg-neutral-950/80 hover:bg-neutral-900 text-neutral-200 border-white/15'
-              }`}
-            >
-              {micEnabled ? <Mic className="w-3.5 h-3.5" /> : <MicOff className="w-3.5 h-3.5" />}
-              <span>{micEnabled ? 'Mic Bật' : 'Mic'}</span>
-              {micEnabled && (
-                <span className="w-8 h-1.5 rounded-full bg-black/40 overflow-hidden">
-                  <span
-                    className="block h-full bg-emerald-200 transition-[width] duration-75"
-                    style={{ width: `${Math.round(micLevel * 100)}%` }}
-                  />
+              <button
+                type="button"
+                onClick={() => void handleToggleMic()}
+                title={micError ?? 'Bật Micro thật với hiệu ứng Echo'}
+                className={`w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl font-medium transition ${
+                  micEnabled
+                    ? 'bg-emerald-600/30 text-emerald-200 border border-emerald-400/35'
+                    : 'hover:bg-white/10 text-neutral-200'
+                }`}
+              >
+                <span className="flex items-center gap-2">
+                  {micEnabled ? <Mic className="w-3.5 h-3.5" /> : <MicOff className="w-3.5 h-3.5" />}
+                  <span>Micro</span>
                 </span>
-              )}
-            </button>
+                <span className="flex items-center gap-1.5">
+                  {micEnabled && (
+                    <span className="w-8 h-1.5 rounded-full bg-black/40 overflow-hidden">
+                      <span
+                        className="block h-full bg-emerald-300 transition-[width] duration-75"
+                        style={{ width: `${Math.round(micLevel * 100)}%` }}
+                      />
+                    </span>
+                  )}
+                  <span className="text-[11px] text-neutral-400">
+                    {micEnabled ? 'Đang bật' : 'Đang tắt'}
+                  </span>
+                </span>
+              </button>
 
-            <button
-              onClick={handleToggleStyle}
-              className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold backdrop-blur-xl border transition shadow-lg ${
-                style === 'dance'
-                  ? 'bg-fuchsia-600/80 text-white border-fuchsia-400/50'
-                  : 'bg-neutral-950/80 hover:bg-neutral-900 text-neutral-200 border-white/15'
-              }`}
-            >
-              <Sparkles className="w-3.5 h-3.5" />
-              {style === 'dance' ? 'Phiêu' : 'Nhẹ'}
-            </button>
+              <button
+                type="button"
+                onClick={handleToggleStyle}
+                className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl hover:bg-white/10 font-medium text-neutral-200 transition"
+              >
+                <span className="flex items-center gap-2">
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>Phong cách</span>
+                </span>
+                <span
+                  className={`px-2 py-0.5 rounded-md text-[10px] font-semibold ${
+                    style === 'dance'
+                      ? 'bg-fuchsia-500/25 text-fuchsia-200 border border-fuchsia-400/35'
+                      : 'bg-white/10 text-neutral-300'
+                  }`}
+                >
+                  {style === 'dance' ? 'Phiêu' : 'Nhẹ'}
+                </span>
+              </button>
 
-            <button
-              onClick={() => {
-                setIsMixerOpen((o) => {
-                  const next = !o;
-                  if (next) {
-                    void karaokeAudio.listInputDevices().then(setInputDevices);
-                  }
-                  return next;
-                });
-              }}
-              title="Cài đặt đầu vào & Âm thanh Mic"
-              className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold backdrop-blur-xl border transition shadow-lg ${
-                isMixerOpen
-                  ? 'bg-amber-500 text-stone-950 border-amber-300'
-                  : 'bg-neutral-950/80 hover:bg-neutral-900 text-neutral-200 border-white/15'
-              }`}
-            >
-              <SlidersHorizontal className="w-3.5 h-3.5" />
-              Âm thanh
-            </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsMenuOpen(false);
+                  setIsMixerOpen(true);
+                  void karaokeAudio.listInputDevices().then(setInputDevices);
+                }}
+                className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl hover:bg-white/10 font-medium text-neutral-200 transition"
+              >
+                <span className="flex items-center gap-2">
+                  <SlidersHorizontal className="w-3.5 h-3.5" />
+                  <span>Âm thanh</span>
+                </span>
+                <span className="text-[11px] text-neutral-400">Mixer</span>
+              </button>
 
-            <button
-              onClick={onExit}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-neutral-950/80 hover:bg-rose-600/85 text-neutral-200 hover:text-white border border-white/15 text-xs font-semibold backdrop-blur-xl transition shadow-lg"
-            >
-              <LogOut className="w-3.5 h-3.5" />
-              Xuống (E)
-            </button>
-          </div>
+              <div className="border-t border-white/10 my-1" />
+
+              <button
+                type="button"
+                onClick={() => {
+                  setIsMenuOpen(false);
+                  onExit();
+                }}
+                className="w-full flex items-center gap-2 px-3 py-2 rounded-xl hover:bg-rose-600/80 text-rose-300 hover:text-white font-medium transition"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span>Xuống sân khấu</span>
+              </button>
+            </div>
+          )}
 
           {isMixerOpen && (
-            <div className="absolute right-0 top-full mt-2 z-40 w-80 rounded-2xl bg-[#121212]/95 backdrop-blur-2xl border border-white/15 shadow-2xl p-3.5 text-xs text-neutral-200 space-y-3">
+            <div className="absolute right-0 top-full mt-2 z-40 w-[min(320px,calc(100vw-1.5rem))] max-h-[75dvh] overflow-y-auto rounded-2xl bg-[#121212]/95 backdrop-blur-2xl border border-white/15 shadow-2xl p-3.5 text-xs text-neutral-200 space-y-3">
               <div className="flex items-center justify-between border-b border-white/10 pb-2">
                 <span className="font-semibold text-white flex items-center gap-1.5">
                   <SlidersHorizontal className="w-3.5 h-3.5 text-amber-400" />
@@ -551,6 +760,24 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
                   Loa ngoài (Chống hú)
                 </button>
               </div>
+
+              {/* Local Self-Monitoring Toggle */}
+              <button
+                type="button"
+                onClick={() => {
+                  const next = !localMonitor;
+                  setLocalMonitor(next);
+                  karaokeAudio.setLocalMonitor(next);
+                }}
+                className={`w-full py-1.5 px-2.5 rounded-lg text-[11px] font-medium border flex items-center justify-between transition ${
+                  localMonitor
+                    ? 'bg-white/10 text-white border-white/20'
+                    : 'bg-white/5 text-neutral-400 border-white/10 hover:bg-white/10'
+                }`}
+              >
+                <span>Tự nghe giọng mình (Monitor)</span>
+                <span className="font-mono">{localMonitor ? 'BẬT' : 'TẮT'}</span>
+              </button>
 
               {/* 3 Quick Presets */}
               <div className="flex items-center gap-1.5">

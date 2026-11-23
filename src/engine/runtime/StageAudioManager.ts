@@ -235,16 +235,23 @@ export class StageAudioManager {
     MultiplayerManager.getInstance().setOnRemoteStageLiveSync(() => {
       this.applyRemoteLiveSync();
     });
+
+    MultiplayerManager.getInstance().requestStageResync();
   }
 
   getState(): StageMediaState {
     return { ...this.state };
   }
 
+  private canControlStage(): boolean {
+    const mp = MultiplayerManager.getInstance();
+    return !mp.isConnected() || mp.isHost() || mp.isLocalAdmin();
+  }
+
   setMedia(url: string, title?: string): void {
     const trimmed = url.trim();
     if (!trimmed) return;
-    if (!MultiplayerManager.getInstance().isHost()) return;
+    if (!this.canControlStage()) return;
     this.state.sourceType = 'media';
     this.state.domVideoFallback = false;
     this.state.youtubeVideoId = null;
@@ -264,7 +271,7 @@ export class StageAudioManager {
   setYouTube(videoId: string, title?: string): void {
     const id = videoId.trim();
     if (!id) return;
-    if (!MultiplayerManager.getInstance().isHost()) return;
+    if (!this.canControlStage()) return;
     this.state.sourceType = 'youtube';
     this.state.domVideoFallback = false;
     this.state.youtubeVideoId = id;
@@ -288,7 +295,7 @@ export class StageAudioManager {
   }
 
   setPlaying(playing: boolean): void {
-    if (!MultiplayerManager.getInstance().isHost()) return;
+    if (!this.canControlStage()) return;
     this.state.isPlaying = playing;
     if (this.state.sourceType === 'media') {
       this.ensureAudioGraph();
@@ -320,10 +327,13 @@ export class StageAudioManager {
     this.ensureAudioGraph();
     this.syncGain();
     this.emitStateChanged();
+    if (this.canControlStage()) {
+      this.broadcastIfHost();
+    }
   }
 
   setScreenOn(on: boolean): void {
-    if (!MultiplayerManager.getInstance().isHost()) return;
+    if (!this.canControlStage()) return;
     this.state.isScreenOn = on;
     this.syncScreenVisual();
     this.syncGain();
@@ -333,7 +343,7 @@ export class StageAudioManager {
 
   /** Host-only: seek local stream to live edge and notify all connected clients to update. */
   syncToLiveEdge(): void {
-    if (!MultiplayerManager.getInstance().isHost()) return;
+    if (!this.canControlStage()) return;
     if (this.state.sourceType === 'media' && this.state.mediaUrl.startsWith('blob:')) return;
     this.seekLocalToLiveEdge();
     MultiplayerManager.getInstance().broadcastStageLiveSync();
@@ -374,6 +384,9 @@ export class StageAudioManager {
     this.state.title = remote.title;
     this.state.isPlaying = remote.isPlaying;
     this.state.isScreenOn = remote.isScreenOn;
+    if (typeof remote.isMuted === 'boolean') {
+      this.state.isMuted = remote.isMuted;
+    }
 
     if (remote.sourceType === 'youtube') {
       this.state.domVideoFallback = false;
@@ -396,7 +409,7 @@ export class StageAudioManager {
 
   private broadcastIfHost(): void {
     const mp = MultiplayerManager.getInstance();
-    if (!mp.isConnected() || !mp.isHost()) return;
+    if (!mp.isConnected() || (!mp.isHost() && !mp.isLocalAdmin())) return;
     mp.broadcastStageState({
       sourceType: this.state.sourceType,
       mediaUrl: this.state.mediaUrl,
@@ -404,6 +417,7 @@ export class StageAudioManager {
       title: this.state.title,
       isPlaying: this.state.isPlaying,
       isScreenOn: this.state.isScreenOn,
+      isMuted: this.state.isMuted,
       updatedAt: Date.now(),
     });
   }

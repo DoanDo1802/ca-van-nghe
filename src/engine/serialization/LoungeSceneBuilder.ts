@@ -760,6 +760,47 @@ export function buildLobbyEnvironmentShell(
     interactTitle: 'Phòng Trà Acoustic',
   });
 
+  // Central Lobby Hub Kiosk in front of the 2 doors (Rooms, Account & Avatar Color)
+  const kiosk = new pc.Entity('Lobby_Hub_Kiosk');
+  kiosk.setLocalPosition(0, 0, -6.2);
+  sceneRoot.addChild(kiosk);
+
+  kiosk.addChild(createBox('Kiosk Base', [0, 0.52, 0], [1.9, 1.04, 0.78], mats.stageDark, { castShadows: true, collider: true }));
+  kiosk.addChild(createBox('Kiosk Velvet Front', [0, 0.5, 0.4], [1.7, 0.82, 0.03], mats.velvetRed));
+  kiosk.addChild(createBox('Kiosk Counter', [0, 1.06, 0], [2.04, 0.08, 0.92], mats.timberDark, { castShadows: true }));
+  kiosk.addChild(createBox('Kiosk Brass Trim', [0, 1.04, 0.46], [2.06, 0.04, 0.04], mats.goldBorder));
+  kiosk.addChild(createBox('Kiosk LED Accent', [0, 0.03, 0.41], [1.88, 0.03, 0.03], mats.ledGold));
+
+  const kioskScreenMat = makeMat(engine, {
+    diffuse: [0.06, 0.07, 0.1],
+    emissive: [1, 1, 1],
+    emissiveIntensity: 1.25,
+    useLighting: false,
+  });
+  kioskScreenMat.name = 'lounge:kioskSign';
+  const app = engine.getApp();
+  if (app) {
+    const tex = createDoorSignTexture(
+      app,
+      (t) => engine.registerExternalResources(() => t.destroy()),
+      'QUẦY PHÒNG & TÀI KHOẢN',
+      'RẠP PHIM • KARAOKE • ĐỔI MÀU',
+      '#e5c07b'
+    );
+    kioskScreenMat.emissiveMap = tex;
+    kioskScreenMat.update();
+  }
+  kiosk.addChild(createBox('Kiosk Stand Left', [-0.72, 1.38, -0.15], [0.08, 0.62, 0.08], mats.brass));
+  kiosk.addChild(createBox('Kiosk Stand Right', [0.72, 1.38, -0.15], [0.08, 0.62, 0.08], mats.brass));
+  kiosk.addChild(createBox('Kiosk Board Frame', [0, 1.68, -0.12], [1.72, 0.66, 0.06], mats.brass));
+  kiosk.addChild(createBox('Kiosk Board Screen', [0, 1.68, -0.08], [1.62, 0.56, 0.02], kioskScreenMat));
+
+  attachDoorInteractable(kiosk, 'Interactable', [
+    { name: 'interactId', type: 'string', value: 'lobby_hub_kiosk' },
+    { name: 'interactTitle', type: 'string', value: 'Quầy Chọn Phòng & Tài Khoản' },
+    { name: 'interactDistance', type: 'number', value: 3.4 },
+  ]);
+
   return shell;
 }
 
@@ -1453,4 +1494,115 @@ export async function buildAcousticStageOnly(
     }
     acousticStage.addChild(board);
   }
+}
+
+/**
+ * Builds focused stage-only decoration for TeaRoom_Scene using real PBR GLB stage equipment
+ * that complements the sculpted red velvet curtain & band gear in `every_other_gig_ever.glb`:
+ * - 1x Front-center MicStand aligned with the singer spot
+ * - Slim matte-black overhead lighting pipe with 5x real Fresnel LED spotlights aimed at the stage
+ * - 2x warm curtain uplights grazing the stage red velvet backdrop
+ */
+export async function buildTeaRoomGalaTheatreDeco(
+  engine: EditorEngine,
+  sceneRoot: pc.Entity,
+  mats: SharedLoungeMaterials,
+  fetchBuffer: (url: string) => Promise<ArrayBuffer>,
+  assetIdByUrl: Map<string, string>,
+  matCache?: GlbMaterialCache
+): Promise<pc.Entity> {
+  const app = engine.getApp();
+  const root = new pc.Entity('Gala_Stage_Deco');
+  sceneRoot.addChild(root);
+  if (!app) return root;
+
+  const cache = matCache ?? new Map<string, Map<pc.Material, pc.StandardMaterial>>();
+
+  const [fresnelBuf, micStandBuf] = await Promise.all([
+    fetchBuffer('/models/fresnel-led.glb'),
+    fetchBuffer('/models/MicStand.glb'),
+  ]);
+
+  const spawnGlb = async (
+    url: string,
+    buf: ArrayBuffer,
+    name: string,
+    pos: [number, number, number],
+    rot: [number, number, number],
+    scale: [number, number, number],
+    customizeMat?: (mat: pc.StandardMaterial) => void
+  ): Promise<pc.Entity> => {
+    const filename = url.split('/').pop() || 'model.glb';
+    const assetId = assetIdByUrl.get(url);
+    const loaded = await loadGlbFromArrayBuffer(app, buf, filename, assetId ?? url);
+    engine.registerExternalResources(loaded.destroyResources);
+    const entity = loaded.entity;
+    enhanceGlbMaterials(engine, entity, url, cache, customizeMat);
+    entity.name = name;
+    entity.setLocalPosition(pos[0], pos[1], pos[2]);
+    entity.setLocalEulerAngles(rot[0], rot[1], rot[2]);
+    entity.setLocalScale(scale[0], scale[1], scale[2]);
+    if (assetId) {
+      getEntityMeta(entity).render = { meshAssetId: assetId };
+    }
+    return entity;
+  };
+
+  // 1. Front-center MicStand right in front of singer position (15.65, 0.36, 3.0)
+  const micStand = await spawnGlb(
+    '/models/MicStand.glb',
+    micStandBuf,
+    'Acoustic_Front_MicStand',
+    [15.18, 0.36, 3.0],
+    [0, -90, 0],
+    [1, 1, 1]
+  );
+  root.addChild(micStand);
+
+  // 2. Slim matte-black overhead front lighting pipe & 5x real Fresnel LED spotlights
+  root.addChild(createBox('Acoustic Front Pipe', [12.6, 6.22, 3.0], [0.1, 0.1, 10.2], mats.trussMetal));
+  for (const rz of [-1.8, 7.8]) {
+    root.addChild(createBox(`Acoustic Pipe Hanger ${rz}`, [12.6, 6.61, rz], [0.05, 0.78, 0.05], mats.trussMetal));
+  }
+  for (const fz of [-0.6, 1.2, 3.0, 4.8, 6.6]) {
+    const fr = await spawnGlb(
+      '/models/fresnel-led.glb',
+      fresnelBuf,
+      `Acoustic_Fresnel_${fz}`,
+      [12.6, 5.45, fz],
+      [0, 0, 0],
+      [1.35, 1.35, 1.35],
+      (mat) => {
+        if ((mat.name || '').toLowerCase().includes('bulb')) {
+          mat.emissive = new pc.Color().fromString('#ffd089');
+          mat.emissiveIntensity = 2.2;
+          mat.update();
+        }
+      }
+    );
+    fr.lookAt(16.2, 0.8, fz * 0.65 + 1.05);
+    root.addChild(fr);
+  }
+
+  // 4. Warm curtain uplights grazing the stage velvet backdrop for depth
+  for (const [label, uz] of [
+    ['North', -0.2],
+    ['South', 6.2],
+  ] as const) {
+    const uplight = new pc.Entity(`Stage_Curtain_Uplight_${label}`);
+    uplight.addComponent('light', {
+      type: 'spot',
+      color: new pc.Color().fromString('#ffae52'),
+      intensity: 2.4,
+      range: 10,
+      innerConeAngle: 24,
+      outerConeAngle: 52,
+      castShadows: false,
+    });
+    uplight.setLocalPosition(17.5, 0.55, uz);
+    uplight.lookAt(18.5, 4.2, uz);
+    root.addChild(uplight);
+  }
+
+  return root;
 }

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import NavigationHUD from '../../components/NavigationHUD';
 import MobileControls from '../../components/MobileControls';
 import DetailModal from '../../components/DetailModal';
@@ -9,14 +9,23 @@ import { KaraokeAudienceSync } from './KaraokeAudienceSync';
 import { RemoteNameplates } from '../../components/RemoteNameplates';
 import { ChatBox } from '../../components/ChatBox';
 import { VoiceChatBar } from '../../components/VoiceChatBar';
-import { MultiplayerManager, type RoomStatusSnapshot } from '../../network/MultiplayerManager';
+import { LobbyHubModal, type LobbyHubTab } from '../../components/LobbyHubModal';
+import {
+  MultiplayerManager,
+  PUBLIC_LOBBY_ROOM_ID,
+  type RoomStatusSnapshot,
+} from '../../network/MultiplayerManager';
+import { AdminService } from '../../network/AdminService';
+import { isSupabaseConfigured } from '../../network/supabaseClient';
 import { INTERACTIVE_OBJECTS } from '../../data/sceneData';
 import { loungeAudio } from '../../utils/audio';
 import { EditorEngine } from '../../engine/EditorEngine';
 import {
+  CINEMA_SCENE_ID,
   getSceneDefinition,
   isSceneEnabledInBuild,
   LOBBY_SCENE_ID,
+  TEAROOM_SCENE_ID,
 } from '../../engine/serialization/SceneRegistry';
 import type { StageMediaState } from '../../engine/runtime';
 import type { NearbyPromptData } from '../../engine/runtime/PlayerControllerRuntime';
@@ -48,27 +57,77 @@ export const GameOverlayUI: React.FC = () => {
   const [isScreenOn, setIsScreenOn] = useState(true);
   const [activeEmote, setActiveEmote] = useState<string | null>(null);
   const [isKaraokeOpen, setIsKaraokeOpen] = useState(false);
-  const [isRoomHost, setIsRoomHost] = useState(() => MultiplayerManager.getInstance().isHost());
+  const [roomStatus, setRoomStatus] = useState<RoomStatusSnapshot>(() =>
+    MultiplayerManager.getInstance().getRoomStatus()
+  );
+  const canOpenSettings = !roomStatus.connected || roomStatus.isHost || roomStatus.localIsAdmin;
+  const canOpenSettingsRef = useRef(canOpenSettings);
+  canOpenSettingsRef.current = canOpenSettings;
   const [stageErrorToast, setStageErrorToast] = useState<string | null>(null);
+  const [isHubModalOpen, setIsHubModalOpen] = useState(false);
+  const [hubInitialTab, setHubInitialTab] = useState<LobbyHubTab>('cinema');
+  const currentSceneIdRef = useRef(currentSceneId);
+  currentSceneIdRef.current = currentSceneId;
 
-  const requestSceneTransition = useCallback((targetSceneId: string) => {
-    const cleanId = targetSceneId.trim();
-    if (!cleanId) return;
-    if (!isSceneEnabledInBuild(cleanId)) {
-      const def = getSceneDefinition(cleanId);
-      setStageErrorToast(
-        `Scene "${def.name}" chưa được tích chọn trong Build Settings (Scenes In Build).`
-      );
-      return;
+  useEffect(() => {
+    if (!canOpenSettings) {
+      setIsSettingsOpen(false);
     }
+  }, [canOpenSettings]);
 
+  const enterSceneDirect = useCallback((cleanId: string) => {
     setNearbyPrompt(null);
     setSelectedObjectId(null);
     setIsSitting(false);
     setIsKaraokeOpen(false);
     setIsStageModalOpen(false);
+    setIsHubModalOpen(false);
     void EditorEngine.getInstance().loadSceneById(cleanId, { keepPlayMode: true });
   }, []);
+
+  const requestSceneTransition = useCallback(
+    (targetSceneId: string) => {
+      const cleanId = targetSceneId.trim();
+      if (!cleanId) return;
+      if (!isSceneEnabledInBuild(cleanId)) {
+        const def = getSceneDefinition(cleanId);
+        setStageErrorToast(
+          `Scene "${def.name}" chưa được tích chọn trong Build Settings (Scenes In Build).`
+        );
+        return;
+      }
+
+      // From Lobby, entering Cinema or TeaRoom goes through the Room & Account Hub Modal
+      if (
+        isSupabaseConfigured() &&
+        currentSceneIdRef.current === LOBBY_SCENE_ID &&
+        (cleanId === CINEMA_SCENE_ID || cleanId === TEAROOM_SCENE_ID)
+      ) {
+        setHubInitialTab(cleanId === TEAROOM_SCENE_ID ? 'tearoom' : 'cinema');
+        setIsHubModalOpen(true);
+        return;
+      }
+
+      // Returning from Cinema/TeaRoom back to Shared Public Lobby Hall
+      if (cleanId === LOBBY_SCENE_ID && isSupabaseConfigured()) {
+        const mp = MultiplayerManager.getInstance();
+        const saved = AdminService.getSavedPlayerAccount();
+        const displayName =
+          saved?.display_name ||
+          saved?.username ||
+          localStorage.getItem('cavannghe:player-name') ||
+          'Khách Lounge';
+        enterSceneDirect(LOBBY_SCENE_ID);
+        void mp.joinRoom(PUBLIC_LOBBY_ROOM_ID, displayName, LOBBY_SCENE_ID, {
+          bypassLimits: true,
+        });
+        return;
+      }
+
+      enterSceneDirect(cleanId);
+    },
+    [enterSceneDirect]
+  );
 
   useEffect(() => {
     const unsubScene = EditorEngine.getInstance().eventBus.on('scene:loaded', ({ sceneId }) => {
@@ -84,6 +143,9 @@ export const GameOverlayUI: React.FC = () => {
       const objId = (e as CustomEvent<string>).detail;
       if (objId?.startsWith('load_scene:')) {
         requestSceneTransition(objId.slice('load_scene:'.length));
+      } else if (objId === 'lobby_hub_kiosk') {
+        setHubInitialTab('cinema');
+        setIsHubModalOpen(true);
       } else if (objId === 'stage_screen') {
         setIsStageModalOpen(true);
       } else {
@@ -112,7 +174,9 @@ export const GameOverlayUI: React.FC = () => {
       if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
       if (e.code === 'Tab') {
         e.preventDefault();
-        setIsSettingsOpen((prev) => !prev);
+        if (canOpenSettingsRef.current) {
+          setIsSettingsOpen((prev) => !prev);
+        }
       } else if (e.code === 'Escape') {
         setIsSettingsOpen(false);
         setSelectedObjectId(null);
@@ -140,7 +204,18 @@ export const GameOverlayUI: React.FC = () => {
 
     const onRoomStatus = (e: Event) => {
       const detail = (e as CustomEvent<RoomStatusSnapshot>).detail;
-      if (detail) setIsRoomHost(detail.isHost);
+      if (detail) setRoomStatus(detail);
+    };
+
+    const onRemoteLoungeAudio = (e: Event) => {
+      const detail = (e as CustomEvent<{ playing?: boolean }>).detail;
+      if (!detail || typeof detail.playing !== 'boolean') return;
+      if (detail.playing) {
+        loungeAudio.start();
+      } else {
+        loungeAudio.stop();
+      }
+      setIsAudioPlaying(detail.playing);
     };
 
     window.addEventListener('cavannghe:proximity', onProximity);
@@ -152,6 +227,7 @@ export const GameOverlayUI: React.FC = () => {
     window.addEventListener('cavannghe:stage-audio-changed', onStageAudioChanged);
     window.addEventListener('cavannghe:stage-media-error', onStageError);
     window.addEventListener('cavannghe:room-status', onRoomStatus);
+    window.addEventListener('cavannghe:remote-lounge-audio', onRemoteLoungeAudio);
     window.addEventListener('keydown', onKeyDown);
 
     return () => {
@@ -165,6 +241,7 @@ export const GameOverlayUI: React.FC = () => {
       window.removeEventListener('cavannghe:stage-audio-changed', onStageAudioChanged);
       window.removeEventListener('cavannghe:stage-media-error', onStageError);
       window.removeEventListener('cavannghe:room-status', onRoomStatus);
+      window.removeEventListener('cavannghe:remote-lounge-audio', onRemoteLoungeAudio);
       window.removeEventListener('keydown', onKeyDown);
     };
   }, [requestSceneTransition]);
@@ -180,6 +257,7 @@ export const GameOverlayUI: React.FC = () => {
   const handleToggleAudio = () => {
     const playing = loungeAudio.toggle();
     setIsAudioPlaying(playing);
+    MultiplayerManager.getInstance().broadcastLoungeAudio(playing);
   };
 
   const handleTriggerInteract = () => {
@@ -194,6 +272,9 @@ export const GameOverlayUI: React.FC = () => {
     if (nearbyPrompt?.type === 'object') {
       if (nearbyPrompt.id === 'karaoke_stage') {
         window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyE' }));
+      } else if (nearbyPrompt.id === 'lobby_hub_kiosk') {
+        setHubInitialTab('cinema');
+        setIsHubModalOpen(true);
       } else if (nearbyPrompt.id === 'stage_screen') {
         setIsStageModalOpen(true);
       } else {
@@ -206,7 +287,8 @@ export const GameOverlayUI: React.FC = () => {
 
   const handleTriggerEmote = (emoteName: string) => {
     if (emoteName === 'clap') {
-      loungeAudio.playClapSound();
+      loungeAudio.playClapSound(0, 0.85);
+      MultiplayerManager.getInstance().broadcastApplause();
     }
     setActiveEmote((prev) => {
       const next = prev === emoteName ? null : emoteName;
@@ -224,7 +306,9 @@ export const GameOverlayUI: React.FC = () => {
       <RemoteNameplates />
       <div className="relative z-10 pointer-events-auto">
         <NavigationHUD
-          onOpenSettings={() => setIsSettingsOpen(true)}
+          onOpenSettings={() => {
+            if (canOpenSettings) setIsSettingsOpen(true);
+          }}
           nearbyPrompt={nearbyPrompt}
           isSitting={isSitting}
           onTriggerInteract={handleTriggerInteract}
@@ -234,6 +318,8 @@ export const GameOverlayUI: React.FC = () => {
           currentSceneId={currentSceneId}
           currentSceneName={currentSceneName}
           onGoToLobby={() => requestSceneTransition(LOBBY_SCENE_ID)}
+          roomStatus={roomStatus}
+          canOpenSettings={canOpenSettings}
         />
 
         <MobileControls
@@ -241,6 +327,13 @@ export const GameOverlayUI: React.FC = () => {
             window.dispatchEvent(new CustomEvent('cavannghe:mobile-move', { detail: vec }))
           }
           onAction={handleTriggerInteract}
+          onToggleCamera={() => {
+            setCameraMode((prev) => (prev === 'third' ? 'first' : 'third'));
+            window.dispatchEvent(new CustomEvent('cavannghe:toggle-camera'));
+          }}
+          nearbyPrompt={nearbyPrompt}
+          isSitting={isSitting}
+          hidden={isKaraokeOpen}
         />
 
         <KaraokeOverlay
@@ -250,7 +343,7 @@ export const GameOverlayUI: React.FC = () => {
 
         <KaraokeAudienceSync isSingingLocal={isKaraokeOpen} />
 
-        <ChatBox />
+        <ChatBox hideOnMobile={isKaraokeOpen} />
 
         {ENABLE_VOICE_CHAT && <VoiceChatBar isKaraokeOpen={isKaraokeOpen} />}
 
@@ -271,7 +364,7 @@ export const GameOverlayUI: React.FC = () => {
           isOpen={isStageModalOpen}
           onClose={() => setIsStageModalOpen(false)}
           spatialMode
-          isHost={isRoomHost}
+          isHost={canOpenSettings}
           onResyncStage={() => MultiplayerManager.getInstance().requestStageResync()}
           onSyncLiveEdge={() => EditorEngine.getInstance().syncStageToLiveEdge()}
           sourceType={stageSourceType}
@@ -331,7 +424,7 @@ export const GameOverlayUI: React.FC = () => {
         />
 
         <SettingsModal
-          isOpen={isSettingsOpen}
+          isOpen={isSettingsOpen && canOpenSettings}
           onClose={() => setIsSettingsOpen(false)}
           cameraMode={cameraMode}
           onToggleCameraMode={() => {
@@ -367,6 +460,13 @@ export const GameOverlayUI: React.FC = () => {
           onResetLayout={undefined}
           activeEmote={activeEmote}
           onTriggerEmote={handleTriggerEmote}
+        />
+
+        <LobbyHubModal
+          isOpen={isHubModalOpen}
+          initialTab={hubInitialTab}
+          onClose={() => setIsHubModalOpen(false)}
+          onEnterModeRoom={(sceneId) => enterSceneDirect(sceneId)}
         />
 
         {stageErrorToast && (

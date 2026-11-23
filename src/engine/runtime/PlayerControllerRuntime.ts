@@ -1,5 +1,6 @@
 import * as pc from 'playcanvas';
 import { MultiplayerManager } from '../../network/MultiplayerManager';
+import { applyAvatarColor } from '../../utils/avatarColor';
 import { getEntityMeta } from '../serialization/EntityComponentHelper';
 import { KaraokeStageController } from './KaraokeStageController';
 
@@ -51,6 +52,10 @@ const ACOUSTIC_STAGE_SOLIDS: SolidBox[] = [
   { minX: 18.02, maxX: 18.55, minZ: 1.55, maxZ: 3.82 },
 ];
 
+const LOBBY_KIOSK_SOLIDS: SolidBox[] = [
+  { minX: -1.18, maxX: 1.18, minZ: -6.8, maxZ: -5.6 },
+];
+
 const STAGE_RADIUS = 0.25;
 const WALK_SPEED = 4.5;
 const RUN_SPEED = 7.5;
@@ -100,6 +105,7 @@ export class PlayerControllerRuntime {
   private lastPromptDoorSceneId: string | null = null;
   private hasMainStage = false;
   private hasAcousticStage = false;
+  private hasLobbyKiosk = false;
   private roomBounds = { minX: -18.2, maxX: 18.2, minZ: -16.2, maxZ: 16.2 };
   private cameraOccluders: CameraOccluderBox[] = [];
 
@@ -108,6 +114,9 @@ export class PlayerControllerRuntime {
   private isKaraokeDragging = false;
   private lastPointerX = 0;
   private lastPointerY = 0;
+  private lookTouchId: number | null = null;
+  private lastTouchX = 0;
+  private lastTouchY = 0;
   private cameraSensitivity = (() => {
     const saved = Number(localStorage.getItem('cavannghe:cam-sensitivity'));
     return Number.isFinite(saved) && saved >= 0.2 && saved <= 3 ? saved : 1.0;
@@ -155,6 +164,10 @@ export class PlayerControllerRuntime {
     this.canvas.addEventListener('mouseleave', this.onMouseLeave);
     window.addEventListener('mousemove', this.onMouseMove);
     window.addEventListener('mouseup', this.onMouseUp);
+    this.canvas.addEventListener('touchstart', this.onTouchStart, { passive: false });
+    this.canvas.addEventListener('touchmove', this.onTouchMove, { passive: false });
+    this.canvas.addEventListener('touchend', this.onTouchEnd);
+    this.canvas.addEventListener('touchcancel', this.onTouchEnd);
     document.addEventListener('pointerlockchange', this.onPointerLockChange);
     window.addEventListener('cavannghe:mobile-move', this.onMobileMove as EventListener);
     window.addEventListener('cavannghe:toggle-camera', this.onToggleCamera);
@@ -163,6 +176,7 @@ export class PlayerControllerRuntime {
     window.addEventListener('cavannghe:emote', this.onEmote as EventListener);
     window.addEventListener('cavannghe:karaoke-exit', this.onKaraokeExit);
     window.addEventListener('cavannghe:karaoke-style', this.onKaraokeStyle as EventListener);
+    window.addEventListener('cavannghe:avatar-color', this.onAvatarColor as EventListener);
     pc.Application.getApplication()?.on('postUpdate', this.onPostUpdate);
 
     this.updateCameraTransform(1);
@@ -217,6 +231,10 @@ export class PlayerControllerRuntime {
     this.canvas.removeEventListener('mouseleave', this.onMouseLeave);
     window.removeEventListener('mousemove', this.onMouseMove);
     window.removeEventListener('mouseup', this.onMouseUp);
+    this.canvas.removeEventListener('touchstart', this.onTouchStart);
+    this.canvas.removeEventListener('touchmove', this.onTouchMove);
+    this.canvas.removeEventListener('touchend', this.onTouchEnd);
+    this.canvas.removeEventListener('touchcancel', this.onTouchEnd);
     document.removeEventListener('pointerlockchange', this.onPointerLockChange);
     if (document.pointerLockElement === this.canvas) {
       document.exitPointerLock?.();
@@ -228,6 +246,7 @@ export class PlayerControllerRuntime {
     window.removeEventListener('cavannghe:emote', this.onEmote as EventListener);
     window.removeEventListener('cavannghe:karaoke-exit', this.onKaraokeExit);
     window.removeEventListener('cavannghe:karaoke-style', this.onKaraokeStyle as EventListener);
+    window.removeEventListener('cavannghe:avatar-color', this.onAvatarColor as EventListener);
     this.keys.clear();
     this.emitProximity(null);
   }
@@ -281,6 +300,7 @@ export class PlayerControllerRuntime {
       const stageSolids = [
         ...(this.hasMainStage ? MAIN_STAGE_SOLIDS : []),
         ...(this.hasAcousticStage ? ACOUSTIC_STAGE_SOLIDS : []),
+        ...(this.hasLobbyKiosk ? LOBBY_KIOSK_SOLIDS : []),
       ];
 
       // Resolve solid boxes on stage
@@ -692,9 +712,53 @@ export class PlayerControllerRuntime {
     this.pitch = pc.math.clamp(this.pitch - dy * 0.18 * this.cameraSensitivity, -60, 45);
   };
 
+  private onTouchStart = (e: TouchEvent): void => {
+    if (e.target !== this.canvas || this.lookTouchId !== null) return;
+    const touch = e.changedTouches[0];
+    if (!touch) return;
+    this.lookTouchId = touch.identifier;
+    this.lastTouchX = touch.clientX;
+    this.lastTouchY = touch.clientY;
+  };
+
+  private onTouchMove = (e: TouchEvent): void => {
+    if (this.lookTouchId === null) return;
+    let activeTouch: Touch | null = null;
+    for (let i = 0; i < e.touches.length; i++) {
+      if (e.touches[i].identifier === this.lookTouchId) {
+        activeTouch = e.touches[i];
+        break;
+      }
+    }
+    if (!activeTouch) return;
+    e.preventDefault();
+    const dx = activeTouch.clientX - this.lastTouchX;
+    const dy = activeTouch.clientY - this.lastTouchY;
+    this.lastTouchX = activeTouch.clientX;
+    this.lastTouchY = activeTouch.clientY;
+    this.yaw -= dx * 0.28 * this.cameraSensitivity;
+    this.pitch = pc.math.clamp(this.pitch - dy * 0.22 * this.cameraSensitivity, -60, 45);
+  };
+
+  private onTouchEnd = (e: TouchEvent): void => {
+    if (this.lookTouchId === null) return;
+    for (let i = 0; i < e.changedTouches.length; i++) {
+      if (e.changedTouches[i].identifier === this.lookTouchId) {
+        this.lookTouchId = null;
+        break;
+      }
+    }
+  };
+
   private onCameraSensitivity = (e: CustomEvent<number>): void => {
     if (typeof e.detail === 'number' && Number.isFinite(e.detail)) {
       this.cameraSensitivity = Math.max(0.2, Math.min(3.0, e.detail));
+    }
+  };
+
+  private onAvatarColor = (e: CustomEvent<string>): void => {
+    if (typeof e.detail === 'string' && this.playerEntity) {
+      applyAvatarColor(this.playerEntity, e.detail);
     }
   };
 
@@ -736,6 +800,7 @@ export class PlayerControllerRuntime {
   private detectRoomEnvironment(): void {
     this.hasMainStage = Boolean(this.sceneRoot.findByName('Main_Stage'));
     this.hasAcousticStage = Boolean(this.sceneRoot.findByName('Acoustic_Stage'));
+    this.hasLobbyKiosk = Boolean(this.sceneRoot.findByName('Lobby_Hub_Kiosk'));
     this.collectCameraOccluders();
 
     const floorNames = ['Lobby Floor', 'Lounge Floor', 'TeaRoom Floor'];
