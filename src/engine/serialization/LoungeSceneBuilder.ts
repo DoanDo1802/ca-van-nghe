@@ -1442,52 +1442,26 @@ export async function buildAcousticStageOnly(
   acousticStage.addChild(createBox('Acoustic LED Strip Step', [14.4, 0.196, 3], [0.02, 0.02, 8.8], mats.ledGold));
   acousticStage.addChild(createBox('Acoustic LED Strip Deck', [14.95, 0.382, 3], [0.02, 0.02, 9.4], mats.ledGold));
 
-  if (isMobileSceneDevice()) {
-    // Lightweight procedural theater backdrop & monitors on mobile to avoid OOM from the 92MB GLB
-    const curtainGroup = new pc.Entity('Acoustic Backdrop (Mobile)');
-    for (let i = 0; i < 11; i++) {
-      const z = -1.3 + i * 0.86;
-      const depth = i % 2 === 0 ? 0.18 : 0.12;
-      curtainGroup.addChild(
-        createBox(`Velvet Drape ${i}`, [18.52, 2.75, z], [depth, 4.7, 0.78], mats.velvetRed)
-      );
-    }
-    curtainGroup.addChild(
-      createBox('Curtain Valance Top', [18.35, 5.05, 3.0], [0.42, 0.45, 9.5], mats.velvetRed)
-    );
-    curtainGroup.addChild(
-      createBox('Stage Back Truss', [18.2, 5.3, 3.0], [0.16, 0.2, 9.6], mats.trussMetal)
-    );
-    for (const wz of [0.2, 5.8]) {
-      curtainGroup.addChild(
-        createBox(`Stage Monitor Wedge ${wz}`, [15.45, 0.48, wz], [0.42, 0.24, 0.65], mats.cabinetDark)
-      );
-      curtainGroup.addChild(
-        createBox(`Amp Cabinet Stack ${wz}`, [17.65, 1.05, wz], [0.6, 1.35, 0.95], mats.cabinetDark)
-      );
-      curtainGroup.addChild(
-        createBox(`Amp Trim ${wz}`, [17.34, 1.48, wz], [0.03, 0.06, 0.72], mats.brass)
-      );
-    }
-    acousticStage.addChild(curtainGroup);
-  } else {
-    const gigUrl = '/models/every_other_gig_ever.glb';
-    const gigBuf = await fetchBuffer(gigUrl);
-    const gigAssetId = assetIdByUrl.get(gigUrl);
-    const gigLoaded = await loadGlbFromArrayBuffer(app, gigBuf, 'every_other_gig_ever.glb', gigAssetId ?? gigUrl);
-    engine.registerExternalResources(gigLoaded.destroyResources);
-    const gig = gigLoaded.entity;
-    enhanceGlbMaterials(engine, gig, gigUrl, cache);
-    hideGigRoomShell(gig);
-    gig.name = 'Acoustic Live Band Gear';
-    gig.setLocalPosition(16.414, -0.245, 2.335);
-    gig.setLocalEulerAngles(0, -90, 0);
-    gig.setLocalScale(0.14, 0.14, 0.14);
-    if (gigAssetId) {
-      getEntityMeta(gig).render = { meshAssetId: gigAssetId };
-    }
-    acousticStage.addChild(gig);
+  const isMobile = isMobileSceneDevice();
+  const gigUrl = isMobile
+    ? '/models/every_other_gig_ever_mobile.glb'
+    : '/models/every_other_gig_ever.glb';
+  const gigFileName = isMobile ? 'every_other_gig_ever_mobile.glb' : 'every_other_gig_ever.glb';
+  const gigBuf = await fetchBuffer(gigUrl);
+  const gigAssetId = assetIdByUrl.get(gigUrl);
+  const gigLoaded = await loadGlbFromArrayBuffer(app, gigBuf, gigFileName, gigAssetId ?? gigUrl);
+  engine.registerExternalResources(gigLoaded.destroyResources);
+  const gig = gigLoaded.entity;
+  enhanceGlbMaterials(engine, gig, gigUrl, cache);
+  hideGigRoomShell(gig);
+  gig.name = 'Acoustic Live Band Gear';
+  gig.setLocalPosition(16.414, -0.245, 2.335);
+  gig.setLocalEulerAngles(0, -90, 0);
+  gig.setLocalScale(0.14, 0.14, 0.14);
+  if (gigAssetId) {
+    getEntityMeta(gig).render = { meshAssetId: gigAssetId };
   }
+  acousticStage.addChild(gig);
 
   // 2x PF_LED_Board with live video texture (`/media/bello-ballo.mp4`)
   const videoHandle = createVideoScreenMaterial(app, '/media/bello-ballo.mp4');

@@ -251,7 +251,9 @@ export async function importCaVanNgheSceneById(
   const rawUniqueUrls = Array.from(new Set(sceneDef.modelUrls));
   const uniqueUrls =
     isMobile && sceneDef.id === TEAROOM_SCENE_ID
-      ? rawUniqueUrls.filter((u) => !u.includes('every_other_gig_ever.glb'))
+      ? rawUniqueUrls.map((u) =>
+          u.includes('every_other_gig_ever.glb') ? '/models/every_other_gig_ever_mobile.glb' : u
+        )
       : rawUniqueUrls;
   const bufferCache = new Map<string, ArrayBuffer>();
   const fileFractions = new Map<string, number>();
