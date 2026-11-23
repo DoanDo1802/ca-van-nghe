@@ -99,6 +99,7 @@ export class KaraokeVoiceManager {
     });
 
     window.addEventListener('cavannghe:room-status', this.onRoomStatus);
+    window.addEventListener('cavannghe:room-left', this.onRoomLeft);
     window.addEventListener('cavannghe:channel-subscribed', this.onChannelSubscribed);
     window.addEventListener('pointerdown', this.onUserGesture, { passive: true });
     window.addEventListener('keydown', this.onUserGesture, { passive: true });
@@ -112,6 +113,7 @@ export class KaraokeVoiceManager {
     if (!this.listenerInitialized) return;
     this.listenerInitialized = false;
     window.removeEventListener('cavannghe:room-status', this.onRoomStatus);
+    window.removeEventListener('cavannghe:room-left', this.onRoomLeft);
     window.removeEventListener('cavannghe:channel-subscribed', this.onChannelSubscribed);
     window.removeEventListener('pointerdown', this.onUserGesture);
     window.removeEventListener('keydown', this.onUserGesture);
@@ -238,20 +240,26 @@ export class KaraokeVoiceManager {
     }
   }
 
+  private onRoomLeft = (): void => {
+    this.stopBroadcasting();
+    for (const id of [...this.incomingPeers.keys()]) {
+      this.cleanupIncomingPeer(id);
+    }
+    for (const id of [...this.voiceSinks.keys()]) {
+      this.cleanupIncomingPeer(id);
+    }
+  };
+
   private onRoomStatus = (e: Event): void => {
     const status = (e as CustomEvent<RoomStatusSnapshot>).detail;
     if (!status) return;
 
     if (!status.connected) {
-      if (this.isBroadcasting) {
-        this.stopBroadcasting();
+      // Close transient RTCPeerConnections but keep localStream/isBroadcasting intact so voice resumes on reconnect
+      for (const pc of this.outgoingPeers.values()) {
+        pc.close();
       }
-      for (const id of [...this.incomingPeers.keys()]) {
-        this.cleanupIncomingPeer(id);
-      }
-      for (const id of [...this.voiceSinks.keys()]) {
-        this.cleanupIncomingPeer(id);
-      }
+      this.outgoingPeers.clear();
       return;
     }
 

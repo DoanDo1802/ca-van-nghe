@@ -113,6 +113,36 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
     };
   }, []);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    setPlayerPos((prev) => (prev ? clampPlayerPos(prev.x, prev.y) : null));
+  }, [isOpen, isPlayerCompact, youtubeVideoId]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const onSubscribed = () => {
+      if (youtubeVideoId) {
+        MultiplayerManager.getInstance().broadcastKaraokeState({
+          active: true,
+          youtubeVideoId,
+          title: activeSong?.title ?? 'YouTube Karaoke',
+          isPlaying: lastYtPlayingRef.current ?? true,
+          currentTime: ytCurrentTimeRef.current,
+        });
+      } else if (customFileName) {
+        MultiplayerManager.getInstance().broadcastKaraokeState({
+          active: true,
+          youtubeVideoId: null,
+          title: customFileName,
+          isPlaying: isFilePlaying,
+          currentTime: karaokeAudio.getCurrentTime(),
+        });
+      }
+    };
+    window.addEventListener('cavannghe:channel-subscribed', onSubscribed);
+    return () => window.removeEventListener('cavannghe:channel-subscribed', onSubscribed);
+  }, [isOpen, youtubeVideoId, activeSong?.title, customFileName, isFilePlaying]);
+
   const handlePlayerPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if ((e.target as HTMLElement).closest('button')) return;
     const box = playerBoxRef.current;

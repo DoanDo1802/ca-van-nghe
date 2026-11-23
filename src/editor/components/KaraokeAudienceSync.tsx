@@ -59,14 +59,6 @@ export const KaraokeAudienceSync: React.FC<KaraokeAudienceSyncProps> = ({ isSing
       loungeAudio.setDucked(false);
     };
 
-    const onRoomStatus = (e: Event) => {
-      const detail = (e as CustomEvent<{ connected?: boolean }>).detail;
-      if (detail && !detail.connected) {
-        setRemoteKaraoke(null);
-        loungeAudio.setDucked(false);
-      }
-    };
-
     const onRemoteApplause = (e: Event) => {
       const detail = (e as CustomEvent<{ playerId?: string; x?: number }>).detail;
       const remotes = mp.getRemotePlayers();
@@ -78,12 +70,10 @@ export const KaraokeAudienceSync: React.FC<KaraokeAudienceSyncProps> = ({ isSing
     };
 
     window.addEventListener('cavannghe:room-left', onRoomLeft);
-    window.addEventListener('cavannghe:room-status', onRoomStatus);
     window.addEventListener('cavannghe:remote-applause', onRemoteApplause);
 
     return () => {
       window.removeEventListener('cavannghe:room-left', onRoomLeft);
-      window.removeEventListener('cavannghe:room-status', onRoomStatus);
       window.removeEventListener('cavannghe:remote-applause', onRemoteApplause);
       mp.setOnRemoteKaraoke(null);
       voice.destroyListener();

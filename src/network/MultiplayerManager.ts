@@ -124,6 +124,10 @@ export class MultiplayerManager {
 
   private channel: RealtimeChannel | null = null;
   private connected = false;
+  private desiredRoomActive = false;
+  private roomSessionId = 0;
+  private reconnectTimer: number | null = null;
+  private reconnectAttempt = 0;
   private baseRoomId = 'ca-van-nghe-1';
   private sceneScopeId = '';
   private roomId = 'ca-van-nghe-1';
@@ -165,18 +169,33 @@ export class MultiplayerManager {
     if (typeof window !== 'undefined') {
       window.addEventListener('pagehide', () => this.sendUnloadCleanup());
       window.addEventListener('beforeunload', () => this.sendUnloadCleanup());
+      window.addEventListener('online', () => this.handleForegroundRecovery());
     }
     if (typeof document !== 'undefined') {
       document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible' && this.connected) {
-          void this.trackLocalPresence();
+        if (document.visibilityState === 'visible') {
+          this.handleForegroundRecovery();
         }
       });
     }
   }
 
+  private handleForegroundRecovery(): void {
+    if (!this.desiredRoomActive) return;
+    if (this.connected && this.channel) {
+      void this.trackLocalPresence();
+      void this.syncSelfPlayerRow();
+      if (this.isHost()) {
+        void this.syncRoomRegistry();
+      }
+    } else if (this.reconnectTimer === null) {
+      this.reconnectAttempt = 0;
+      this.scheduleReconnect(this.roomSessionId, 150);
+    }
+  }
+
   private sendUnloadCleanup(): void {
-    if (!this.connected || !this.baseRoomId || this.baseRoomId === PUBLIC_LOBBY_ROOM_ID) return;
+    if (!this.desiredRoomActive || !this.baseRoomId || this.baseRoomId === PUBLIC_LOBBY_ROOM_ID) return;
     const cfg = getSupabaseRestConfig();
     if (!cfg) return;
     const headers = {
@@ -185,6 +204,8 @@ export class MultiplayerManager {
       'Content-Type': 'application/json',
     };
     try {
+      // Only remove this player's row on unload; never force player_count=0 based on
+      // potentially stale local presenceList so other active players keep the room alive.
       void fetch(`${cfg.url}/rest/v1/rpc/remove_room_player`, {
         method: 'POST',
         keepalive: true,
@@ -194,20 +215,6 @@ export class MultiplayerManager {
           p_player_id: this.localPlayerId,
         }),
       });
-      if (this.presenceList.length <= 1) {
-        void fetch(`${cfg.url}/rest/v1/rpc/upsert_room_heartbeat`, {
-          method: 'POST',
-          keepalive: true,
-          headers,
-          body: JSON.stringify({
-            p_room_id: this.baseRoomId,
-            p_room_name: this.baseRoomId,
-            p_host_name: this.hostName || this.localPlayerName,
-            p_scene_id: this.sceneScopeId || 'ca-van-nghe-lobby',
-            p_player_count: 0,
-          }),
-        });
-      }
     } catch {
       // ignore unload network errors
     }
@@ -294,7 +301,12 @@ export class MultiplayerManager {
       }
     }
 
+    this.clearReconnectTimer();
     await this.leaveRoom();
+
+    const sessionId = ++this.roomSessionId;
+    this.desiredRoomActive = true;
+    this.reconnectAttempt = 0;
 
     this.baseRoomId = targetRoomId;
     this.roomPassword = targetPassword;
@@ -310,16 +322,45 @@ export class MultiplayerManager {
     this.speakingPeers.clear();
     this.voicePolicy = { mode: 'free', updatedBy: '', updatedAt: 0 };
 
-    const channelTopic = this.sceneScopeId
+    // Start DB heartbeat immediately for non-lobby rooms so room & player stay alive
+    // even if Realtime takes a moment or temporarily hiccups later.
+    this.startRoomHeartbeat();
+
+    const ok = await this.subscribeRoomChannel(sessionId, true);
+    if (!ok && this.roomSessionId === sessionId) {
+      this.desiredRoomActive = false;
+      this.stopRoomHeartbeat();
+    }
+    return ok;
+  }
+
+  private getChannelTopic(): string {
+    return this.sceneScopeId
       ? `room:${this.baseRoomId}:${this.sceneScopeId}`
       : `room:${this.baseRoomId}`;
-    const channel = supabase.channel(channelTopic, {
-      config: {
-        presence: { key: this.localPlayerId },
-        broadcast: { self: false },
-      },
-    });
+  }
 
+  private clearReconnectTimer(): void {
+    if (this.reconnectTimer !== null) {
+      window.clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+  }
+
+  private scheduleReconnect(sessionId: number, overrideDelayMs?: number): void {
+    if (!this.desiredRoomActive || this.roomSessionId !== sessionId) return;
+    if (this.reconnectTimer !== null) return;
+    const delay =
+      overrideDelayMs ?? Math.min(10_000, Math.round(1500 * Math.pow(1.6, this.reconnectAttempt)));
+    this.reconnectAttempt = Math.min(this.reconnectAttempt + 1, 6);
+    this.reconnectTimer = window.setTimeout(() => {
+      this.reconnectTimer = null;
+      if (!this.desiredRoomActive || this.roomSessionId !== sessionId || this.connected) return;
+      void this.subscribeRoomChannel(sessionId, false);
+    }, delay);
+  }
+
+  private attachChannelListeners(channel: RealtimeChannel): void {
     channel.on('presence', { event: 'sync' }, () => {
       if (this.channel !== channel) return;
       this.handlePresenceSync(channel);
@@ -370,6 +411,7 @@ export class MultiplayerManager {
       const msg = payload as RtcSignalMessage;
       if (!msg || msg.fromId === this.localPlayerId) return;
       if (msg.targetId !== '*' && msg.targetId !== this.localPlayerId) return;
+      this.touchRemoteBroadcast(msg.fromId);
       this.onRtcSignalCallback?.(msg);
     });
 
@@ -378,6 +420,7 @@ export class MultiplayerManager {
       const msg = payload as RtcSignalMessage;
       if (!msg || msg.fromId === this.localPlayerId) return;
       if (msg.targetId !== '*' && msg.targetId !== this.localPlayerId) return;
+      this.touchRemoteBroadcast(msg.fromId);
       this.onVoiceSignalCallback?.(msg);
     });
 
@@ -385,6 +428,9 @@ export class MultiplayerManager {
       if (this.channel !== channel) return;
       const msg = payload as ChatMessage;
       if (!msg || !msg.text) return;
+      if (msg.senderId && msg.senderId !== this.localPlayerId) {
+        this.touchRemoteBroadcast(msg.senderId);
+      }
       window.dispatchEvent(new CustomEvent<ChatMessage>('cavannghe:chat-message', { detail: msg }));
     });
 
@@ -405,6 +451,9 @@ export class MultiplayerManager {
       if (this.channel !== channel) return;
       const info = payload as VoiceSpeakingPayload;
       if (!info || !info.playerId) return;
+      if (info.playerId !== this.localPlayerId) {
+        this.touchRemoteBroadcast(info.playerId);
+      }
       if (info.speaking) {
         this.speakingPeers.add(info.playerId);
       } else {
@@ -449,26 +498,95 @@ export class MultiplayerManager {
       if (this.channel !== channel) return;
       const ev = payload as { playerId: string; playerName: string; x?: number; z?: number };
       if (!ev || ev.playerId === this.localPlayerId) return;
+      this.touchRemoteBroadcast(ev.playerId);
       window.dispatchEvent(new CustomEvent('cavannghe:remote-applause', { detail: ev }));
     });
+  }
 
+  private async subscribeRoomChannel(sessionId: number, isInitialJoin: boolean): Promise<boolean> {
+    const supabase = getSupabaseClient();
+    if (!supabase) return false;
+    if (!this.desiredRoomActive || this.roomSessionId !== sessionId) return false;
+
+    const prevChannel = this.channel;
+    if (prevChannel) {
+      this.channel = null;
+      try {
+        await supabase.removeChannel(prevChannel);
+      } catch {
+        // ignore cleanup error
+      }
+    }
+    if (!this.desiredRoomActive || this.roomSessionId !== sessionId) return false;
+
+    const channel = supabase.channel(this.getChannelTopic(), {
+      config: {
+        presence: { key: this.localPlayerId },
+        broadcast: { self: false },
+      },
+    });
+    this.attachChannelListeners(channel);
     this.channel = channel;
 
     return new Promise<boolean>((resolve) => {
+      let settled = false;
+      let hasSubscribed = !isInitialJoin;
+      const finish = (ok: boolean) => {
+        if (!settled) {
+          settled = true;
+          resolve(ok);
+        }
+      };
+
       channel.subscribe(async (status) => {
+        if (this.roomSessionId !== sessionId || !this.desiredRoomActive || this.channel !== channel) {
+          finish(false);
+          return;
+        }
+
         if (status === 'SUBSCRIBED') {
+          hasSubscribed = true;
+          this.reconnectAttempt = 0;
+          this.clearReconnectTimer();
           this.connected = true;
           await this.trackLocalPresence();
-          this.startRoomHeartbeat();
-          void this.syncRoomRegistry();
+          if (this.roomSessionId !== sessionId || !this.desiredRoomActive || this.channel !== channel) {
+            finish(false);
+            return;
+          }
+          if (this.roomHeartbeatTimer === null) {
+            this.startRoomHeartbeat();
+          }
+          void this.syncSelfPlayerRow();
+          if (this.isHost()) {
+            void this.syncRoomRegistry();
+          }
+          if (this.localKaraokeState?.active) {
+            void channel.send({
+              type: 'broadcast',
+              event: 'karaoke:sync',
+              payload: { ...this.localKaraokeState, updatedAt: Date.now() },
+            });
+          }
           this.emitRoomStatus();
           window.dispatchEvent(new CustomEvent('cavannghe:channel-subscribed'));
-          resolve(true);
+          finish(true);
         } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
-          this.stopRoomHeartbeat();
           this.connected = false;
           this.emitRoomStatus();
-          resolve(false);
+
+          if (this.channel === channel) {
+            this.channel = null;
+            void supabase.removeChannel(channel).catch(() => {});
+          }
+
+          if (!hasSubscribed) {
+            finish(false);
+          } else {
+            // Keep DB heartbeat & local states intact and auto-reconnect in the background
+            this.scheduleReconnect(sessionId);
+            finish(true);
+          }
         }
       });
     });
@@ -478,19 +596,26 @@ export class MultiplayerManager {
     const nextScope = sceneId.trim();
     if (this.sceneScopeId === nextScope) return true;
     this.sceneScopeId = nextScope;
-    if (!this.connected) return true;
+    if (!this.connected && !this.desiredRoomActive) return true;
     return this.joinRoom(this.baseRoomId, this.localPlayerName, nextScope);
   }
 
   async leaveRoom(): Promise<void> {
+    this.roomSessionId += 1;
+    this.desiredRoomActive = false;
+    this.clearReconnectTimer();
     this.stopRoomHeartbeat();
-    if (this.channel) {
-      const ch = this.channel;
-      const hadRemoteKaraoke = this.remoteKaraokeState;
-      const wasLastInRoom = this.presenceList.length <= 1;
-      const prevBaseRoomId = this.baseRoomId;
-      const prevHostName = this.hostName || this.localPlayerName;
-      const prevScene = this.sceneScopeId;
+
+    const ch = this.channel;
+    const hadRemoteKaraoke = this.remoteKaraokeState;
+    const hadOtherLocalPeers =
+      this.presenceList.some((p) => p.playerId !== this.localPlayerId) ||
+      this.remotePlayers.size > 0;
+    const prevBaseRoomId = this.baseRoomId;
+    const prevHostName = this.hostName || this.localPlayerName;
+    const prevScene = this.sceneScopeId;
+
+    if (ch || this.connected) {
       this.channel = null;
       this.connected = false;
       this.remotePlayers.clear();
@@ -530,24 +655,39 @@ export class MultiplayerManager {
       );
       window.dispatchEvent(new CustomEvent('cavannghe:room-left'));
 
-      try {
-        await ch.untrack();
-      } catch {
-        // ignore
+      if (ch) {
+        try {
+          await ch.untrack();
+        } catch {
+          // ignore
+        }
+        try {
+          const supabase = getSupabaseClient();
+          if (supabase) {
+            await supabase.removeChannel(ch);
+          } else {
+            await ch.unsubscribe();
+          }
+        } catch {
+          // ignore
+        }
       }
-      try {
-        await ch.unsubscribe();
-      } catch {
-        // ignore
-      }
-      void AdminService.removeRoomPlayer(prevBaseRoomId, this.localPlayerId);
-      if (wasLastInRoom) {
-        void AdminService.upsertRoomHeartbeat({
-          roomId: prevBaseRoomId,
-          hostName: prevHostName,
-          sceneId: prevScene,
-          playerCount: 0,
-        });
+
+      if (prevBaseRoomId && prevBaseRoomId !== PUBLIC_LOBBY_ROOM_ID) {
+        await AdminService.removeRoomPlayer(prevBaseRoomId, this.localPlayerId);
+        if (!hadOtherLocalPeers) {
+          const remaining = await AdminService.fetchRoomPlayers(prevBaseRoomId);
+          const stillOccupied = remaining.some((p) => p.player_id !== this.localPlayerId);
+          const rejoinedSameRoom = this.desiredRoomActive && this.baseRoomId === prevBaseRoomId;
+          if (!stillOccupied && !rejoinedSameRoom) {
+            void AdminService.upsertRoomHeartbeat({
+              roomId: prevBaseRoomId,
+              hostName: prevHostName,
+              sceneId: prevScene,
+              playerCount: 0,
+            });
+          }
+        }
       }
       this.emitRoomStatus();
     }
@@ -558,7 +698,12 @@ export class MultiplayerManager {
   }
 
   isHost(): boolean {
-    if (!this.connected) return true; // Offline mode: local user controls stage
+    if (!this.connected) {
+      // Offline mode: local user controls stage; during transient reconnect in a room, keep last role
+      if (!this.desiredRoomActive) return true;
+      if (this.baseRoomId === PUBLIC_LOBBY_ROOM_ID) return false;
+      return this.hostId === this.localPlayerId;
+    }
     if (this.baseRoomId === PUBLIC_LOBBY_ROOM_ID) return false;
     return this.hostId === this.localPlayerId;
   }
@@ -590,6 +735,32 @@ export class MultiplayerManager {
       isLocal: p.playerId === this.localPlayerId,
       isAdmin: Boolean(p.isAdmin),
     }));
+
+    if (this.desiredRoomActive) {
+      const seen = new Set(players.map((p) => p.id));
+      if (!seen.has(this.localPlayerId)) {
+        seen.add(this.localPlayerId);
+        players.push({
+          id: this.localPlayerId,
+          name: this.localPlayerName,
+          isHost: this.localPlayerId === this.hostId,
+          isLocal: true,
+          isAdmin: this.localIsAdmin,
+        });
+      }
+      for (const rp of this.remotePlayers.values()) {
+        if (!seen.has(rp.id)) {
+          seen.add(rp.id);
+          players.push({
+            id: rp.id,
+            name: rp.name,
+            isHost: rp.id === this.hostId,
+            isLocal: false,
+            isAdmin: Boolean(rp.isAdmin),
+          });
+        }
+      }
+    }
 
     return {
       connected: this.connected,
@@ -887,12 +1058,17 @@ export class MultiplayerManager {
 
   private schedulePresenceRemoval(channel: RealtimeChannel, playerId: string): void {
     if (this.pendingPresenceRemovals.has(playerId)) return;
+    const graceMs = 12_000;
     const timer = window.setTimeout(() => {
       this.pendingPresenceRemovals.delete(playerId);
       if (this.channel !== channel) return;
+      if (!this.connected) {
+        this.schedulePresenceRemoval(channel, playerId);
+        return;
+      }
       if (this.presenceList.some((p) => p.playerId === playerId)) return;
       const lastSeen = this.remoteLastBroadcastAt.get(playerId) ?? 0;
-      if (Date.now() - lastSeen < 4000) {
+      if (Date.now() - lastSeen < graceMs) {
         this.schedulePresenceRemoval(channel, playerId);
         return;
       }
@@ -916,7 +1092,7 @@ export class MultiplayerManager {
         this.onRemoteKaraokeCallback?.(cleared);
       }
       this.emitRoomStatus();
-    }, 4000);
+    }, graceMs);
     this.pendingPresenceRemovals.set(playerId, timer);
   }
 
@@ -935,8 +1111,13 @@ export class MultiplayerManager {
 
     const prevHostId = this.hostId;
     const host = list[0] ?? null;
-    this.hostId = host?.playerId ?? this.localPlayerId;
-    this.hostName = host?.name ?? this.localPlayerName;
+    if (host) {
+      this.hostId = host.playerId;
+      this.hostName = host.name;
+    } else if (!prevHostId || !this.remotePlayers.has(prevHostId)) {
+      this.hostId = this.localPlayerId;
+      this.hostName = this.localPlayerName;
+    }
 
     // If local player just became Host, publish stageState/voicePolicy in presence
     if (prevHostId !== this.hostId && this.hostId === this.localPlayerId && (this.hostStageState || this.voicePolicy.updatedAt > 0)) {
@@ -1051,14 +1232,16 @@ export class MultiplayerManager {
 
   private startRoomHeartbeat(): void {
     this.stopRoomHeartbeat();
-    this.roomHeartbeatTimer = window.setInterval(() => {
-      if (this.connected) {
-        void this.syncSelfPlayerRow();
-        if (this.isHost()) {
-          void this.syncRoomRegistry();
-        }
+    if (!this.desiredRoomActive || this.baseRoomId === PUBLIC_LOBBY_ROOM_ID) return;
+    const beat = () => {
+      if (!this.desiredRoomActive || this.baseRoomId === PUBLIC_LOBBY_ROOM_ID) return;
+      void this.syncSelfPlayerRow();
+      if (this.isHost()) {
+        void this.syncRoomRegistry();
       }
-    }, 15_000);
+    };
+    beat();
+    this.roomHeartbeatTimer = window.setInterval(beat, 15_000);
   }
 
   private stopRoomHeartbeat(): void {
@@ -1069,7 +1252,7 @@ export class MultiplayerManager {
   }
 
   private async syncSelfPlayerRow(): Promise<void> {
-    if (!this.connected || this.baseRoomId === PUBLIC_LOBBY_ROOM_ID) return;
+    if (!this.desiredRoomActive || this.baseRoomId === PUBLIC_LOBBY_ROOM_ID) return;
     await AdminService.upsertRoomPlayer({
       roomId: this.baseRoomId,
       playerId: this.localPlayerId,
@@ -1082,8 +1265,8 @@ export class MultiplayerManager {
   }
 
   private async syncRoomRegistry(): Promise<void> {
-    if (!this.connected || this.baseRoomId === PUBLIC_LOBBY_ROOM_ID) return;
-    const count = Math.max(1, this.presenceList.length);
+    if (!this.desiredRoomActive || this.baseRoomId === PUBLIC_LOBBY_ROOM_ID) return;
+    const count = Math.max(1, this.presenceList.length, this.remotePlayers.size + 1);
     await Promise.all([
       this.syncSelfPlayerRow(),
       AdminService.upsertRoomHeartbeat({
