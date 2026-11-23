@@ -144,6 +144,9 @@ class KaraokeAudioEngine {
       this.musicAnalyser.fftSize = 128;
       this.musicGain.connect(this.musicAnalyser);
       this.musicAnalyser.connect(this.masterGain);
+
+      this.micBroadcastDest = this.ctx.createMediaStreamDestination();
+      this.musicGain.connect(this.micBroadcastDest);
     }
     if (this.ctx.state === 'suspended') {
       void this.ctx.resume();
@@ -295,16 +298,17 @@ class KaraokeAudioEngine {
       delayFilter.connect(delayOut);
       delayOut.connect(monitorGain);
 
-      const broadcastDest = ctx.createMediaStreamDestination();
-      dry.connect(broadcastDest);
-      wet.connect(broadcastDest);
-      delayOut.connect(broadcastDest);
-      if (this.musicGain) {
+      const broadcastDest =
+        this.micBroadcastDest ?? ctx.createMediaStreamDestination();
+      if (!this.micBroadcastDest && this.musicGain) {
         this.musicGain.connect(broadcastDest);
       }
       this.micBroadcastDest = broadcastDest;
+      dry.connect(broadcastDest);
+      wet.connect(broadcastDest);
+      delayOut.connect(broadcastDest);
 
-      this.micNodes = [hp, warmth, presence, comp, makeup, dry, convolver, wet, delay, delayFilter, delayFeedback, delayOut, monitorGain, broadcastDest];
+      this.micNodes = [hp, warmth, presence, comp, makeup, dry, convolver, wet, delay, delayFilter, delayFeedback, delayOut, monitorGain];
       return true;
     } catch {
       return false;
@@ -338,15 +342,7 @@ class KaraokeAudioEngine {
       this.micStream.getTracks().forEach((t) => t.stop());
       this.micStream = null;
     }
-    if (this.musicGain && this.micBroadcastDest) {
-      try {
-        this.musicGain.disconnect(this.micBroadcastDest);
-      } catch {
-        // ignore
-      }
-    }
     this.localMonitorGain = null;
-    this.micBroadcastDest = null;
   }
 
   setLocalMonitor(enabled: boolean): void {
@@ -361,6 +357,9 @@ class KaraokeAudioEngine {
   }
 
   getBroadcastStream(): MediaStream | null {
+    if (!this.micBroadcastDest && this.useCustomFile) {
+      this.ensureContext();
+    }
     return this.micBroadcastDest?.stream ?? this.micStream;
   }
 

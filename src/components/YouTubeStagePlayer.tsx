@@ -3,6 +3,7 @@ import type { ScreenProjectionData, StageMediaState } from '../engine/runtime/St
 
 interface YTPlayerInstance {
   loadVideoById: (opts: { videoId: string; suggestedQuality?: string }) => void;
+  cueVideoById?: (opts: { videoId: string; startSeconds?: number; suggestedQuality?: string }) => void;
   playVideo: () => void;
   pauseVideo: () => void;
   mute: () => void;
@@ -10,6 +11,7 @@ interface YTPlayerInstance {
   setVolume: (vol: number) => void;
   setPlaybackQuality: (quality: string) => void;
   getDuration?: () => number;
+  getCurrentTime?: () => number;
   getVideoData?: () => { isLive?: boolean; video_id?: string; title?: string };
   seekTo?: (seconds: number, allowSeekAhead: boolean) => void;
   destroy: () => void;
@@ -82,6 +84,8 @@ export const YouTubeStagePlayer: React.FC = () => {
     isPlaying: boolean;
     isScreenOn: boolean;
     isMuted: boolean;
+    currentTime?: number;
+    timeUpdatedAt?: number;
   }>({
     videoId: null,
     domVideoUrl: null,
@@ -111,6 +115,8 @@ export const YouTubeStagePlayer: React.FC = () => {
         isPlaying: detail.isPlaying,
         isScreenOn: detail.isScreenOn,
         isMuted: detail.isMuted,
+        currentTime: detail.currentTime,
+        timeUpdatedAt: detail.timeUpdatedAt,
       });
     };
 
@@ -191,10 +197,41 @@ export const YouTubeStagePlayer: React.FC = () => {
       }
     };
 
+    const onStageSeekTime = (e: Event) => {
+      const detail = (e as CustomEvent<{ targetSec: number; isPlaying: boolean }>).detail;
+      if (!detail || !Number.isFinite(detail.targetSec)) return;
+      const cur = latestStateRef.current;
+
+      if (readyRef.current && playerRef.current && cur.videoId) {
+        const videoData = playerRef.current.getVideoData?.();
+        if (!videoData?.isLive && playerRef.current.seekTo) {
+          const ytNow = playerRef.current.getCurrentTime?.() ?? 0;
+          if (!detail.isPlaying || Math.abs(ytNow - detail.targetSec) > 1.5) {
+            playerRef.current.seekTo(detail.targetSec, true);
+          }
+          if (detail.isPlaying && cur.isScreenOn) {
+            playerRef.current.playVideo();
+          } else {
+            playerRef.current.pauseVideo();
+          }
+        }
+      }
+
+      if (domVideoRef.current && cur.domVideoUrl) {
+        const v = domVideoRef.current;
+        if (Number.isFinite(v.duration) && v.duration > 1) {
+          if (!detail.isPlaying || Math.abs(v.currentTime - detail.targetSec) > 1.5) {
+            v.currentTime = Math.min(v.duration - 0.5, Math.max(0, detail.targetSec));
+          }
+        }
+      }
+    };
+
     window.addEventListener('cavannghe:stage-audio-changed', onStageAudio);
     window.addEventListener('cavannghe:youtube-volume', onVolume);
     window.addEventListener('cavannghe:screen-projection', onProjection);
     window.addEventListener('cavannghe:stage-sync-live', onSyncLive);
+    window.addEventListener('cavannghe:stage-seek-time', onStageSeekTime);
     window.addEventListener('pointerdown', onUserGesture, { passive: true });
     window.addEventListener('keydown', onUserGesture, { passive: true });
     window.addEventListener('focus', onUserGesture, { passive: true });
@@ -204,12 +241,30 @@ export const YouTubeStagePlayer: React.FC = () => {
       window.removeEventListener('cavannghe:youtube-volume', onVolume);
       window.removeEventListener('cavannghe:screen-projection', onProjection);
       window.removeEventListener('cavannghe:stage-sync-live', onSyncLive);
+      window.removeEventListener('cavannghe:stage-seek-time', onStageSeekTime);
       window.removeEventListener('pointerdown', onUserGesture);
       window.removeEventListener('keydown', onUserGesture);
       window.removeEventListener('focus', onUserGesture);
       document.removeEventListener('visibilitychange', onUserGesture);
     };
   }, []);
+
+  useEffect(() => {
+    if (!stageState.videoId) return;
+    const timer = window.setInterval(() => {
+      if (!readyRef.current || !playerRef.current) return;
+      const currentTime = playerRef.current.getCurrentTime?.();
+      const isLive = Boolean(playerRef.current.getVideoData?.()?.isLive);
+      if (typeof currentTime === 'number' && Number.isFinite(currentTime)) {
+        window.dispatchEvent(
+          new CustomEvent('cavannghe:youtube-time-update', {
+            detail: { currentTime, isLive },
+          })
+        );
+      }
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [stageState.videoId]);
 
   useEffect(() => {
     const { videoId, quality } = stageState;
@@ -225,7 +280,25 @@ export const YouTubeStagePlayer: React.FC = () => {
       if (cancelled || !playerHostRef.current || !window.YT?.Player) return;
 
       if (playerRef.current && readyRef.current) {
-        playerRef.current.loadVideoById({ videoId, suggestedQuality: quality });
+        const cur = latestStateRef.current;
+        const startSec =
+          typeof cur.currentTime === 'number' && cur.currentTime > 1
+            ? cur.currentTime +
+              (cur.isPlaying && cur.timeUpdatedAt
+                ? Math.max(0, (Date.now() - cur.timeUpdatedAt) / 1000)
+                : 0)
+            : 0;
+        if (cur.isPlaying && cur.isScreenOn) {
+          playerRef.current.loadVideoById({ videoId, suggestedQuality: quality });
+          if (startSec > 1 && playerRef.current.seekTo) {
+            playerRef.current.seekTo(startSec, true);
+          }
+        } else if (playerRef.current.cueVideoById) {
+          playerRef.current.cueVideoById({ videoId, startSeconds: startSec, suggestedQuality: quality });
+        } else {
+          playerRef.current.loadVideoById({ videoId, suggestedQuality: quality });
+          playerRef.current.pauseVideo();
+        }
         return;
       }
 
@@ -263,6 +336,19 @@ export const YouTubeStagePlayer: React.FC = () => {
             // Start muted so browser autoplay policy never blocks playback,
             // then unmute once PLAYING starts (or on user gesture).
             ev.target.mute();
+            const videoData = ev.target.getVideoData?.();
+            if (
+              !videoData?.isLive &&
+              typeof cur.currentTime === 'number' &&
+              cur.currentTime > 1 &&
+              ev.target.seekTo
+            ) {
+              const elapsed =
+                cur.isPlaying && cur.timeUpdatedAt
+                  ? Math.max(0, (Date.now() - cur.timeUpdatedAt) / 1000)
+                  : 0;
+              ev.target.seekTo(cur.currentTime + elapsed, true);
+            }
             if (cur.isPlaying && cur.isScreenOn) {
               ev.target.playVideo();
             } else {

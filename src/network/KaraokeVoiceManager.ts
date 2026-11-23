@@ -194,9 +194,9 @@ export class KaraokeVoiceManager {
     for (const [peerId, sink] of this.voiceSinks.entries()) {
       if (!sink.panner) continue;
       const rp = remotePlayers.get(peerId);
-      const sx = rp ? rp.x : 16.8;
+      const sx = rp ? rp.x : 0;
       const sy = rp ? rp.y + 1.65 : 1.8;
-      const sz = rp ? rp.z : 2.8;
+      const sz = rp ? rp.z : -8.5;
       if (sink.panner.positionX) {
         sink.panner.positionX.value = sx;
         sink.panner.positionY.value = sy;
@@ -211,6 +211,9 @@ export class KaraokeVoiceManager {
         window.AudioContext ||
         (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       this.spatialCtx = new AC({ latencyHint: 'interactive' });
+      this.spatialCtx.onstatechange = () => {
+        this.syncAllSinkGains();
+      };
     }
     if (this.spatialCtx.state === 'suspended') {
       void this.spatialCtx.resume().catch(() => {});
@@ -220,10 +223,13 @@ export class KaraokeVoiceManager {
 
   private syncAllSinkGains(): void {
     const targetGain = this.audienceMuted ? 0 : this.audienceVolume;
+    const ctxRunning = Boolean(this.spatialCtx && this.spatialCtx.state === 'running');
     for (const sink of this.voiceSinks.values()) {
-      if (sink.gain && this.spatialCtx) {
+      if (sink.gain && ctxRunning && this.spatialCtx) {
+        sink.audioEl.muted = true;
         sink.gain.gain.setTargetAtTime(targetGain, this.spatialCtx.currentTime, 0.03);
       } else {
+        if (sink.gain) sink.gain.gain.value = 0;
         sink.audioEl.muted = this.audienceMuted;
         sink.audioEl.volume = this.audienceVolume;
       }
@@ -417,26 +423,32 @@ export class KaraokeVoiceManager {
       const ctx = this.ensureSpatialContext();
       source = ctx.createMediaStreamSource(stream);
       gain = ctx.createGain();
-      gain.gain.value = this.audienceMuted ? 0 : this.audienceVolume;
+      const ctxRunning = ctx.state === 'running';
+      gain.gain.value = ctxRunning ? (this.audienceMuted ? 0 : this.audienceVolume) : 0;
 
       panner = ctx.createPanner();
       panner.panningModel = 'HRTF';
       panner.distanceModel = 'inverse';
-      panner.refDistance = 3.5;
-      panner.maxDistance = 32.0;
-      panner.rolloffFactor = 1.25;
+      panner.refDistance = 6.0;
+      panner.maxDistance = 38.0;
+      panner.rolloffFactor = 0.55;
 
       const rp = MultiplayerManager.getInstance().getRemotePlayers().get(peerId);
-      panner.positionX.value = rp ? rp.x : 16.8;
+      panner.positionX.value = rp ? rp.x : 0;
       panner.positionY.value = rp ? rp.y + 1.65 : 1.8;
-      panner.positionZ.value = rp ? rp.z : 2.8;
+      panner.positionZ.value = rp ? rp.z : -8.5;
 
       source.connect(gain);
       gain.connect(panner);
       panner.connect(ctx.destination);
 
-      // Mute raw <audio> output because audio plays through Web Audio HRTF PannerNode
-      audioEl.muted = true;
+      // Keep <audio> unmuted as fallback until Web Audio AudioContext is actively running
+      if (ctxRunning) {
+        audioEl.muted = true;
+      } else {
+        audioEl.muted = this.audienceMuted;
+        audioEl.volume = this.audienceVolume;
+      }
     } catch {
       audioEl.muted = this.audienceMuted;
       audioEl.volume = this.audienceVolume;

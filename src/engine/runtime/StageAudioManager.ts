@@ -12,6 +12,8 @@ export interface StageMediaState {
   isScreenOn: boolean;
   volume: number; // 0..1 (local client volume)
   isMuted: boolean; // local client mute
+  currentTime?: number;
+  timeUpdatedAt?: number;
 }
 
 export interface ScreenProjectionData {
@@ -159,6 +161,10 @@ export class StageAudioManager {
 
   private destroyed = false;
   private pendingGestureResume = false;
+  private pendingSeekSec: number | null = null;
+  private lastYtTime = 0;
+  private lastYtIsLive = false;
+  private stageSyncTimer: number | null = null;
   private lastEmittedYtVolume = -1;
   private lastScreenProjectionSig = '';
   private lastUploadedVideoTime = -1;
@@ -224,19 +230,34 @@ export class StageAudioManager {
     window.addEventListener('keydown', this.onUserGesture, { passive: true });
     window.addEventListener('focus', this.onUserGesture, { passive: true });
     document.addEventListener('visibilitychange', this.onUserGesture);
+    window.addEventListener('cavannghe:youtube-time-update', this.onYoutubeTimeUpdate);
+
+    const mp = MultiplayerManager.getInstance();
+    const isGuestInRoom = mp.isConnected() && !mp.isHost() && !mp.isLocalAdmin();
+    if (isGuestInRoom) {
+      // Wait for Host's stage state before playing default local media from 00:00
+      this.state.isPlaying = false;
+    }
 
     this.applyMediaSource(this.state.mediaUrl);
     this.syncScreenVisual();
 
-    MultiplayerManager.getInstance().setOnRemoteStage((remote) => {
+    mp.setOnRemoteStage((remote) => {
       this.applyRemoteState(remote);
     });
 
-    MultiplayerManager.getInstance().setOnRemoteStageLiveSync(() => {
+    mp.setOnRemoteStageLiveSync(() => {
       this.applyRemoteLiveSync();
     });
 
-    MultiplayerManager.getInstance().requestStageResync();
+    mp.requestStageResync();
+
+    this.stageSyncTimer = window.setInterval(() => {
+      if (this.destroyed || !this.state.isPlaying || this.lastYtIsLive) return;
+      if (this.canControlStage()) {
+        this.broadcastIfHost();
+      }
+    }, 5000);
   }
 
   getState(): StageMediaState {
@@ -259,6 +280,9 @@ export class StageAudioManager {
     if (title) this.state.title = title;
     this.state.isPlaying = true;
     this.state.isScreenOn = true;
+    this.pendingSeekSec = null;
+    this.lastYtTime = 0;
+    this.lastYtIsLive = false;
     this.lastEmittedYtVolume = -1;
     this.ensureAudioGraph();
     this.applyMediaSource(trimmed);
@@ -278,6 +302,11 @@ export class StageAudioManager {
     this.state.title = title || `YouTube (${id})`;
     this.state.isPlaying = true;
     this.state.isScreenOn = true;
+    this.pendingSeekSec = null;
+    this.lastYtTime = 0;
+    this.lastYtIsLive = false;
+    this.state.currentTime = 0;
+    this.state.timeUpdatedAt = Date.now();
     if (this.videoEl) {
       this.videoEl.pause();
     }
@@ -378,38 +407,81 @@ export class StageAudioManager {
       remote.mediaUrl !== this.state.mediaUrl ||
       remote.youtubeVideoId !== this.state.youtubeVideoId;
 
+    const expectedSec =
+      typeof remote.currentTime === 'number' && !remote.isLive
+        ? Math.max(
+            0,
+            remote.currentTime +
+              (remote.isPlaying ? Math.max(0, (Date.now() - remote.updatedAt) / 1000) : 0)
+          )
+        : null;
+
     this.state.sourceType = remote.sourceType;
     this.state.mediaUrl = remote.mediaUrl;
     this.state.youtubeVideoId = remote.youtubeVideoId;
     this.state.title = remote.title;
     this.state.isPlaying = remote.isPlaying;
     this.state.isScreenOn = remote.isScreenOn;
+    if (expectedSec !== null) {
+      this.state.currentTime = expectedSec;
+      this.state.timeUpdatedAt = Date.now();
+    }
     if (typeof remote.isMuted === 'boolean') {
       this.state.isMuted = remote.isMuted;
     }
 
     if (remote.sourceType === 'youtube') {
       this.state.domVideoFallback = false;
+      this.pendingSeekSec = null;
       this.videoEl?.pause();
       this.videoHasFrames = false;
       this.lastEmittedYtVolume = -1;
     } else if (mediaChanged) {
       this.state.domVideoFallback = false;
+      this.pendingSeekSec = expectedSec;
       this.ensureAudioGraph();
       this.applyMediaSource(remote.mediaUrl);
     } else if (this.videoEl) {
-      if (remote.isPlaying) void this.tryPlayVideo();
-      else this.videoEl.pause();
+      if (
+        !this.state.domVideoFallback &&
+        expectedSec !== null &&
+        Number.isFinite(this.videoEl.duration) &&
+        this.videoEl.duration > 1 &&
+        (!remote.isPlaying || Math.abs(this.videoEl.currentTime - expectedSec) > 1.5)
+      ) {
+        this.videoEl.currentTime = Math.min(this.videoEl.duration - 0.5, expectedSec);
+      }
+      if (!this.state.domVideoFallback) {
+        if (remote.isPlaying) void this.tryPlayVideo();
+        else this.videoEl.pause();
+      }
     }
 
     this.syncScreenVisual();
     this.syncGain();
     this.emitStateChanged();
+
+    if (expectedSec !== null && (remote.sourceType === 'youtube' || this.state.domVideoFallback)) {
+      window.dispatchEvent(
+        new CustomEvent('cavannghe:stage-seek-time', {
+          detail: { targetSec: expectedSec, isPlaying: remote.isPlaying },
+        })
+      );
+    }
   }
 
   private broadcastIfHost(): void {
     const mp = MultiplayerManager.getInstance();
     if (!mp.isConnected() || (!mp.isHost() && !mp.isLocalAdmin())) return;
+    const currentTime =
+      this.state.sourceType === 'media'
+        ? this.videoEl && Number.isFinite(this.videoEl.duration)
+          ? this.videoEl.currentTime
+          : undefined
+        : !this.lastYtIsLive
+          ? this.lastYtTime
+          : undefined;
+
     mp.broadcastStageState({
       sourceType: this.state.sourceType,
       mediaUrl: this.state.mediaUrl,
@@ -418,6 +490,8 @@ export class StageAudioManager {
       isPlaying: this.state.isPlaying,
       isScreenOn: this.state.isScreenOn,
       isMuted: this.state.isMuted,
+      currentTime,
+      isLive: this.state.sourceType === 'youtube' ? this.lastYtIsLive : false,
       updatedAt: Date.now(),
     });
   }
@@ -485,11 +559,17 @@ export class StageAudioManager {
     if (this.destroyed) return;
     this.destroyed = true;
     MultiplayerManager.getInstance().setOnRemoteStage(null);
+    MultiplayerManager.getInstance().setOnRemoteStageLiveSync(null);
+    if (this.stageSyncTimer !== null) {
+      window.clearInterval(this.stageSyncTimer);
+      this.stageSyncTimer = null;
+    }
 
     window.removeEventListener('pointerdown', this.onUserGesture);
     window.removeEventListener('keydown', this.onUserGesture);
     window.removeEventListener('focus', this.onUserGesture);
     document.removeEventListener('visibilitychange', this.onUserGesture);
+    window.removeEventListener('cavannghe:youtube-time-update', this.onYoutubeTimeUpdate);
 
     if (this.screenEntity?.render && this.originalScreenMat) {
       for (const mi of this.screenEntity.render.meshInstances) {
@@ -692,8 +772,28 @@ export class StageAudioManager {
   private onVideoCanPlay = (): void => {
     if (this.destroyed) return;
     this.videoReady = true;
+    if (
+      this.pendingSeekSec !== null &&
+      this.videoEl &&
+      Number.isFinite(this.videoEl.duration) &&
+      this.videoEl.duration > 1
+    ) {
+      this.videoEl.currentTime = Math.min(this.videoEl.duration - 0.5, this.pendingSeekSec);
+      this.pendingSeekSec = null;
+    }
     if (this.state.isPlaying && !this.state.domVideoFallback) {
       void this.tryPlayVideo();
+    }
+  };
+
+  private onYoutubeTimeUpdate = (e: Event): void => {
+    const detail = (e as CustomEvent<{ currentTime?: number; isLive?: boolean }>).detail;
+    if (!detail) return;
+    if (typeof detail.currentTime === 'number' && Number.isFinite(detail.currentTime)) {
+      this.lastYtTime = detail.currentTime;
+    }
+    if (typeof detail.isLive === 'boolean') {
+      this.lastYtIsLive = detail.isLive;
     }
   };
 

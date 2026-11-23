@@ -81,6 +81,8 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
   const fileInputRef = useRef<HTMLInputElement>(null);
   const ytIframeRef = useRef<HTMLIFrameElement>(null);
   const lastYtPlayingRef = useRef<boolean | null>(null);
+  const ytCurrentTimeRef = useRef<number>(0);
+  const lastTimeSyncSentRef = useRef<number>(0);
   const playerBoxRef = useRef<HTMLDivElement>(null);
   const dragStateRef = useRef<{
     pointerId: number;
@@ -205,6 +207,7 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
   useEffect(() => {
     if (!isOpen || !youtubeVideoId) {
       lastYtPlayingRef.current = null;
+      ytCurrentTimeRef.current = 0;
       return;
     }
     const onMessage = (e: MessageEvent) => {
@@ -216,13 +219,41 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
         return;
       }
       if (typeof e.data !== 'string') return;
-      let parsed: { event?: string; info?: number | { playerState?: number } } | null = null;
+      let parsed: {
+        event?: string;
+        info?: number | { playerState?: number; currentTime?: number };
+      } | null = null;
       try {
         parsed = JSON.parse(e.data);
       } catch {
         return;
       }
       if (!parsed) return;
+      if (
+        parsed.event === 'infoDelivery' &&
+        typeof parsed.info === 'object' &&
+        parsed.info !== null &&
+        typeof parsed.info.currentTime === 'number'
+      ) {
+        const prevTime = ytCurrentTimeRef.current;
+        const nextTime = parsed.info.currentTime;
+        const jumped = Math.abs(nextTime - prevTime) > 1.8;
+        ytCurrentTimeRef.current = nextTime;
+        const now = Date.now();
+        if (
+          lastYtPlayingRef.current === true &&
+          (jumped || now - lastTimeSyncSentRef.current >= 3000)
+        ) {
+          lastTimeSyncSentRef.current = now;
+          MultiplayerManager.getInstance().broadcastKaraokeState({
+            active: true,
+            youtubeVideoId,
+            title: activeSong?.title ?? 'YouTube Karaoke',
+            isPlaying: true,
+            currentTime: nextTime,
+          });
+        }
+      }
       let playerState: number | undefined;
       if (
         parsed.event === 'infoDelivery' &&
@@ -238,11 +269,13 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
       const nextPlaying = playerState === 1 ? true : playerState === 2 || playerState === 0 ? false : null;
       if (nextPlaying === null || lastYtPlayingRef.current === nextPlaying) return;
       lastYtPlayingRef.current = nextPlaying;
+      lastTimeSyncSentRef.current = Date.now();
       MultiplayerManager.getInstance().broadcastKaraokeState({
         active: true,
         youtubeVideoId,
         title: activeSong?.title ?? 'YouTube Karaoke',
         isPlaying: nextPlaying,
+        currentTime: ytCurrentTimeRef.current,
       });
     };
     window.addEventListener('message', onMessage);
@@ -319,6 +352,8 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
     setIsFilePlaying(false);
     setActiveSong(song);
     setYoutubeVideoId(song.youtubeId);
+    ytCurrentTimeRef.current = 0;
+    lastTimeSyncSentRef.current = Date.now();
     lastYtPlayingRef.current = true;
     setIsPickerOpen(false);
     MultiplayerManager.getInstance().broadcastKaraokeState({
@@ -326,6 +361,7 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
       youtubeVideoId: song.youtubeId,
       title: song.title,
       isPlaying: true,
+      currentTime: 0,
     });
   };
 
@@ -339,11 +375,16 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
     karaokeAudio.play(() => setIsFilePlaying(false));
     setIsFilePlaying(true);
     setIsPickerOpen(false);
+    const stream = karaokeAudio.getBroadcastStream();
+    if (stream) {
+      KaraokeVoiceManager.getInstance().startBroadcasting(stream);
+    }
     MultiplayerManager.getInstance().broadcastKaraokeState({
       active: true,
       youtubeVideoId: null,
       title: name,
       isPlaying: true,
+      currentTime: 0,
     });
     e.target.value = '';
   };
@@ -362,6 +403,7 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
       youtubeVideoId: null,
       title: customFileName ?? 'Nhạc tải lên',
       isPlaying: next,
+      currentTime: karaokeAudio.getCurrentTime(),
     });
   };
 

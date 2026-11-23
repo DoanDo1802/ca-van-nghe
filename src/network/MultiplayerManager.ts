@@ -13,6 +13,8 @@ export interface NetworkStageState {
   isPlaying: boolean;
   isScreenOn: boolean;
   isMuted?: boolean;
+  currentTime?: number;
+  isLive?: boolean;
   updatedAt: number;
 }
 
@@ -23,6 +25,7 @@ export interface NetworkKaraokeState {
   youtubeVideoId: string | null;
   title: string;
   isPlaying: boolean;
+  currentTime?: number;
   updatedAt: number;
 }
 
@@ -99,6 +102,7 @@ interface PresencePayload {
   stageState?: NetworkStageState;
   karaokeState?: NetworkKaraokeState;
   voicePolicy?: RoomVoicePolicy;
+  loungeAudioPlaying?: boolean;
 }
 
 const BROADCAST_INTERVAL_MS = 50; // 20 Hz when moving for smooth curves
@@ -136,6 +140,7 @@ export class MultiplayerManager {
   private hostStageState: NetworkStageState | null = null;
   private remoteKaraokeState: NetworkKaraokeState | null = null;
   private localKaraokeState: NetworkKaraokeState | null = null;
+  private hostLoungeAudioPlaying: boolean | null = null;
   private hostId: string | null = null;
   private hostName: string | null = null;
 
@@ -484,6 +489,7 @@ export class MultiplayerManager {
       this.hostStageState = null;
       this.remoteKaraokeState = null;
       this.localKaraokeState = null;
+      this.hostLoungeAudioPlaying = null;
       this.speakingPeers.clear();
       this.voicePolicy = { mode: 'free', updatedBy: '', updatedAt: 0 };
 
@@ -670,12 +676,14 @@ export class MultiplayerManager {
   }
 
   broadcastLoungeAudio(playing: boolean): void {
+    this.hostLoungeAudioPlaying = playing;
     if (!this.connected || !this.channel || (!this.isHost() && !this.localIsAdmin)) return;
     void this.channel.send({
       type: 'broadcast',
       event: 'lounge:audio',
       payload: { playing, updatedAt: Date.now() },
     });
+    void this.trackLocalPresence();
   }
 
   getLocalPlayerName(): string {
@@ -835,6 +843,9 @@ export class MultiplayerManager {
       chairId: this.localChairId,
       ...(this.isHost() && this.hostStageState ? { stageState: this.hostStageState } : {}),
       ...(this.isHost() && this.voicePolicy.updatedAt > 0 ? { voicePolicy: this.voicePolicy } : {}),
+      ...(this.isHost() && this.hostLoungeAudioPlaying !== null
+        ? { loungeAudioPlaying: this.hostLoungeAudioPlaying }
+        : {}),
       ...(this.localKaraokeState ? { karaokeState: this.localKaraokeState } : {}),
     };
     try {
@@ -880,6 +891,17 @@ export class MultiplayerManager {
         this.voicePolicy = host.voicePolicy;
         window.dispatchEvent(
           new CustomEvent<RoomVoicePolicy>('cavannghe:voice-policy', { detail: host.voicePolicy })
+        );
+      }
+      if (
+        typeof host.loungeAudioPlaying === 'boolean' &&
+        host.loungeAudioPlaying !== this.hostLoungeAudioPlaying
+      ) {
+        this.hostLoungeAudioPlaying = host.loungeAudioPlaying;
+        window.dispatchEvent(
+          new CustomEvent<{ playing: boolean }>('cavannghe:remote-lounge-audio', {
+            detail: { playing: host.loungeAudioPlaying },
+          })
         );
       }
     }

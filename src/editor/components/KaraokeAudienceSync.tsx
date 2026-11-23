@@ -8,9 +8,16 @@ interface KaraokeAudienceSyncProps {
   isSingingLocal: boolean;
 }
 
+function computeTargetSec(state: NetworkKaraokeState, offsetSec: number): number {
+  const base = typeof state.currentTime === 'number' ? state.currentTime : 0;
+  const elapsed = state.isPlaying ? Math.max(0, (Date.now() - state.updatedAt) / 1000) : 0;
+  // Compensate ~200ms WebRTC voice latency so beat aligns closely with singer's voice
+  return Math.max(0, base + elapsed + offsetSec - 0.2);
+}
+
 /**
  * Listens for remote Karaoke singer state (`karaoke:sync`), WebRTC stereo voice stream,
- * auto-ducking of ambient lounge music, YouTube beat drift nudge, and 3D audience applause.
+ * auto-ducking of ambient lounge music, YouTube beat drift correction, and 3D audience applause.
  */
 export const KaraokeAudienceSync: React.FC<KaraokeAudienceSyncProps> = ({ isSingingLocal }) => {
   const [remoteKaraoke, setRemoteKaraoke] = useState<NetworkKaraokeState | null>(() =>
@@ -18,7 +25,11 @@ export const KaraokeAudienceSync: React.FC<KaraokeAudienceSyncProps> = ({ isSing
   );
   const [muted, setMuted] = useState(false);
   const [syncOffsetSec, setSyncOffsetSec] = useState(0);
+  const syncOffsetRef = useRef(0);
+  const audienceYtTimeRef = useRef(0);
+  const lastTrackKeyRef = useRef('');
   const ytRef = useRef<HTMLIFrameElement>(null);
+  syncOffsetRef.current = syncOffsetSec;
 
   useEffect(() => {
     const mp = MultiplayerManager.getInstance();
@@ -26,8 +37,21 @@ export const KaraokeAudienceSync: React.FC<KaraokeAudienceSyncProps> = ({ isSing
     voice.initListener();
 
     mp.setOnRemoteKaraoke((next) => {
-      setRemoteKaraoke(next.active ? next : null);
-      setSyncOffsetSec(0);
+      if (!next.active) {
+        lastTrackKeyRef.current = '';
+        audienceYtTimeRef.current = 0;
+        setRemoteKaraoke(null);
+        setSyncOffsetSec(0);
+        return;
+      }
+      const nextKey = `${next.singerId}:${next.youtubeVideoId ?? next.title}`;
+      if (nextKey !== lastTrackKeyRef.current) {
+        lastTrackKeyRef.current = nextKey;
+        audienceYtTimeRef.current = 0;
+        setSyncOffsetSec(0);
+        syncOffsetRef.current = 0;
+      }
+      setRemoteKaraoke(next);
     });
 
     const onRoomLeft = () => {
@@ -73,9 +97,16 @@ export const KaraokeAudienceSync: React.FC<KaraokeAudienceSyncProps> = ({ isSing
     }
   }, [isSingingLocal, remoteKaraoke?.active]);
 
-  const syncYoutubeState = (playing: boolean, shouldMute: boolean) => {
+  const syncYoutubeState = (playing: boolean, shouldMute: boolean, seekSec?: number) => {
     const win = ytRef.current?.contentWindow;
     if (!win) return;
+    if (typeof seekSec === 'number' && Number.isFinite(seekSec)) {
+      audienceYtTimeRef.current = seekSec;
+      win.postMessage(
+        JSON.stringify({ event: 'command', func: 'seekTo', args: [seekSec, true] }),
+        '*'
+      );
+    }
     win.postMessage(
       JSON.stringify({
         event: 'command',
@@ -101,22 +132,66 @@ export const KaraokeAudienceSync: React.FC<KaraokeAudienceSyncProps> = ({ isSing
   };
 
   useEffect(() => {
+    const onMessage = (e: MessageEvent) => {
+      if (
+        typeof e.origin === 'string' &&
+        !e.origin.includes('youtube.com') &&
+        !e.origin.includes('youtube-nocookie.com')
+      ) {
+        return;
+      }
+      if (typeof e.data !== 'string') return;
+      try {
+        const parsed = JSON.parse(e.data) as {
+          event?: string;
+          info?: { currentTime?: number };
+        };
+        if (
+          parsed?.event === 'infoDelivery' &&
+          typeof parsed.info?.currentTime === 'number'
+        ) {
+          audienceYtTimeRef.current = parsed.info.currentTime;
+        }
+      } catch {
+        // ignore non-json message
+      }
+    };
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
+  }, []);
+
+  useEffect(() => {
     const shouldMute = muted || isSingingLocal;
     const isPlaying = Boolean(remoteKaraoke?.isPlaying) && !isSingingLocal;
     KaraokeVoiceManager.getInstance().setAudienceMuted(shouldMute);
-    syncYoutubeState(isPlaying, shouldMute);
-  }, [muted, isSingingLocal, remoteKaraoke?.isPlaying]);
+
+    if (!remoteKaraoke?.youtubeVideoId || isSingingLocal) {
+      syncYoutubeState(false, true);
+      return;
+    }
+
+    const targetSec = computeTargetSec(remoteKaraoke, syncOffsetRef.current);
+    const needsSeek =
+      !isPlaying || Math.abs(audienceYtTimeRef.current - targetSec) > 0.85;
+    syncYoutubeState(isPlaying, shouldMute, needsSeek ? targetSec : undefined);
+  }, [
+    muted,
+    isSingingLocal,
+    remoteKaraoke?.isPlaying,
+    remoteKaraoke?.youtubeVideoId,
+    remoteKaraoke?.currentTime,
+    remoteKaraoke?.updatedAt,
+  ]);
 
   const handleNudgeSync = (deltaSec: number) => {
     const nextOffset = Math.max(-15, Math.min(15, syncOffsetSec + deltaSec));
     setSyncOffsetSec(nextOffset);
+    syncOffsetRef.current = nextOffset;
     if (!remoteKaraoke) return;
+    const targetSec = computeTargetSec(remoteKaraoke, nextOffset);
+    audienceYtTimeRef.current = targetSec;
     const win = ytRef.current?.contentWindow;
     if (!win) return;
-    const targetSec = Math.max(
-      0,
-      (Date.now() - remoteKaraoke.updatedAt) / 1000 + nextOffset
-    );
     win.postMessage(
       JSON.stringify({ event: 'command', func: 'seekTo', args: [targetSec, true] }),
       '*'
@@ -132,12 +207,9 @@ export const KaraokeAudienceSync: React.FC<KaraokeAudienceSyncProps> = ({ isSing
     return null;
   }
 
-  const startOffsetSec = Math.max(
-    0,
-    Math.floor((Date.now() - remoteKaraoke.updatedAt) / 1000 + syncOffsetSec)
-  );
+  // Keep iframe src strictly constant per videoId so Pause/Mute/Nudge never reloads the player
   const ytSrc = remoteKaraoke.youtubeVideoId
-    ? `https://www.youtube.com/embed/${remoteKaraoke.youtubeVideoId}?autoplay=1&enablejsapi=1&controls=0&rel=0&start=${startOffsetSec}&mute=${muted ? 1 : 0}&origin=${encodeURIComponent(window.location.origin)}`
+    ? `https://www.youtube.com/embed/${remoteKaraoke.youtubeVideoId}?autoplay=1&enablejsapi=1&controls=0&rel=0&playsinline=1&origin=${encodeURIComponent(window.location.origin)}`
     : null;
 
   return (
@@ -150,9 +222,22 @@ export const KaraokeAudienceSync: React.FC<KaraokeAudienceSyncProps> = ({ isSing
           title="Audience Karaoke Beat"
           allow="autoplay; encrypted-media"
           onLoad={() => {
+            const win = ytRef.current?.contentWindow;
+            win?.postMessage(
+              JSON.stringify({ event: 'listening', id: 1, channel: 'widget' }),
+              '*'
+            );
             const shouldMute = muted || isSingingLocal;
             const isPlaying = Boolean(remoteKaraoke.isPlaying) && !isSingingLocal;
-            syncYoutubeState(isPlaying, shouldMute);
+            const targetSec = computeTargetSec(remoteKaraoke, syncOffsetRef.current);
+            syncYoutubeState(isPlaying, shouldMute, targetSec);
+            window.setTimeout(() => {
+              syncYoutubeState(
+                Boolean(remoteKaraoke.isPlaying) && !isSingingLocal,
+                muted || isSingingLocal,
+                computeTargetSec(remoteKaraoke, syncOffsetRef.current)
+              );
+            }, 650);
           }}
           className="fixed w-px h-px opacity-0 pointer-events-none -left-[9999px] -top-[9999px]"
         />
