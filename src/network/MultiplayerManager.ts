@@ -2,6 +2,7 @@ import type { RealtimeChannel } from '@supabase/supabase-js';
 import { getSupabaseClient, getSupabaseRestConfig } from './supabaseClient';
 import { AdminService } from './AdminService';
 import { getSavedAvatarColor, saveAvatarColor } from '../utils/avatarColor';
+import { DebugLogger } from '../utils/debugLogger';
 
 export const PUBLIC_LOBBY_ROOM_ID = 'public-lobby';
 
@@ -183,12 +184,14 @@ export class MultiplayerManager {
   private handleForegroundRecovery(): void {
     if (!this.desiredRoomActive) return;
     if (this.connected && this.channel) {
+      DebugLogger.log('Multiplayer', `Foreground recovery: refreshing presence & DB heartbeat for room "${this.baseRoomId}"`);
       void this.trackLocalPresence();
       void this.syncSelfPlayerRow();
       if (this.isHost()) {
         void this.syncRoomRegistry();
       }
     } else if (this.reconnectTimer === null) {
+      DebugLogger.warn('Multiplayer', `Foreground recovery: channel disconnected in room "${this.baseRoomId}", triggering immediate reconnect`);
       this.reconnectAttempt = 0;
       this.scheduleReconnect(this.roomSessionId, 150);
     }
@@ -278,7 +281,10 @@ export class MultiplayerManager {
     options?: { password?: string; bypassLimits?: boolean }
   ): Promise<boolean> {
     const supabase = getSupabaseClient();
-    if (!supabase) return false;
+    if (!supabase) {
+      DebugLogger.warn('Multiplayer', 'Cannot joinRoom: Supabase client is not configured');
+      return false;
+    }
 
     const targetRoomId = roomId.trim() || 'ca-van-nghe-1';
     const targetPassword = options?.password?.trim() ?? this.roomPassword;
@@ -297,10 +303,12 @@ export class MultiplayerManager {
       );
       if (!check.allowed) {
         this.lastJoinError = check.reason || 'Không thể tham gia phòng.';
+        DebugLogger.warn('Multiplayer', `Join room "${targetRoomId}" denied: ${this.lastJoinError}`);
         return false;
       }
     }
 
+    DebugLogger.log('Multiplayer', `Joining room "${targetRoomId}" (scene=${(sceneId ?? this.sceneScopeId) || 'default'}) as "${playerName.trim() || 'Khách'}"`);
     this.clearReconnectTimer();
     await this.leaveRoom();
 
@@ -353,6 +361,10 @@ export class MultiplayerManager {
     const delay =
       overrideDelayMs ?? Math.min(10_000, Math.round(1500 * Math.pow(1.6, this.reconnectAttempt)));
     this.reconnectAttempt = Math.min(this.reconnectAttempt + 1, 6);
+    DebugLogger.warn(
+      'Multiplayer',
+      `Scheduling reconnect for "${this.getChannelTopic()}" in ${delay}ms (attempt #${this.reconnectAttempt})`
+    );
     this.reconnectTimer = window.setTimeout(() => {
       this.reconnectTimer = null;
       if (!this.desiredRoomActive || this.roomSessionId !== sessionId || this.connected) return;
@@ -545,10 +557,15 @@ export class MultiplayerManager {
         }
 
         if (status === 'SUBSCRIBED') {
+          const isReconnect = hasSubscribed && !isInitialJoin;
           hasSubscribed = true;
           this.reconnectAttempt = 0;
           this.clearReconnectTimer();
           this.connected = true;
+          DebugLogger.log(
+            'Multiplayer',
+            `${isReconnect ? 'Reconnected' : 'Connected'} to channel "${this.getChannelTopic()}"`
+          );
           await this.trackLocalPresence();
           if (this.roomSessionId !== sessionId || !this.desiredRoomActive || this.channel !== channel) {
             finish(false);
@@ -581,8 +598,16 @@ export class MultiplayerManager {
           }
 
           if (!hasSubscribed) {
+            DebugLogger.error(
+              'Multiplayer',
+              `Initial subscription failed for "${this.getChannelTopic()}" with status=${status}`
+            );
             finish(false);
           } else {
+            DebugLogger.warn(
+              'Multiplayer',
+              `Channel "${this.getChannelTopic()}" disconnected (${status}); keeping DB heartbeat alive & auto-reconnecting`
+            );
             // Keep DB heartbeat & local states intact and auto-reconnect in the background
             this.scheduleReconnect(sessionId);
             finish(true);
@@ -674,18 +699,25 @@ export class MultiplayerManager {
       }
 
       if (prevBaseRoomId && prevBaseRoomId !== PUBLIC_LOBBY_ROOM_ID) {
+        DebugLogger.log('Multiplayer', `Left room "${prevBaseRoomId}" (scene=${prevScene || 'default'})`);
         await AdminService.removeRoomPlayer(prevBaseRoomId, this.localPlayerId);
         if (!hadOtherLocalPeers) {
           const remaining = await AdminService.fetchRoomPlayers(prevBaseRoomId);
           const stillOccupied = remaining.some((p) => p.player_id !== this.localPlayerId);
           const rejoinedSameRoom = this.desiredRoomActive && this.baseRoomId === prevBaseRoomId;
           if (!stillOccupied && !rejoinedSameRoom) {
+            DebugLogger.log('Multiplayer', `Room "${prevBaseRoomId}" is empty; closing room on DB`);
             void AdminService.upsertRoomHeartbeat({
               roomId: prevBaseRoomId,
               hostName: prevHostName,
               sceneId: prevScene,
               playerCount: 0,
             });
+          } else if (stillOccupied) {
+            DebugLogger.warn(
+              'Multiplayer',
+              `Skipped setting playerCount=0 on "${prevBaseRoomId}" because ${remaining.length} active player(s) remain in DB`
+            );
           }
         }
       }
@@ -1042,8 +1074,8 @@ export class MultiplayerManager {
     };
     try {
       await this.channel.track(payload);
-    } catch {
-      // ignore transient track error
+    } catch (err) {
+      DebugLogger.warn('Multiplayer', 'Failed to track local presence', err);
     }
   }
 
@@ -1059,6 +1091,11 @@ export class MultiplayerManager {
   private schedulePresenceRemoval(channel: RealtimeChannel, playerId: string): void {
     if (this.pendingPresenceRemovals.has(playerId)) return;
     const graceMs = 12_000;
+    const playerName = this.remotePlayers.get(playerId)?.name ?? playerId;
+    DebugLogger.warn(
+      'Multiplayer',
+      `Remote player "${playerName}" (${playerId}) missing from Presence; starting ${graceMs / 1000}s grace timer`
+    );
     const timer = window.setTimeout(() => {
       this.pendingPresenceRemovals.delete(playerId);
       if (this.channel !== channel) return;
@@ -1073,6 +1110,10 @@ export class MultiplayerManager {
         return;
       }
 
+      DebugLogger.warn(
+        'Multiplayer',
+        `Removing remote player "${playerName}" (${playerId}) after ${graceMs / 1000}s Presence & broadcast timeout`
+      );
       this.remotePlayers.delete(playerId);
       if (this.speakingPeers.delete(playerId)) {
         window.dispatchEvent(
@@ -1082,6 +1123,10 @@ export class MultiplayerManager {
         );
       }
       if (this.remoteKaraokeState && this.remoteKaraokeState.singerId === playerId) {
+        DebugLogger.warn(
+          'KaraokeSync',
+          `Cleared active karaoke state because singer "${playerName}" timed out`
+        );
         const cleared: NetworkKaraokeState = {
           ...this.remoteKaraokeState,
           active: false,

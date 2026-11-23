@@ -1,6 +1,7 @@
 import * as pc from 'playcanvas';
 import { MultiplayerManager } from '../../network/MultiplayerManager';
 import { applyAvatarColor } from '../../utils/avatarColor';
+import { DebugLogger } from '../../utils/debugLogger';
 import { getEntityMeta } from '../serialization/EntityComponentHelper';
 import { KaraokeStageController } from './KaraokeStageController';
 
@@ -139,6 +140,10 @@ export class PlayerControllerRuntime {
     this.playerEntity = this.findByTagOrName(this.sceneRoot, 'player', 'Player');
     this.cameraEntity = this.findMainCamera(this.sceneRoot);
     if (!this.playerEntity || !this.cameraEntity) {
+      DebugLogger.warn(
+        'PlayerController',
+        `PlayerControllerRuntime failed to start (player=${Boolean(this.playerEntity)}, camera=${Boolean(this.cameraEntity)})`
+      );
       return false;
     }
 
@@ -889,6 +894,7 @@ export class PlayerControllerRuntime {
     if (document.pointerLockElement === this.canvas) {
       document.exitPointerLock?.();
     }
+    DebugLogger.log('KaraokeStage', 'Local player entered Acoustic Karaoke Stage');
     const view = this.karaoke.enter(this.playerEntity);
     this.playerYaw = view.playerYaw;
     this.yaw = view.camYaw;
@@ -897,6 +903,7 @@ export class PlayerControllerRuntime {
   }
 
   private exitKaraoke(): void {
+    DebugLogger.log('KaraokeStage', 'Local player exited Acoustic Karaoke Stage');
     this.karaoke.exit();
     this.playAnim('Idle_Loop');
   }

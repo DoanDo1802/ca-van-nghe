@@ -24,6 +24,7 @@ import { KARAOKE_SONGS, karaokeAudio, type KaraokeSong } from '../../utils/karao
 import { loungeAudio } from '../../utils/audio';
 import { MultiplayerManager } from '../../network/MultiplayerManager';
 import { KaraokeVoiceManager } from '../../network/KaraokeVoiceManager';
+import { DebugLogger } from '../../utils/debugLogger';
 
 interface KaraokeOverlayProps {
   isOpen: boolean;
@@ -371,7 +372,8 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
       } else {
         setYtResults([]);
       }
-    } catch {
+    } catch (err) {
+      DebugLogger.warn('KaraokeOverlay', `YouTube search failed for "${raw}", falling back to preset songs`, err);
       setSearchError('Không tìm được trực tiếp trên YouTube lúc này — đang lọc danh sách có sẵn.');
       setYtResults(null);
     } finally {
@@ -380,6 +382,7 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
   };
 
   const playYouTubeSong = (song: KaraokeSong) => {
+    DebugLogger.log('KaraokeOverlay', `Playing YouTube karaoke: "${song.title}" (${song.youtubeId})`);
     karaokeAudio.stop();
     setCustomFileName(null);
     setIsFilePlaying(false);
@@ -468,6 +471,7 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
         setSelectedDeviceId(list[0].deviceId);
       }
     } else {
+      DebugLogger.warn('KaraokeOverlay', 'Microphone permission denied or unavailable');
       setMicError('Chưa cấp quyền Micro trên trình duyệt');
     }
   };

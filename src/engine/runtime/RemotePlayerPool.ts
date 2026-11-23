@@ -1,6 +1,7 @@
 import * as pc from 'playcanvas';
 import { MultiplayerManager, type RemotePlayerState } from '../../network/MultiplayerManager';
 import { applyAvatarColor } from '../../utils/avatarColor';
+import { DebugLogger } from '../../utils/debugLogger';
 import { loadGlbFromArrayBuffer } from '../animation/GlbAnimExtractor';
 
 export interface NameplateEntry {
@@ -86,6 +87,7 @@ export class RemotePlayerPool {
     // 1. Despawn players who left
     for (const [id, avatar] of this.avatars.entries()) {
       if (!remotes.has(id)) {
+        DebugLogger.log('RemotePlayerPool', `Despawning remote avatar "${avatar.name}" (${id})`);
         avatar.entity.destroy();
         avatar.destroyResources();
         this.avatars.delete(id);
@@ -294,7 +296,11 @@ export class RemotePlayerPool {
   private async spawnAvatar(state: RemotePlayerState): Promise<void> {
     try {
       const buf = await this.getCharacterBuffer();
-      if (!buf || this.destroyed) return;
+      if (!buf) {
+        DebugLogger.warn('RemotePlayerPool', `Cannot spawn remote player "${state.name}": Character.glb failed to load`);
+        return;
+      }
+      if (this.destroyed) return;
 
       const loaded = await loadGlbFromArrayBuffer(
         this.app,
@@ -369,6 +375,9 @@ export class RemotePlayerPool {
 
       this.playAnim(avatar, avatar.pendingAnim);
       this.avatars.set(state.id, avatar);
+      DebugLogger.log('RemotePlayerPool', `Spawned remote avatar "${state.name}" (${state.id})`);
+    } catch (err) {
+      DebugLogger.error('RemotePlayerPool', `Failed spawning remote avatar "${state.name}" (${state.id})`, err);
     } finally {
       this.spawningIds.delete(state.id);
     }

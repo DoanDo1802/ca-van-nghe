@@ -5,6 +5,7 @@ import {
   type RoomStatusSnapshot,
   type RtcSignalMessage,
 } from './MultiplayerManager';
+import { DebugLogger } from '../utils/debugLogger';
 
 const RTC_CONFIG: RTCConfiguration = {
   iceServers: [
@@ -135,6 +136,10 @@ export class KaraokeVoiceManager {
     this.isBroadcasting = true;
 
     const status = MultiplayerManager.getInstance().getRoomStatus();
+    DebugLogger.log(
+      'KaraokeVoice',
+      `Started voice broadcast (connected=${status.connected}, peers=${status.players.filter((p) => !p.isLocal).length})`
+    );
     if (!status.connected) return;
     for (const player of status.players) {
       if (!player.isLocal) {
@@ -255,6 +260,7 @@ export class KaraokeVoiceManager {
     if (!status) return;
 
     if (!status.connected) {
+      DebugLogger.warn('KaraokeVoice', 'Channel disconnected transiently; pausing outgoing WebRTC peers until reconnect');
       // Close transient RTCPeerConnections but keep localStream/isBroadcasting intact so voice resumes on reconnect
       for (const pc of this.outgoingPeers.values()) {
         pc.close();
@@ -341,7 +347,8 @@ export class KaraokeVoiceManager {
         kind: 'offer',
         sdp: pc.localDescription?.toJSON() ?? tunedOffer,
       });
-    } catch {
+    } catch (err) {
+      DebugLogger.error('KaraokeVoice', `Failed to create WebRTC offer for peer ${peerId}`, err);
       pc.close();
       this.outgoingPeers.delete(peerId);
     }
@@ -395,7 +402,8 @@ export class KaraokeVoiceManager {
           kind: 'answer',
           sdp: pc.localDescription?.toJSON() ?? tunedAnswer,
         });
-      } catch {
+      } catch (err) {
+        DebugLogger.error('KaraokeVoice', `Failed to handle WebRTC offer from peer ${msg.fromId}`, err);
         this.cleanupIncomingPeer(msg.fromId);
       }
       return;

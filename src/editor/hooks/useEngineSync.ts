@@ -3,6 +3,7 @@ import { EditorEngine } from '../../engine/EditorEngine';
 import { useConsoleStore } from '../../store/useConsoleStore';
 import { useEditorStore } from '../../store/useEditorStore';
 import { useTimelineStore } from '../../store/useTimelineStore';
+import { DebugLogger } from '../../utils/debugLogger';
 
 const TRANSFORM_THROTTLE_MS = 50;
 
@@ -17,6 +18,10 @@ export function useEngineSync(): void {
   useEffect(() => {
     const engine = EditorEngine.getInstance();
     const bus = engine.eventBus;
+    const uninstallHooks = DebugLogger.installGlobalHooks();
+    const unsubDebugLogger = DebugLogger.subscribe((entry) => {
+      useConsoleStore.getState().addLog(entry);
+    }, true);
 
     const syncHierarchy = () => {
       const list = engine.getEntitySummaries();
@@ -85,6 +90,11 @@ export function useEngineSync(): void {
       }),
 
       bus.on('playmode:changed', ({ state }) => {
+        const prevState = useEditorStore.getState().playState;
+        if (prevState === 'edit' && state === 'playing' && useConsoleStore.getState().clearOnPlay) {
+          DebugLogger.clearBuffer();
+          useConsoleStore.getState().clearLogs();
+        }
         useEditorStore.getState().setPlayState(state);
         if (state === 'edit') {
           syncHierarchy();
@@ -106,6 +116,8 @@ export function useEngineSync(): void {
     ];
 
     return () => {
+      unsubDebugLogger();
+      uninstallHooks();
       if (pendingTransformTimerRef.current !== null) {
         window.clearTimeout(pendingTransformTimerRef.current);
         pendingTransformTimerRef.current = null;

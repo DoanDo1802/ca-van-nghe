@@ -4,6 +4,12 @@ import { useEditorStore } from '../../store/useEditorStore';
 import { GameOverlayUI } from './GameOverlayUI';
 import { YouTubeStagePlayer } from '../../components/YouTubeStagePlayer';
 import { SceneLoadingOverlay } from '../../components/SceneLoadingOverlay';
+import { ServerAnnouncementBanner } from '../../components/ServerAnnouncementBanner';
+import { MultiplayerManager, PUBLIC_LOBBY_ROOM_ID } from '../../network/MultiplayerManager';
+import { AdminService } from '../../network/AdminService';
+import { isSupabaseConfigured } from '../../network/supabaseClient';
+import { LOBBY_SCENE_ID } from '../../engine/serialization/SceneRegistry';
+import { DebugLogger } from '../../utils/debugLogger';
 
 export type CameraSnapView = 'top' | 'front' | 'right' | 'iso';
 
@@ -33,6 +39,7 @@ export const ViewportPanel: React.FC<ViewportPanelProps> = ({ onViewportResize }
     promptText: string;
     keyCode: string;
   } | null>(null);
+  const [kickedNotice, setKickedNotice] = useState<string | null>(null);
 
   useEffect(() => {
     const engine = EditorEngine.getInstance();
@@ -40,6 +47,81 @@ export const ViewportPanel: React.FC<ViewportPanelProps> = ({ onViewportResize }
       setGenericPrompt(payload);
     });
   }, []);
+
+  // Mirror WebGamePlayer multiplayer session lifecycle during Editor Play Mode
+  useEffect(() => {
+    if (playState === 'edit') {
+      if (MultiplayerManager.getInstance().isConnected()) {
+        void MultiplayerManager.getInstance().leaveRoom();
+      }
+      return;
+    }
+
+    let active = true;
+    const engine = EditorEngine.getInstance();
+    const mp = MultiplayerManager.getInstance();
+
+    const connectEditorPlaySession = async () => {
+      if (!isSupabaseConfigured() || mp.isConnected()) return;
+      const adminAcc = await AdminService.getCurrentAdminAccount();
+      if (!active) return;
+
+      if (adminAcc) {
+        AdminService.savePlayerAccount(adminAcc);
+        mp.setLocalIsAdmin(true);
+        if (engine.getSceneId() === LOBBY_SCENE_ID) {
+          const adminName = adminAcc.display_name || adminAcc.username || 'Admin';
+          await mp.joinRoom(PUBLIC_LOBBY_ROOM_ID, adminName, LOBBY_SCENE_ID, {
+            bypassLimits: true,
+          });
+        }
+        return;
+      }
+
+      const savedPlayer = AdminService.getSavedPlayerAccount();
+      const displayName =
+        savedPlayer?.display_name ||
+        savedPlayer?.username ||
+        localStorage.getItem('cavannghe:player-name') ||
+        'Khách Lounge';
+      if (savedPlayer?.avatar_color) {
+        mp.setLocalAvatarColor(savedPlayer.avatar_color);
+        window.dispatchEvent(
+          new CustomEvent('cavannghe:avatar-color', { detail: savedPlayer.avatar_color })
+        );
+      }
+      if (engine.getSceneId() === LOBBY_SCENE_ID) {
+        await mp.joinRoom(PUBLIC_LOBBY_ROOM_ID, displayName, LOBBY_SCENE_ID, {
+          bypassLimits: true,
+        });
+      }
+    };
+
+    void connectEditorPlaySession().catch((err) => {
+      DebugLogger.error('EditorPlaySession', 'Failed to connect initial play session', err);
+    });
+
+    const onKicked = () => {
+      if (!active) return;
+      setKickedNotice(mp.getLastJoinError() || 'Bạn đã bị mời rời khỏi phòng.');
+      void engine.loadSceneById(LOBBY_SCENE_ID, { keepPlayMode: true }).then(() => {
+        if (!active) return;
+        const saved = AdminService.getSavedPlayerAccount();
+        const name =
+          saved?.display_name ||
+          saved?.username ||
+          localStorage.getItem('cavannghe:player-name') ||
+          'Khách Lounge';
+        void mp.joinRoom(PUBLIC_LOBBY_ROOM_ID, name, LOBBY_SCENE_ID, { bypassLimits: true });
+      });
+    };
+    window.addEventListener('cavannghe:kicked', onKicked);
+
+    return () => {
+      active = false;
+      window.removeEventListener('cavannghe:kicked', onKicked);
+    };
+  }, [playState]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -140,102 +222,106 @@ export const ViewportPanel: React.FC<ViewportPanelProps> = ({ onViewportResize }
         className="relative z-[1] w-full h-full block outline-none"
       />
 
-      {/* Top-left Scene label */}
-      <div className="pointer-events-none absolute top-2.5 left-2.5 flex items-center gap-2">
-        <span className="px-2 py-0.5 rounded bg-[#141821]/85 border border-[#2b313d] text-[11px] font-medium text-gray-300 backdrop-blur-sm">
-          Scene Viewport
-        </span>
-        {!engineReady && (
-          <span className="px-2 py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-[11px] text-amber-300">
-            Initializing WebGL2...
+      {/* Top-left Scene label (Edit mode only so it doesn't overlap Gameplay HUD) */}
+      {playState === 'edit' && (
+        <div className="pointer-events-none absolute top-2.5 left-2.5 flex items-center gap-2">
+          <span className="px-2 py-0.5 rounded bg-[#141821]/85 border border-[#2b313d] text-[11px] font-medium text-gray-300 backdrop-blur-sm">
+            Scene Viewport
           </span>
-        )}
-      </div>
-
-      {/* Top-right XYZ Orientation Axis Widget */}
-      <div className="absolute top-2.5 right-2.5 flex flex-col items-center gap-1.5 p-2 rounded-lg bg-[#141821]/85 border border-[#2b313d] backdrop-blur-sm shadow-lg">
-        <svg
-          width="54"
-          height="54"
-          viewBox="0 0 60 60"
-          className="overflow-visible select-none"
-          aria-label="Orientation Axis"
-        >
-          {/* Origin */}
-          <circle cx="30" cy="30" r="3" fill="#9ca3af" />
-
-          {/* +X Axis (Right) */}
-          <line x1="30" y1="30" x2="52" y2="30" stroke="#fb7185" strokeWidth="2" />
-          <g
-            className="cursor-pointer"
-            onClick={() => handleSnapView('right')}
-          >
-            <circle cx="52" cy="30" r="7" fill="#e11d48" fillOpacity="0.85" />
-            <text
-              x="52"
-              y="33.5"
-              textAnchor="middle"
-              fontSize="9"
-              fontWeight="bold"
-              fill="#ffffff"
-            >
-              X
-            </text>
-          </g>
-
-          {/* +Y Axis (Top) */}
-          <line x1="30" y1="30" x2="30" y2="8" stroke="#34d399" strokeWidth="2" />
-          <g
-            className="cursor-pointer"
-            onClick={() => handleSnapView('top')}
-          >
-            <circle cx="30" cy="8" r="7" fill="#059669" fillOpacity="0.85" />
-            <text
-              x="30"
-              y="11.5"
-              textAnchor="middle"
-              fontSize="9"
-              fontWeight="bold"
-              fill="#ffffff"
-            >
-              Y
-            </text>
-          </g>
-
-          {/* +Z Axis (Front-left diagonal) */}
-          <line x1="30" y1="30" x2="14" y2="46" stroke="#38bdf8" strokeWidth="2" />
-          <g
-            className="cursor-pointer"
-            onClick={() => handleSnapView('front')}
-          >
-            <circle cx="14" cy="46" r="7" fill="#0284c7" fillOpacity="0.85" />
-            <text
-              x="14"
-              y="49.5"
-              textAnchor="middle"
-              fontSize="9"
-              fontWeight="bold"
-              fill="#ffffff"
-            >
-              Z
-            </text>
-          </g>
-        </svg>
-
-        <div className="flex items-center gap-1">
-          {AXIS_VIEW_BUTTONS.map((btn) => (
-            <button
-              key={btn.view}
-              type="button"
-              title={btn.title}
-              onClick={() => handleSnapView(btn.view)}
-              className={`px-1.5 py-0.5 rounded border text-[10px] font-semibold transition-colors ${btn.colorClass}`}
-            >
-              {btn.label}
-            </button>
-          ))}
+          {!engineReady && (
+            <span className="px-2 py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-[11px] text-amber-300">
+              Initializing WebGL2...
+            </span>
+          )}
         </div>
-      </div>
+      )}
+
+      {/* Top-right XYZ Orientation Axis Widget (Edit mode only so it doesn't overlap Gameplay menu) */}
+      {playState === 'edit' && (
+        <div className="absolute top-2.5 right-2.5 flex flex-col items-center gap-1.5 p-2 rounded-lg bg-[#141821]/85 border border-[#2b313d] backdrop-blur-sm shadow-lg">
+          <svg
+            width="54"
+            height="54"
+            viewBox="0 0 60 60"
+            className="overflow-visible select-none"
+            aria-label="Orientation Axis"
+          >
+            {/* Origin */}
+            <circle cx="30" cy="30" r="3" fill="#9ca3af" />
+
+            {/* +X Axis (Right) */}
+            <line x1="30" y1="30" x2="52" y2="30" stroke="#fb7185" strokeWidth="2" />
+            <g
+              className="cursor-pointer"
+              onClick={() => handleSnapView('right')}
+            >
+              <circle cx="52" cy="30" r="7" fill="#e11d48" fillOpacity="0.85" />
+              <text
+                x="52"
+                y="33.5"
+                textAnchor="middle"
+                fontSize="9"
+                fontWeight="bold"
+                fill="#ffffff"
+              >
+                X
+              </text>
+            </g>
+
+            {/* +Y Axis (Top) */}
+            <line x1="30" y1="30" x2="30" y2="8" stroke="#34d399" strokeWidth="2" />
+            <g
+              className="cursor-pointer"
+              onClick={() => handleSnapView('top')}
+            >
+              <circle cx="30" cy="8" r="7" fill="#059669" fillOpacity="0.85" />
+              <text
+                x="30"
+                y="11.5"
+                textAnchor="middle"
+                fontSize="9"
+                fontWeight="bold"
+                fill="#ffffff"
+              >
+                Y
+              </text>
+            </g>
+
+            {/* +Z Axis (Front-left diagonal) */}
+            <line x1="30" y1="30" x2="14" y2="46" stroke="#38bdf8" strokeWidth="2" />
+            <g
+              className="cursor-pointer"
+              onClick={() => handleSnapView('front')}
+            >
+              <circle cx="14" cy="46" r="7" fill="#0284c7" fillOpacity="0.85" />
+              <text
+                x="14"
+                y="49.5"
+                textAnchor="middle"
+                fontSize="9"
+                fontWeight="bold"
+                fill="#ffffff"
+              >
+                Z
+              </text>
+            </g>
+          </svg>
+
+          <div className="flex items-center gap-1">
+            {AXIS_VIEW_BUTTONS.map((btn) => (
+              <button
+                key={btn.view}
+                type="button"
+                title={btn.title}
+                onClick={() => handleSnapView(btn.view)}
+                className={`px-1.5 py-0.5 rounded border text-[10px] font-semibold transition-colors ${btn.colorClass}`}
+              >
+                {btn.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Bottom-left navigation hint */}
       {playState === 'edit' && (
@@ -255,7 +341,21 @@ export const ViewportPanel: React.FC<ViewportPanelProps> = ({ onViewportResize }
       )}
 
       {/* Play Mode Game UI Overlay */}
+      {playState !== 'edit' && <ServerAnnouncementBanner />}
       {playState !== 'edit' && <GameOverlayUI />}
+
+      {kickedNotice && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[120] max-w-sm px-4 py-3 rounded-xl bg-rose-950/95 border border-rose-500/40 text-rose-100 text-xs shadow-2xl backdrop-blur-md flex items-center gap-3">
+          <span className="flex-1">{kickedNotice}</span>
+          <button
+            type="button"
+            onClick={() => setKickedNotice(null)}
+            className="text-rose-300 hover:text-white font-bold px-1"
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {/* Scene Transition Loading Bar */}
       <SceneLoadingOverlay />

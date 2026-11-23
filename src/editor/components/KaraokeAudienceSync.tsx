@@ -3,6 +3,7 @@ import { Mic, Volume2, VolumeX } from 'lucide-react';
 import { MultiplayerManager, type NetworkKaraokeState } from '../../network/MultiplayerManager';
 import { KaraokeVoiceManager } from '../../network/KaraokeVoiceManager';
 import { loungeAudio } from '../../utils/audio';
+import { DebugLogger } from '../../utils/debugLogger';
 
 interface KaraokeAudienceSyncProps {
   isSingingLocal: boolean;
@@ -38,6 +39,9 @@ export const KaraokeAudienceSync: React.FC<KaraokeAudienceSyncProps> = ({ isSing
 
     mp.setOnRemoteKaraoke((next) => {
       if (!next.active) {
+        if (lastTrackKeyRef.current) {
+          DebugLogger.log('KaraokeAudience', `Remote karaoke ended (${next.singerName})`);
+        }
         lastTrackKeyRef.current = '';
         audienceYtTimeRef.current = 0;
         setRemoteKaraoke(null);
@@ -46,6 +50,7 @@ export const KaraokeAudienceSync: React.FC<KaraokeAudienceSyncProps> = ({ isSing
       }
       const nextKey = `${next.singerId}:${next.youtubeVideoId ?? next.title}`;
       if (nextKey !== lastTrackKeyRef.current) {
+        DebugLogger.log('KaraokeAudience', `Syncing remote karaoke: ${next.singerName} -> "${next.title}"`);
         lastTrackKeyRef.current = nextKey;
         audienceYtTimeRef.current = 0;
         setSyncOffsetSec(0);

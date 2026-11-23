@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { ScreenProjectionData, StageMediaState } from '../engine/runtime/StageAudioManager';
+import { DebugLogger } from '../utils/debugLogger';
 
 interface YTPlayerInstance {
   loadVideoById: (opts: { videoId: string; suggestedQuality?: string }) => void;
@@ -369,9 +370,11 @@ export const YouTubeStagePlayer: React.FC = () => {
           },
           onError: (ev) => {
             if (cancelled) return;
+            const errMsg = getYouTubeErrorMessage(ev.data);
+            DebugLogger.error('YouTubeStage', `YouTube player error (code ${ev.data}): ${errMsg}`);
             window.dispatchEvent(
               new CustomEvent<string>('cavannghe:stage-media-error', {
-                detail: getYouTubeErrorMessage(ev.data),
+                detail: errMsg,
               })
             );
           },
@@ -458,10 +461,12 @@ export const YouTubeStagePlayer: React.FC = () => {
             autoPlay
             muted={stageState.isMuted}
             onError={() => {
+              const msg =
+                'Không thể phát video từ link này. Vui lòng kiểm tra lại đường dẫn trực tiếp (.mp4/.webm) hoặc dùng link YouTube.';
+              DebugLogger.error('YouTubeStage', `DOM video fallback playback error for URL: ${stageState.domVideoUrl}`);
               window.dispatchEvent(
                 new CustomEvent<string>('cavannghe:stage-media-error', {
-                  detail:
-                    'Không thể phát video từ link này. Vui lòng kiểm tra lại đường dẫn trực tiếp (.mp4/.webm) hoặc dùng link YouTube.',
+                  detail: msg,
                 })
               );
             }}

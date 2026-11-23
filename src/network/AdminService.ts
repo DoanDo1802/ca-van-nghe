@@ -1,4 +1,5 @@
 import { getSupabaseClient } from './supabaseClient';
+import { DebugLogger } from '../utils/debugLogger';
 
 export interface AdminAccount {
   id: string;
@@ -299,7 +300,11 @@ export const AdminService = {
       .gte('last_active_at', cutoff)
       .order('last_active_at', { ascending: false });
 
-    if (error || !data) return [];
+    if (error) {
+      DebugLogger.error('AdminService', 'fetchActiveRooms failed:', error.message);
+      return [];
+    }
+    if (!data) return [];
     return data as ActiveRoomInfo[];
   },
 
@@ -339,7 +344,7 @@ export const AdminService = {
   }): Promise<void> {
     const supabase = getSupabaseClient();
     if (!supabase) return;
-    await supabase.rpc('upsert_room_heartbeat', {
+    const { error } = await supabase.rpc('upsert_room_heartbeat', {
       p_room_id: params.roomId,
       p_room_name: params.roomName || params.roomId,
       p_host_name: params.hostName,
@@ -348,6 +353,12 @@ export const AdminService = {
       p_has_password: Boolean(params.hasPassword),
       p_password: params.password?.trim() || null,
     });
+    if (error) {
+      DebugLogger.error(
+        'AdminService',
+        `upsert_room_heartbeat failed for room "${params.roomId}": ${error.message}`
+      );
+    }
   },
 
   async checkCanJoinRoom(
@@ -468,7 +479,7 @@ export const AdminService = {
   }): Promise<void> {
     const supabase = getSupabaseClient();
     if (!supabase) return;
-    await supabase.rpc('upsert_room_player', {
+    const { error } = await supabase.rpc('upsert_room_player', {
       p_room_id: params.roomId,
       p_player_id: params.playerId,
       p_player_name: params.playerName,
@@ -477,15 +488,27 @@ export const AdminService = {
       p_is_admin: params.isAdmin,
       p_device_id: params.deviceId ?? this.getOrCreateDeviceId(),
     });
+    if (error) {
+      DebugLogger.error(
+        'AdminService',
+        `upsert_room_player failed (${params.roomId}/${params.playerId}): ${error.message}`
+      );
+    }
   },
 
   async removeRoomPlayer(roomId: string, playerId: string): Promise<void> {
     const supabase = getSupabaseClient();
     if (!supabase) return;
-    await supabase.rpc('remove_room_player', {
+    const { error } = await supabase.rpc('remove_room_player', {
       p_room_id: roomId,
       p_player_id: playerId,
     });
+    if (error) {
+      DebugLogger.warn(
+        'AdminService',
+        `remove_room_player failed (${roomId}/${playerId}): ${error.message}`
+      );
+    }
   },
 
   async fetchRoomPlayers(roomId?: string): Promise<RoomPlayerInfo[]> {
@@ -501,7 +524,11 @@ export const AdminService = {
       q = q.eq('room_id', roomId);
     }
     const { data, error } = await q;
-    if (error || !data) return [];
+    if (error) {
+      DebugLogger.error('AdminService', 'fetchRoomPlayers failed:', error.message);
+      return [];
+    }
+    if (!data) return [];
     return data as RoomPlayerInfo[];
   },
 

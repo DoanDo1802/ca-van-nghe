@@ -1642,6 +1642,7 @@ export class EditorEngine {
 
       if (savedDraft) {
         report(18, `Đang đọc dữ liệu ${sceneDef.shortName}...`);
+        this.consoleBridge.logFrom('SceneLoader', `Loading "${sceneDef.name}" from IndexedDB scene draft`);
         await this.loadSceneSchemaAsync(savedDraft, (loaded, total, name) => {
           const pct = total > 0 ? 22 + (loaded / total) * 68 : 88;
           report(pct, `Đang tải tài nguyên: ${name} (${Math.round(pct)}%)`);
@@ -1649,6 +1650,7 @@ export class EditorEngine {
         if (this.app !== targetApp || !this.sceneRoot) return;
         await useAssetStore.getState().loadAssets();
       } else {
+        this.consoleBridge.logFrom('SceneLoader', `Loading "${sceneDef.name}" from default importer`);
         await importCaVanNgheSceneById(this, sceneDef.id, ({ percent, label }) => {
           report(Math.min(94, percent), label);
         });

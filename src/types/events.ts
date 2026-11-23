@@ -12,6 +12,7 @@ export interface ConsoleLogPayload {
   level: ConsoleLogLevel;
   message: string;
   source?: string;
+  stack?: string;
   timestamp: number;
 }
 
