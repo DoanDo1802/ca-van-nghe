@@ -96,6 +96,15 @@ export interface SnapConfig {
   scale: number;
 }
 
+function isMobileBrowser(): boolean {
+  if (typeof window === 'undefined') return false;
+  return (
+    /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) ||
+    (Boolean(window.matchMedia?.('(pointer: coarse)').matches) &&
+      Math.min(window.innerWidth, window.innerHeight) <= 900)
+  );
+}
+
 const KNOWN_COMPONENT_TYPES = new Set<ComponentType>([
   'render',
   'light',
@@ -267,7 +276,10 @@ export class EditorEngine {
       app.systems.rigidbody.timeScale = 0;
     }
 
-    app.graphicsDevice.maxPixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+    app.graphicsDevice.maxPixelRatio = Math.min(
+      window.devicePixelRatio || 1,
+      isMobileBrowser() ? 1.5 : 2
+    );
     app.setCanvasFillMode(pc.FILLMODE_NONE);
     app.setCanvasResolution(pc.RESOLUTION_AUTO);
 
@@ -647,6 +659,10 @@ export class EditorEngine {
 
   getSceneRoot(): pc.Entity | null {
     return this.sceneRoot;
+  }
+
+  isEditorAutoDraftEnabled(): boolean {
+    return this.allowAutoDraftSave;
   }
 
   getEditorLayer(): pc.Layer | null {
@@ -1606,9 +1622,10 @@ export class EditorEngine {
       clearGlbContainerCache(this.app);
       clearGlbAssetBufferCache();
 
-      const rawDraft = options?.resetToDefault
-        ? null
-        : await ProjectRepository.loadSceneDraft(sceneDef.id);
+      const rawDraft =
+        options?.resetToDefault || !this.allowAutoDraftSave
+          ? null
+          : await ProjectRepository.loadSceneDraft(sceneDef.id);
       if (this.app !== targetApp || !this.sceneRoot) return;
 
       const hasCameraInEntity = (ent: EntityData): boolean =>

@@ -32,6 +32,15 @@ export interface SceneLoadProgressPayload {
 
 export type SceneLoadProgressCallback = (progress: SceneLoadProgressPayload) => void;
 
+export function isMobileSceneDevice(): boolean {
+  if (typeof window === 'undefined') return false;
+  return (
+    /iPhone|iPad|iPod|Android/i.test(navigator.userAgent) ||
+    (Boolean(window.matchMedia?.('(pointer: coarse)').matches) &&
+      Math.min(window.innerWidth, window.innerHeight) <= 900)
+  );
+}
+
 function attachObjectVariables(
   entity: pc.Entity,
   scriptName: string,
@@ -92,7 +101,8 @@ async function fetchWithProgress(
   }
 
   const contentLength = Number(response.headers.get('content-length') || 0);
-  if (!response.body || contentLength <= 0) {
+  const largeOrMobile = isMobileSceneDevice() || contentLength > 15 * 1024 * 1024;
+  if (!response.body || contentLength <= 0 || largeOrMobile) {
     const buf = await response.arrayBuffer();
     onFraction(1);
     return buf;
@@ -236,7 +246,13 @@ export async function importCaVanNgheSceneById(
   clearGlbContainerCache(app);
   clearGlbAssetBufferCache();
 
-  const uniqueUrls = Array.from(new Set(sceneDef.modelUrls));
+  const isEditor = engine.isEditorAutoDraftEnabled();
+  const isMobile = isMobileSceneDevice();
+  const rawUniqueUrls = Array.from(new Set(sceneDef.modelUrls));
+  const uniqueUrls =
+    isMobile && sceneDef.id === TEAROOM_SCENE_ID
+      ? rawUniqueUrls.filter((u) => !u.includes('every_other_gig_ever.glb'))
+      : rawUniqueUrls;
   const bufferCache = new Map<string, ArrayBuffer>();
   const fileFractions = new Map<string, number>();
 
@@ -263,94 +279,108 @@ export async function importCaVanNgheSceneById(
     return buf;
   };
 
-  await Promise.all(uniqueUrls.map((url) => fetchBuffer(url)));
+  if (isMobile) {
+    for (const url of uniqueUrls) {
+      if (engine.getApp() !== app || engine.getSceneRoot() !== sceneRoot || !app.scene) {
+        bufferCache.clear();
+        return;
+      }
+      await fetchBuffer(url);
+    }
+  } else {
+    await Promise.all(uniqueUrls.map((url) => fetchBuffer(url)));
+  }
 
   if (engine.getApp() !== app || engine.getSceneRoot() !== sceneRoot || !app.scene) {
+    bufferCache.clear();
     return;
   }
 
-  report(68, 'Đang đồng bộ kho tài nguyên của phòng...');
-
-  const existingAssets = await AssetRepository.listAssets();
-  const existingByName = new Map<string, { id: string; sizeBytes: number }>();
-  const existingPrefabs = new Map<string, string>();
-  for (const asset of existingAssets) {
-    if (asset.folderPath === CA_VAN_NGHE_FOLDER) {
-      existingByName.set(asset.name, { id: asset.id, sizeBytes: asset.sizeBytes });
-    } else if (asset.type === 'prefab' && asset.folderPath === PREFABS_FOLDER) {
-      existingPrefabs.set(asset.name, asset.id);
-    }
-  }
-
   const assetIdByUrl = new Map<string, string>();
-  for (const url of uniqueUrls) {
-    const filename = extractFilenameFromUrl(url);
-    const buffer = bufferCache.get(url);
-    const existing = existingByName.get(filename);
-    if (existing) {
-      assetIdByUrl.set(url, existing.id);
-      if (buffer && existing.sizeBytes !== buffer.byteLength) {
-        await AssetRepository.updateAssetBlob(existing.id, buffer);
-        clearGlbAssetBufferCache(existing.id);
-      }
-      continue;
-    }
-    if (!buffer) continue;
-
-    const mimeType = filename.toLowerCase().endsWith('.gltf')
-      ? 'model/gltf+json'
-      : 'model/gltf-binary';
-    const file = new File([buffer], filename, { type: mimeType });
-    const entry = await AssetRepository.importFile(file, CA_VAN_NGHE_FOLDER);
-    assetIdByUrl.set(url, entry.id);
-  }
-
-  // Create prefab metadata only for repeated stage models in Cinema_Scene
   const prefabNameByAssetId = new Map<string, string>();
-  if (sceneDef.id === CINEMA_SCENE_ID) {
-    for (const url of ['/models/pa-speaker.glb', '/models/fresnel-led.glb']) {
-      const prefabName = getPrefabNameForUrl(url);
-      const assetId = assetIdByUrl.get(url) ?? null;
-      if (assetId) {
-        prefabNameByAssetId.set(assetId, prefabName);
+
+  if (isEditor) {
+    report(68, 'Đang đồng bộ kho tài nguyên của phòng...');
+
+    const existingAssets = await AssetRepository.listAssets();
+    const existingByName = new Map<string, { id: string; sizeBytes: number }>();
+    const existingPrefabs = new Map<string, string>();
+    for (const asset of existingAssets) {
+      if (asset.folderPath === CA_VAN_NGHE_FOLDER) {
+        existingByName.set(asset.name, { id: asset.id, sizeBytes: asset.sizeBytes });
+      } else if (asset.type === 'prefab' && asset.folderPath === PREFABS_FOLDER) {
+        existingPrefabs.set(asset.name, asset.id);
       }
-      if (!existingPrefabs.has(prefabName)) {
-        const prefabData: PrefabData = {
-          id: crypto.randomUUID(),
-          name: prefabName,
-          createdAt: new Date().toISOString(),
-          root: {
+    }
+
+    for (const url of uniqueUrls) {
+      const filename = extractFilenameFromUrl(url);
+      const buffer = bufferCache.get(url);
+      const existing = existingByName.get(filename);
+      if (existing) {
+        assetIdByUrl.set(url, existing.id);
+        if (buffer && existing.sizeBytes !== buffer.byteLength) {
+          await AssetRepository.updateAssetBlob(existing.id, buffer);
+          clearGlbAssetBufferCache(existing.id);
+        }
+        continue;
+      }
+      if (!buffer) continue;
+
+      const mimeType = filename.toLowerCase().endsWith('.gltf')
+        ? 'model/gltf+json'
+        : 'model/gltf-binary';
+      const file = new File([buffer], filename, { type: mimeType });
+      const entry = await AssetRepository.importFile(file, CA_VAN_NGHE_FOLDER);
+      assetIdByUrl.set(url, entry.id);
+    }
+
+    // Create prefab metadata only for repeated stage models in Cinema_Scene
+    if (sceneDef.id === CINEMA_SCENE_ID) {
+      for (const url of ['/models/pa-speaker.glb', '/models/fresnel-led.glb']) {
+        const prefabName = getPrefabNameForUrl(url);
+        const assetId = assetIdByUrl.get(url) ?? null;
+        if (assetId) {
+          prefabNameByAssetId.set(assetId, prefabName);
+        }
+        if (!existingPrefabs.has(prefabName)) {
+          const prefabData: PrefabData = {
             id: crypto.randomUUID(),
             name: prefabName,
-            enabled: true,
-            tags: ['prefab'],
-            transform: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
-            components: [
-              {
-                id: crypto.randomUUID(),
-                type: 'render',
-                enabled: true,
-                meshType: assetId ? 'asset' : 'box',
-                meshAssetId: assetId,
-                castShadows: true,
-                receiveShadows: true,
-                material: {
-                  diffuseColor: [0.8, 0.8, 0.8],
-                  metalness: 0.1,
-                  gloss: 0.5,
-                  emissiveColor: [0, 0, 0],
-                  emissiveIntensity: 1,
-                  opacity: 1,
-                  diffuseMapAssetId: null,
-                  normalMapAssetId: null,
-                  metalnessMapAssetId: null,
+            createdAt: new Date().toISOString(),
+            root: {
+              id: crypto.randomUUID(),
+              name: prefabName,
+              enabled: true,
+              tags: ['prefab'],
+              transform: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+              components: [
+                {
+                  id: crypto.randomUUID(),
+                  type: 'render',
+                  enabled: true,
+                  meshType: assetId ? 'asset' : 'box',
+                  meshAssetId: assetId,
+                  castShadows: true,
+                  receiveShadows: true,
+                  material: {
+                    diffuseColor: [0.8, 0.8, 0.8],
+                    metalness: 0.1,
+                    gloss: 0.5,
+                    emissiveColor: [0, 0, 0],
+                    emissiveIntensity: 1,
+                    opacity: 1,
+                    diffuseMapAssetId: null,
+                    normalMapAssetId: null,
+                    metalnessMapAssetId: null,
+                  },
                 },
-              },
-            ],
-            children: [],
-          },
-        };
-        await AssetRepository.savePrefab(prefabName, prefabData, PREFABS_FOLDER);
+              ],
+              children: [],
+            },
+          };
+          await AssetRepository.savePrefab(prefabName, prefabData, PREFABS_FOLDER);
+        }
       }
     }
   }
@@ -420,8 +450,11 @@ export async function importCaVanNgheSceneById(
     });
   }
 
+  bufferCache.clear();
   report(94, 'Đang hoàn tất khởi tạo nhân vật & vật lý...');
-  await useAssetStore.getState().loadAssets();
+  if (isEditor) {
+    await useAssetStore.getState().loadAssets();
+  }
   engine.notifySceneChanged(sceneDef.id, sceneDef.name);
   report(100, `Đã sẵn sàng vào ${sceneDef.shortName}!`);
 }
