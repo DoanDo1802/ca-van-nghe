@@ -245,13 +245,16 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
           (jumped || now - lastTimeSyncSentRef.current >= 3000)
         ) {
           lastTimeSyncSentRef.current = now;
-          MultiplayerManager.getInstance().broadcastKaraokeState({
-            active: true,
-            youtubeVideoId,
-            title: activeSong?.title ?? 'YouTube Karaoke',
-            isPlaying: true,
-            currentTime: nextTime,
-          });
+          MultiplayerManager.getInstance().broadcastKaraokeState(
+            {
+              active: true,
+              youtubeVideoId,
+              title: activeSong?.title ?? 'YouTube Karaoke',
+              isPlaying: true,
+              currentTime: nextTime,
+            },
+            { updatePresence: false }
+          );
         }
       }
       let playerState: number | undefined;

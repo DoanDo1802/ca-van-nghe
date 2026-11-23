@@ -255,7 +255,7 @@ export class StageAudioManager {
     this.stageSyncTimer = window.setInterval(() => {
       if (this.destroyed || !this.state.isPlaying || this.lastYtIsLive) return;
       if (this.canControlStage()) {
-        this.broadcastIfHost();
+        this.broadcastIfHost(false);
       }
     }, 5000);
   }
@@ -470,7 +470,7 @@ export class StageAudioManager {
     }
   }
 
-  private broadcastIfHost(): void {
+  private broadcastIfHost(updatePresence = true): void {
     const mp = MultiplayerManager.getInstance();
     if (!mp.isConnected() || (!mp.isHost() && !mp.isLocalAdmin())) return;
     const currentTime =
@@ -482,18 +482,21 @@ export class StageAudioManager {
           ? this.lastYtTime
           : undefined;
 
-    mp.broadcastStageState({
-      sourceType: this.state.sourceType,
-      mediaUrl: this.state.mediaUrl,
-      youtubeVideoId: this.state.youtubeVideoId,
-      title: this.state.title,
-      isPlaying: this.state.isPlaying,
-      isScreenOn: this.state.isScreenOn,
-      isMuted: this.state.isMuted,
-      currentTime,
-      isLive: this.state.sourceType === 'youtube' ? this.lastYtIsLive : false,
-      updatedAt: Date.now(),
-    });
+    mp.broadcastStageState(
+      {
+        sourceType: this.state.sourceType,
+        mediaUrl: this.state.mediaUrl,
+        youtubeVideoId: this.state.youtubeVideoId,
+        title: this.state.title,
+        isPlaying: this.state.isPlaying,
+        isScreenOn: this.state.isScreenOn,
+        isMuted: this.state.isMuted,
+        currentTime,
+        isLive: this.state.sourceType === 'youtube' ? this.lastYtIsLive : false,
+        updatedAt: Date.now(),
+      },
+      { updatePresence }
+    );
   }
 
   update(): void {

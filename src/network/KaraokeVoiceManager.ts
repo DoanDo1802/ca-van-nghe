@@ -99,6 +99,7 @@ export class KaraokeVoiceManager {
     });
 
     window.addEventListener('cavannghe:room-status', this.onRoomStatus);
+    window.addEventListener('cavannghe:channel-subscribed', this.onChannelSubscribed);
     window.addEventListener('pointerdown', this.onUserGesture, { passive: true });
     window.addEventListener('keydown', this.onUserGesture, { passive: true });
 
@@ -111,6 +112,7 @@ export class KaraokeVoiceManager {
     if (!this.listenerInitialized) return;
     this.listenerInitialized = false;
     window.removeEventListener('cavannghe:room-status', this.onRoomStatus);
+    window.removeEventListener('cavannghe:channel-subscribed', this.onChannelSubscribed);
     window.removeEventListener('pointerdown', this.onUserGesture);
     window.removeEventListener('keydown', this.onUserGesture);
     MultiplayerManager.getInstance().setOnRtcSignal(null);
@@ -254,6 +256,9 @@ export class KaraokeVoiceManager {
     }
 
     const activeIds = new Set(status.players.filter((p) => !p.isLocal).map((p) => p.id));
+    for (const id of MultiplayerManager.getInstance().getRemotePlayers().keys()) {
+      activeIds.add(id);
+    }
 
     for (const [id, pc] of this.outgoingPeers.entries()) {
       if (!activeIds.has(id)) {
@@ -273,6 +278,13 @@ export class KaraokeVoiceManager {
           void this.createOfferForPeer(id);
         }
       }
+    }
+  };
+
+  private onChannelSubscribed = (): void => {
+    const mp = MultiplayerManager.getInstance();
+    if (this.listenerInitialized && mp.isConnected()) {
+      mp.sendRtcSignal({ targetId: '*', kind: 'ready' });
     }
   };
 
