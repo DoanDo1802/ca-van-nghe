@@ -1,3 +1,12 @@
+import {
+  DEFAULT_AUTOTUNE_CONFIG,
+  createRapAutoTuneNode,
+  midiToNoteName,
+  postAutoTuneConfig,
+  type AutoTuneConfig,
+  type AutoTuneTelemetry,
+} from './rapAutoTune';
+
 export interface LyricLine {
   time: number; // seconds
   text: string;
@@ -104,6 +113,9 @@ class KaraokeAudioEngine {
   private micNodes: AudioNode[] = [];
   private micStream: MediaStream | null = null;
   private micSource: MediaStreamAudioSourceNode | null = null;
+  private autoTuneNode: AudioWorkletNode | null = null;
+  private autoTuneConfig: AutoTuneConfig = { ...DEFAULT_AUTOTUNE_CONFIG };
+  private autoTuneTelemetryListeners = new Set<(t: AutoTuneTelemetry) => void>();
   private micBroadcastDest: MediaStreamAudioDestinationNode | null = null;
   private broadcastLimiter: DynamicsCompressorNode | null = null;
   private localMonitorGain: GainNode | null = null;
@@ -227,6 +239,12 @@ class KaraokeAudioEngine {
       this.micStream = stream;
       this.micSource = ctx.createMediaStreamSource(stream);
 
+      const autoTuneNode = await createRapAutoTuneNode(ctx, this.autoTuneConfig);
+      if (this.micStream !== stream) {
+        autoTuneNode?.disconnect();
+        return false;
+      }
+
       // 1. Fixed gentle Preamp Gain before EQ & Compressor
       const preamp = ctx.createGain();
       preamp.gain.value = 2.6;
@@ -292,7 +310,35 @@ class KaraokeAudioEngine {
       this.micDelayGain = delayOut;
 
       this.micSource.connect(hp);
-      hp.connect(warmth);
+      if (autoTuneNode) {
+        autoTuneNode.port.onmessage = (ev: MessageEvent) => {
+          const data = ev.data as {
+            type?: string;
+            voiced?: boolean;
+            detectedFreq?: number;
+            targetFreq?: number;
+            detectedMidi?: number;
+            targetMidi?: number;
+          } | null;
+          if (!data || data.type !== 'telemetry') return;
+          const voiced = Boolean(data.voiced);
+          const telemetry: AutoTuneTelemetry = {
+            voiced,
+            detectedFreq: voiced ? Number(data.detectedFreq) || 0 : 0,
+            targetFreq: voiced ? Number(data.targetFreq) || 0 : 0,
+            detectedNote: voiced ? midiToNoteName(Number(data.detectedMidi) || 0) : '--',
+            targetNote: voiced ? midiToNoteName(Number(data.targetMidi) || 0) : '--',
+          };
+          for (const cb of this.autoTuneTelemetryListeners) {
+            cb(telemetry);
+          }
+        };
+        this.autoTuneNode = autoTuneNode;
+        hp.connect(autoTuneNode);
+        autoTuneNode.connect(warmth);
+      } else {
+        hp.connect(warmth);
+      }
       warmth.connect(presence);
       presence.connect(preamp);
       preamp.connect(comp);
@@ -344,7 +390,23 @@ class KaraokeAudioEngine {
       wet.connect(broadcastInput);
       delayOut.connect(broadcastInput);
 
-      this.micNodes = [preamp, hp, warmth, presence, comp, makeup, dry, convolver, wet, delay, delayFilter, delayFeedback, delayOut, monitorGain];
+      this.micNodes = [
+        preamp,
+        hp,
+        ...(autoTuneNode ? [autoTuneNode] : []),
+        warmth,
+        presence,
+        comp,
+        makeup,
+        dry,
+        convolver,
+        wet,
+        delay,
+        delayFilter,
+        delayFeedback,
+        delayOut,
+        monitorGain,
+      ];
       return true;
     } catch {
       return false;
@@ -352,6 +414,10 @@ class KaraokeAudioEngine {
   }
 
   disableMic(): void {
+    if (this.autoTuneNode) {
+      this.autoTuneNode.port.onmessage = null;
+      this.autoTuneNode = null;
+    }
     if (this.micSource) {
       this.micSource.disconnect();
       this.micSource = null;
@@ -437,6 +503,46 @@ class KaraokeAudioEngine {
   setToneEQ(bassDb: number, trebleDb: number): void {
     if (this.micWarmthEq) this.micWarmthEq.gain.value = Math.max(-8, Math.min(10, bassDb));
     if (this.micPresenceEq) this.micPresenceEq.gain.value = Math.max(-8, Math.min(10, trebleDb));
+  }
+
+  setAutoTuneConfig(partial: Partial<AutoTuneConfig>): AutoTuneConfig {
+    this.autoTuneConfig = {
+      ...this.autoTuneConfig,
+      ...partial,
+      retuneSpeedMs: Math.max(0, Math.min(100, partial.retuneSpeedMs ?? this.autoTuneConfig.retuneSpeedMs)),
+      mix: Math.max(0, Math.min(1, partial.mix ?? this.autoTuneConfig.mix)),
+    };
+    if (this.autoTuneNode) {
+      postAutoTuneConfig(this.autoTuneNode, this.autoTuneConfig);
+    }
+    if (!this.autoTuneConfig.enabled) {
+      const cleared: AutoTuneTelemetry = {
+        voiced: false,
+        detectedFreq: 0,
+        targetFreq: 0,
+        detectedNote: '--',
+        targetNote: '--',
+      };
+      for (const cb of this.autoTuneTelemetryListeners) {
+        cb(cleared);
+      }
+    }
+    return this.getAutoTuneConfig();
+  }
+
+  getAutoTuneConfig(): AutoTuneConfig {
+    return { ...this.autoTuneConfig };
+  }
+
+  isAutoTuneEnabled(): boolean {
+    return this.autoTuneConfig.enabled;
+  }
+
+  subscribeAutoTuneTelemetry(cb: (t: AutoTuneTelemetry) => void): () => void {
+    this.autoTuneTelemetryListeners.add(cb);
+    return () => {
+      this.autoTuneTelemetryListeners.delete(cb);
+    };
   }
 
   loadCustomFile(file: File): string {
