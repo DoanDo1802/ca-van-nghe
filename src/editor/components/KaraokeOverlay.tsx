@@ -70,20 +70,23 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
   const [selectedDeviceId, setSelectedDeviceId] = useState('');
   const [echoCancellation, setEchoCancellation] = useState(true);
   const [localMonitor, setLocalMonitor] = useState(() => karaokeAudio.isLocalMonitorEnabled());
-  const [micGain, setMicGain] = useState(3.4);
+  const [micPercent, setMicPercent] = useState(100);
   const [echoAmount, setEchoAmount] = useState(0.55);
   const [bassDb, setBassDb] = useState(3.5);
   const [trebleDb, setTrebleDb] = useState(4.5);
   const [activePreset, setActivePreset] = useState<'acoustic' | 'lounge' | 'stage' | null>('lounge');
-  const [musicVolume, setMusicVolume] = useState(35);
+  const [audienceMusicVolume, setAudienceMusicVolume] = useState(60);
   const [style, setStyle] = useState<'chill' | 'dance'>('chill');
   const [micLevel, setMicLevel] = useState(0);
+
+  const micPercentToGain = (pct: number) => (Math.max(0, Math.min(150, pct)) / 100) * 3.6;
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const ytIframeRef = useRef<HTMLIFrameElement>(null);
   const lastYtPlayingRef = useRef<boolean | null>(null);
   const ytCurrentTimeRef = useRef<number>(0);
   const lastTimeSyncSentRef = useRef<number>(0);
+  const lastVolumeSyncSentRef = useRef<number>(0);
   const playerBoxRef = useRef<HTMLDivElement>(null);
   const dragStateRef = useRef<{
     pointerId: number;
@@ -129,6 +132,7 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
           title: activeSong?.title ?? 'YouTube Karaoke',
           isPlaying: lastYtPlayingRef.current ?? true,
           currentTime: ytCurrentTimeRef.current,
+          musicVolume: audienceMusicVolume,
         });
       } else if (customFileName) {
         MultiplayerManager.getInstance().broadcastKaraokeState({
@@ -137,12 +141,13 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
           title: customFileName,
           isPlaying: isFilePlaying,
           currentTime: karaokeAudio.getCurrentTime(),
+          musicVolume: audienceMusicVolume,
         });
       }
     };
     window.addEventListener('cavannghe:channel-subscribed', onSubscribed);
     return () => window.removeEventListener('cavannghe:channel-subscribed', onSubscribed);
-  }, [isOpen, youtubeVideoId, activeSong?.title, customFileName, isFilePlaying]);
+  }, [isOpen, youtubeVideoId, activeSong?.title, customFileName, isFilePlaying, audienceMusicVolume]);
 
   const handlePlayerPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if ((e.target as HTMLElement).closest('button')) return;
@@ -175,13 +180,76 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
     }
   };
 
-  const applyYoutubeVolume = (vol: number) => {
-    const win = ytIframeRef.current?.contentWindow;
-    if (!win) return;
-    win.postMessage(
-      JSON.stringify({ event: 'command', func: 'setVolume', args: [Math.round(vol)] }),
-      '*'
-    );
+  const broadcastAudienceMusicVolume = (vol: number, commitPresence: boolean) => {
+    const now = Date.now();
+    if (!commitPresence && now - lastVolumeSyncSentRef.current < 80) return;
+    lastVolumeSyncSentRef.current = now;
+
+    if (youtubeVideoId) {
+      MultiplayerManager.getInstance().broadcastKaraokeState(
+        {
+          active: true,
+          youtubeVideoId,
+          title: activeSong?.title ?? 'YouTube Karaoke',
+          isPlaying: lastYtPlayingRef.current ?? true,
+          currentTime: ytCurrentTimeRef.current,
+          musicVolume: vol,
+        },
+        { updatePresence: commitPresence }
+      );
+    } else if (customFileName) {
+      MultiplayerManager.getInstance().broadcastKaraokeState(
+        {
+          active: true,
+          youtubeVideoId: null,
+          title: customFileName,
+          isPlaying: isFilePlaying,
+          currentTime: karaokeAudio.getCurrentTime(),
+          musicVolume: vol,
+        },
+        { updatePresence: commitPresence }
+      );
+    }
+  };
+
+  const isOpenRef = useRef(isOpen);
+  isOpenRef.current = isOpen;
+
+  const enableSingerMic = async (): Promise<boolean> => {
+    setMicError(null);
+    const ok = await karaokeAudio.enableMic({
+      deviceId: selectedDeviceId || undefined,
+      echoCancellation,
+      echoAmount,
+      micSensitivity: micPercentToGain(micPercent),
+      bassDb,
+      trebleDb,
+    });
+    if (!isOpenRef.current) {
+      if (ok) {
+        karaokeAudio.disableMic();
+        KaraokeVoiceManager.getInstance().stopBroadcasting();
+      }
+      return false;
+    }
+    if (ok) {
+      setMicEnabled(true);
+      const stream = karaokeAudio.getBroadcastStream();
+      if (stream) {
+        KaraokeVoiceManager.getInstance().startBroadcasting(stream);
+      }
+      const list = await karaokeAudio.listInputDevices();
+      if (isOpenRef.current) {
+        setInputDevices(list);
+        if (!selectedDeviceId && list[0]?.deviceId) {
+          setSelectedDeviceId(list[0].deviceId);
+        }
+      }
+      return true;
+    }
+    DebugLogger.warn('KaraokeOverlay', 'Microphone permission denied or unavailable');
+    setMicError('Chưa cấp quyền Micro trên trình duyệt');
+    return false;
   };
 
   useEffect(() => {
@@ -190,6 +258,7 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
       karaokeAudio.stop();
       karaokeAudio.disableMic();
       setMicEnabled(false);
+      setMicError(null);
       setIsMenuOpen(false);
       setIsMixerOpen(false);
       setIsFilePlaying(false);
@@ -204,6 +273,7 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
       return;
     }
     setIsPickerOpen(true);
+    void enableSingerMic();
   }, [isOpen]);
 
   useEffect(() => {
@@ -283,6 +353,7 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
               title: activeSong?.title ?? 'YouTube Karaoke',
               isPlaying: true,
               currentTime: nextTime,
+              musicVolume: audienceMusicVolume,
             },
             { updatePresence: false }
           );
@@ -310,11 +381,12 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
         title: activeSong?.title ?? 'YouTube Karaoke',
         isPlaying: nextPlaying,
         currentTime: ytCurrentTimeRef.current,
+        musicVolume: audienceMusicVolume,
       });
     };
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [isOpen, youtubeVideoId, activeSong?.title]);
+  }, [isOpen, youtubeVideoId, activeSong?.title, audienceMusicVolume]);
 
   const displayedSongs = useMemo(() => {
     if (ytResults) return ytResults;
@@ -398,6 +470,7 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
       title: song.title,
       isPlaying: true,
       currentTime: 0,
+      musicVolume: audienceMusicVolume,
     });
   };
 
@@ -408,6 +481,7 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
     const name = karaokeAudio.loadCustomFile(file);
     setCustomFileName(name);
     setActiveSong(null);
+    karaokeAudio.setAudienceMusicVolume(audienceMusicVolume / 100);
     karaokeAudio.play(() => setIsFilePlaying(false));
     setIsFilePlaying(true);
     setIsPickerOpen(false);
@@ -421,6 +495,7 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
       title: name,
       isPlaying: true,
       currentTime: 0,
+      musicVolume: audienceMusicVolume,
     });
     e.target.value = '';
   };
@@ -440,6 +515,7 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
       title: customFileName ?? 'Nhạc tải lên',
       isPlaying: next,
       currentTime: karaokeAudio.getCurrentTime(),
+      musicVolume: audienceMusicVolume,
     });
   };
 
@@ -451,29 +527,7 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
       setMicEnabled(false);
       return;
     }
-    const ok = await karaokeAudio.enableMic({
-      deviceId: selectedDeviceId || undefined,
-      echoCancellation,
-      echoAmount,
-      micSensitivity: micGain,
-      bassDb,
-      trebleDb,
-    });
-    if (ok) {
-      setMicEnabled(true);
-      const stream = karaokeAudio.getBroadcastStream();
-      if (stream) {
-        KaraokeVoiceManager.getInstance().startBroadcasting(stream);
-      }
-      const list = await karaokeAudio.listInputDevices();
-      setInputDevices(list);
-      if (!selectedDeviceId && list[0]?.deviceId) {
-        setSelectedDeviceId(list[0].deviceId);
-      }
-    } else {
-      DebugLogger.warn('KaraokeOverlay', 'Microphone permission denied or unavailable');
-      setMicError('Chưa cấp quyền Micro trên trình duyệt');
-    }
+    await enableSingerMic();
   };
 
   const restartMicWith = async (overrides: {
@@ -485,7 +539,7 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
       deviceId: (overrides.deviceId ?? selectedDeviceId) || undefined,
       echoCancellation: overrides.echoCancellation ?? echoCancellation,
       echoAmount,
-      micSensitivity: micGain,
+      micSensitivity: micPercentToGain(micPercent),
       bassDb,
       trebleDb,
     });
@@ -502,16 +556,16 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
   const applyPreset = (preset: 'acoustic' | 'lounge' | 'stage') => {
     const cfg =
       preset === 'acoustic'
-        ? { gain: 3.0, echo: 0.25, bass: 2.5, treble: 3.0 }
+        ? { micPct: 85, echo: 0.25, bass: 2.5, treble: 3.0 }
         : preset === 'lounge'
-          ? { gain: 3.6, echo: 0.55, bass: 3.5, treble: 4.5 }
-          : { gain: 4.2, echo: 0.78, bass: 4.5, treble: 5.5 };
+          ? { micPct: 100, echo: 0.55, bass: 3.5, treble: 4.5 }
+          : { micPct: 120, echo: 0.78, bass: 4.5, treble: 5.5 };
     setActivePreset(preset);
-    setMicGain(cfg.gain);
+    setMicPercent(cfg.micPct);
     setEchoAmount(cfg.echo);
     setBassDb(cfg.bass);
     setTrebleDb(cfg.treble);
-    karaokeAudio.setMicVolume(cfg.gain);
+    karaokeAudio.setMicVolume(micPercentToGain(cfg.micPct));
     karaokeAudio.setEchoAmount(cfg.echo);
     karaokeAudio.setToneEQ(cfg.bass, cfg.treble);
   };
@@ -611,9 +665,6 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
                   JSON.stringify({ event: 'listening', id: 1, channel: 'widget' }),
                   '*'
                 );
-                applyYoutubeVolume(musicVolume);
-                window.setTimeout(() => applyYoutubeVolume(musicVolume), 600);
-                window.setTimeout(() => applyYoutubeVolume(musicVolume), 1500);
               }}
             />
           </div>
@@ -882,47 +933,56 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
               </div>
 
               {/* Focused Mixer Sliders */}
-              <div className="space-y-2 pt-1 border-t border-white/10 text-[11px]">
-                <label className="flex items-center justify-between gap-2">
-                  <span className="text-sky-300 w-20">Nhạc nền</span>
+              <div className="space-y-2.5 pt-2 border-t border-white/10 text-[11px]">
+                <div className="space-y-1">
+                  <label className="flex items-center justify-between gap-2">
+                    <span className="text-sky-300 font-medium">Nhạc nền (cho người nghe)</span>
+                    <span className="w-10 text-right font-mono text-sky-200">{audienceMusicVolume}%</span>
+                  </label>
                   <input
                     type="range"
                     min={0}
                     max={100}
                     step={5}
-                    value={musicVolume}
+                    value={audienceMusicVolume}
                     onChange={(e) => {
                       const v = parseFloat(e.target.value);
-                      setMusicVolume(v);
-                      applyYoutubeVolume(v);
-                      karaokeAudio.setMusicVolume(v / 100);
+                      setAudienceMusicVolume(v);
+                      karaokeAudio.setAudienceMusicVolume(v / 100);
+                      broadcastAudienceMusicVolume(v, false);
                     }}
-                    className="flex-1 accent-sky-400"
+                    onPointerUp={(e) => {
+                      const v = parseFloat((e.target as HTMLInputElement).value);
+                      broadcastAudienceMusicVolume(v, true);
+                    }}
+                    className="w-full accent-sky-400"
                   />
-                  <span className="w-9 text-right font-mono">{musicVolume}%</span>
-                </label>
+                  <p className="text-[10px] text-neutral-400 leading-snug">
+                    Chỉ chỉnh độ to nhạc phía người nghe. Nhạc của bạn tự chỉnh trên khung YouTube.
+                  </p>
+                </div>
 
                 <label className="flex items-center justify-between gap-2">
-                  <span className="text-emerald-300 w-20">Âm lượng Mic</span>
+                  <span className="text-emerald-300 w-24 shrink-0">Giọng hát (Mic)</span>
                   <input
                     type="range"
-                    min={1.0}
-                    max={6.5}
-                    step={0.2}
-                    value={micGain}
+                    min={0}
+                    max={150}
+                    step={5}
+                    value={micPercent}
                     onChange={(e) => {
                       const v = parseFloat(e.target.value);
                       setActivePreset(null);
-                      setMicGain(v);
-                      karaokeAudio.setMicVolume(v);
+                      setMicPercent(v);
+                      karaokeAudio.setMicVolume(micPercentToGain(v));
                     }}
                     className="flex-1 accent-emerald-400"
                   />
-                  <span className="w-9 text-right font-mono">{micGain.toFixed(1)}x</span>
+                  <span className="w-10 text-right font-mono">{micPercent}%</span>
                 </label>
 
                 <label className="flex items-center justify-between gap-2">
-                  <span className="text-amber-300 w-20">Echo / Vang</span>
+                  <span className="text-amber-300 w-24 shrink-0">Echo / Vang</span>
                   <input
                     type="range"
                     min={0}
@@ -937,7 +997,7 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
                     }}
                     className="flex-1 accent-amber-400"
                   />
-                  <span className="w-9 text-right font-mono">{Math.round(echoAmount * 100)}%</span>
+                  <span className="w-10 text-right font-mono">{Math.round(echoAmount * 100)}%</span>
                 </label>
 
                 <div className="grid grid-cols-2 gap-2 pt-0.5">

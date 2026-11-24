@@ -86,7 +86,7 @@ export class KaraokeVoiceManager {
   private spatialCtx: AudioContext | null = null;
   private listenerInitialized = false;
   private audienceMuted = false;
-  private audienceVolume = 0.9;
+  private audienceVolume = 1.0;
 
   private constructor() {}
 
@@ -166,7 +166,7 @@ export class KaraokeVoiceManager {
   }
 
   setAudienceVolume(vol: number): void {
-    this.audienceVolume = Math.max(0, Math.min(1, vol));
+    this.audienceVolume = Math.max(0, Math.min(1.5, vol));
     this.syncAllSinkGains();
   }
 
@@ -240,7 +240,7 @@ export class KaraokeVoiceManager {
       } else {
         if (sink.gain) sink.gain.gain.value = 0;
         sink.audioEl.muted = this.audienceMuted;
-        sink.audioEl.volume = this.audienceVolume;
+        sink.audioEl.volume = Math.min(1, Math.max(0, this.audienceVolume));
       }
     }
   }
@@ -475,11 +475,11 @@ export class KaraokeVoiceManager {
         audioEl.muted = true;
       } else {
         audioEl.muted = this.audienceMuted;
-        audioEl.volume = this.audienceVolume;
+        audioEl.volume = Math.min(1, Math.max(0, this.audienceVolume));
       }
     } catch {
       audioEl.muted = this.audienceMuted;
-      audioEl.volume = this.audienceVolume;
+      audioEl.volume = Math.min(1, Math.max(0, this.audienceVolume));
     }
 
     void audioEl.play().catch(() => {});

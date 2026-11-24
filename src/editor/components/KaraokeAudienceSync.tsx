@@ -9,6 +9,20 @@ interface KaraokeAudienceSyncProps {
   isSingingLocal: boolean;
 }
 
+const AUDIENCE_VOLUME_KEY = 'cavannghe:audience-karaoke-volume';
+
+function getSavedAudienceVolume(): number {
+  try {
+    const raw = Number(localStorage.getItem(AUDIENCE_VOLUME_KEY));
+    if (Number.isFinite(raw) && raw >= 0 && raw <= 150) {
+      return Math.round(raw);
+    }
+  } catch {
+    // ignore
+  }
+  return 100;
+}
+
 function computeTargetSec(state: NetworkKaraokeState, offsetSec: number): number {
   const base = typeof state.currentTime === 'number' ? state.currentTime : 0;
   const elapsed = state.isPlaying ? Math.max(0, (Date.now() - state.updatedAt) / 1000) : 0;
@@ -25,6 +39,8 @@ export const KaraokeAudienceSync: React.FC<KaraokeAudienceSyncProps> = ({ isSing
     MultiplayerManager.getInstance().getRemoteKaraokeState()
   );
   const [muted, setMuted] = useState(false);
+  const [listenerVolume, setListenerVolume] = useState<number>(() => getSavedAudienceVolume());
+  const [isVolumeOpen, setIsVolumeOpen] = useState(false);
   const [syncOffsetSec, setSyncOffsetSec] = useState(0);
   const syncOffsetRef = useRef(0);
   const audienceYtTimeRef = useRef(0);
@@ -92,7 +108,20 @@ export const KaraokeAudienceSync: React.FC<KaraokeAudienceSyncProps> = ({ isSing
     }
   }, [isSingingLocal, remoteKaraoke?.active]);
 
-  const syncYoutubeState = (playing: boolean, shouldMute: boolean, seekSec?: number) => {
+  const getEffectiveBeatVolume = (state?: NetworkKaraokeState | null, volPct = listenerVolume) => {
+    const singerMusicVol =
+      typeof state?.musicVolume === 'number' && Number.isFinite(state.musicVolume)
+        ? Math.max(0, Math.min(100, state.musicVolume))
+        : 60;
+    return Math.max(0, Math.min(100, Math.round(singerMusicVol * (volPct / 100))));
+  };
+
+  const syncYoutubeState = (
+    playing: boolean,
+    shouldMute: boolean,
+    seekSec?: number,
+    beatVolume = getEffectiveBeatVolume(remoteKaraoke)
+  ) => {
     const win = ytRef.current?.contentWindow;
     if (!win) return;
     if (typeof seekSec === 'number' && Number.isFinite(seekSec)) {
@@ -113,14 +142,14 @@ export const KaraokeAudienceSync: React.FC<KaraokeAudienceSyncProps> = ({ isSing
     win.postMessage(
       JSON.stringify({
         event: 'command',
-        func: shouldMute ? 'mute' : 'unMute',
+        func: shouldMute || beatVolume <= 0 ? 'mute' : 'unMute',
         args: [],
       }),
       '*'
     );
-    if (!shouldMute) {
+    if (!shouldMute && beatVolume > 0) {
       win.postMessage(
-        JSON.stringify({ event: 'command', func: 'setVolume', args: [38] }),
+        JSON.stringify({ event: 'command', func: 'setVolume', args: [beatVolume] }),
         '*'
       );
     }
@@ -156,25 +185,34 @@ export const KaraokeAudienceSync: React.FC<KaraokeAudienceSyncProps> = ({ isSing
   }, []);
 
   useEffect(() => {
-    const shouldMute = muted || isSingingLocal;
+    const shouldMute = muted || isSingingLocal || listenerVolume <= 0;
     const isPlaying = Boolean(remoteKaraoke?.isPlaying) && !isSingingLocal;
-    KaraokeVoiceManager.getInstance().setAudienceMuted(shouldMute);
+    const voiceMgr = KaraokeVoiceManager.getInstance();
+    voiceMgr.setAudienceVolume(listenerVolume / 100);
+    voiceMgr.setAudienceMuted(shouldMute);
 
     if (!remoteKaraoke?.youtubeVideoId || isSingingLocal) {
-      syncYoutubeState(false, true);
+      syncYoutubeState(false, true, undefined, 0);
       return;
     }
 
     const targetSec = computeTargetSec(remoteKaraoke, syncOffsetRef.current);
     const needsSeek =
       !isPlaying || Math.abs(audienceYtTimeRef.current - targetSec) > 0.85;
-    syncYoutubeState(isPlaying, shouldMute, needsSeek ? targetSec : undefined);
+    syncYoutubeState(
+      isPlaying,
+      shouldMute,
+      needsSeek ? targetSec : undefined,
+      getEffectiveBeatVolume(remoteKaraoke, listenerVolume)
+    );
   }, [
     muted,
+    listenerVolume,
     isSingingLocal,
     remoteKaraoke?.isPlaying,
     remoteKaraoke?.youtubeVideoId,
     remoteKaraoke?.currentTime,
+    remoteKaraoke?.musicVolume,
     remoteKaraoke?.updatedAt,
   ]);
 
@@ -222,15 +260,17 @@ export const KaraokeAudienceSync: React.FC<KaraokeAudienceSyncProps> = ({ isSing
               JSON.stringify({ event: 'listening', id: 1, channel: 'widget' }),
               '*'
             );
-            const shouldMute = muted || isSingingLocal;
+            const shouldMute = muted || isSingingLocal || listenerVolume <= 0;
             const isPlaying = Boolean(remoteKaraoke.isPlaying) && !isSingingLocal;
             const targetSec = computeTargetSec(remoteKaraoke, syncOffsetRef.current);
-            syncYoutubeState(isPlaying, shouldMute, targetSec);
+            const beatVol = getEffectiveBeatVolume(remoteKaraoke, listenerVolume);
+            syncYoutubeState(isPlaying, shouldMute, targetSec, beatVol);
             window.setTimeout(() => {
               syncYoutubeState(
                 Boolean(remoteKaraoke.isPlaying) && !isSingingLocal,
-                muted || isSingingLocal,
-                computeTargetSec(remoteKaraoke, syncOffsetRef.current)
+                muted || isSingingLocal || listenerVolume <= 0,
+                computeTargetSec(remoteKaraoke, syncOffsetRef.current),
+                getEffectiveBeatVolume(remoteKaraoke, listenerVolume)
               );
             }, 650);
           }}
@@ -278,18 +318,87 @@ export const KaraokeAudienceSync: React.FC<KaraokeAudienceSyncProps> = ({ isSing
           👏
         </button>
 
-        <button
-          type="button"
-          onClick={() => setMuted((m) => !m)}
-          className="p-1.5 rounded-full bg-white/10 hover:bg-white/20 text-neutral-200 transition shrink-0"
-          title={muted ? 'Bật tiếng' : 'Tắt tiếng'}
-        >
-          {muted ? (
-            <VolumeX className="w-3.5 h-3.5 text-neutral-400" />
-          ) : (
-            <Volume2 className="w-3.5 h-3.5 text-white" />
+        <div className="relative shrink-0">
+          <button
+            type="button"
+            onClick={() => setIsVolumeOpen((v) => !v)}
+            className="px-2 py-1 rounded-full bg-white/10 hover:bg-white/20 text-neutral-200 transition flex items-center gap-1"
+            title="Điều chỉnh âm lượng đầu ra của người hát (chỉ trên máy bạn)"
+          >
+            {muted || listenerVolume <= 0 ? (
+              <VolumeX className="w-3.5 h-3.5 text-neutral-400" />
+            ) : (
+              <Volume2 className="w-3.5 h-3.5 text-white" />
+            )}
+            <span className="text-[10px] font-mono text-neutral-200">
+              {muted ? '0%' : `${listenerVolume}%`}
+            </span>
+          </button>
+
+          {isVolumeOpen && (
+            <div className="absolute right-0 top-full mt-2 w-64 rounded-2xl bg-[#121212]/95 backdrop-blur-2xl border border-white/15 shadow-2xl p-3 space-y-2.5 text-xs text-neutral-200 z-[90]">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-semibold text-white text-[11px]">
+                  Âm lượng người hát (Giọng & Nhạc)
+                </span>
+                <span className="font-mono text-[11px] text-sky-300">
+                  {muted ? 'Tắt' : `${listenerVolume}%`}
+                </span>
+              </div>
+
+              <input
+                type="range"
+                min={0}
+                max={150}
+                step={5}
+                value={muted ? 0 : listenerVolume}
+                onChange={(e) => {
+                  const val = Math.round(Number(e.target.value));
+                  setMuted(val === 0);
+                  setListenerVolume(val);
+                  try {
+                    localStorage.setItem(AUDIENCE_VOLUME_KEY, String(val));
+                  } catch {
+                    // ignore
+                  }
+                }}
+                className="w-full accent-sky-400"
+              />
+
+              <div className="flex items-center justify-between gap-2 text-[10px] text-neutral-400">
+                <span>Chỉ chỉnh trên máy của bạn</span>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMuted(false);
+                      setListenerVolume(100);
+                      try {
+                        localStorage.setItem(AUDIENCE_VOLUME_KEY, '100');
+                      } catch {
+                        // ignore
+                      }
+                    }}
+                    className="px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 text-neutral-200"
+                  >
+                    100%
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMuted((m) => !m)}
+                    className={`px-2 py-0.5 rounded ${
+                      muted
+                        ? 'bg-emerald-500/20 text-emerald-200 hover:bg-emerald-500/30'
+                        : 'bg-rose-500/20 text-rose-200 hover:bg-rose-500/30'
+                    }`}
+                  >
+                    {muted ? 'Bật tiếng' : 'Tắt tiếng'}
+                  </button>
+                </div>
+              </div>
+            </div>
           )}
-        </button>
+        </div>
       </div>
     </>
   );

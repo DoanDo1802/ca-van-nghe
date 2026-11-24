@@ -92,6 +92,8 @@ class KaraokeAudioEngine {
   private ctx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
   private musicGain: GainNode | null = null;
+  private broadcastMusicGain: GainNode | null = null;
+  private audienceMusicVol = 0.6;
   private musicAnalyser: AnalyserNode | null = null;
   private micAnalyser: AnalyserNode | null = null;
   private micGain: GainNode | null = null;
@@ -139,14 +141,17 @@ class KaraokeAudioEngine {
       limiter.connect(this.ctx.destination);
 
       this.musicGain = this.ctx.createGain();
-      this.musicGain.gain.value = 0.30;
+      this.musicGain.gain.value = 0.35;
       this.musicAnalyser = this.ctx.createAnalyser();
       this.musicAnalyser.fftSize = 128;
       this.musicGain.connect(this.musicAnalyser);
       this.musicAnalyser.connect(this.masterGain);
 
       this.micBroadcastDest = this.ctx.createMediaStreamDestination();
-      this.musicGain.connect(this.micBroadcastDest);
+      this.broadcastMusicGain = this.ctx.createGain();
+      this.broadcastMusicGain.gain.value = this.audienceMusicVol;
+      this.musicGain.connect(this.broadcastMusicGain);
+      this.broadcastMusicGain.connect(this.micBroadcastDest);
     }
     if (this.ctx.state === 'suspended') {
       void this.ctx.resume();
@@ -301,7 +306,12 @@ class KaraokeAudioEngine {
       const broadcastDest =
         this.micBroadcastDest ?? ctx.createMediaStreamDestination();
       if (!this.micBroadcastDest && this.musicGain) {
-        this.musicGain.connect(broadcastDest);
+        if (!this.broadcastMusicGain) {
+          this.broadcastMusicGain = ctx.createGain();
+          this.broadcastMusicGain.gain.value = this.audienceMusicVol;
+        }
+        this.musicGain.connect(this.broadcastMusicGain);
+        this.broadcastMusicGain.connect(broadcastDest);
       }
       this.micBroadcastDest = broadcastDest;
       dry.connect(broadcastDest);
@@ -369,6 +379,16 @@ class KaraokeAudioEngine {
 
   setMusicVolume(v: number): void {
     if (this.musicGain) this.musicGain.gain.value = Math.max(0, Math.min(1, v));
+  }
+
+  setAudienceMusicVolume(v: number): void {
+    const clamped = Math.max(0, Math.min(1, v));
+    this.audienceMusicVol = clamped;
+    if (this.broadcastMusicGain && this.ctx) {
+      this.broadcastMusicGain.gain.setTargetAtTime(clamped, this.ctx.currentTime, 0.03);
+    } else if (this.broadcastMusicGain) {
+      this.broadcastMusicGain.gain.value = clamped;
+    }
   }
 
   setMicVolume(v: number): void {

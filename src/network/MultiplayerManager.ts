@@ -27,6 +27,7 @@ export interface NetworkKaraokeState {
   title: string;
   isPlaying: boolean;
   currentTime?: number;
+  musicVolume?: number;
   updatedAt: number;
 }
 
