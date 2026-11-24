@@ -172,6 +172,11 @@ export class MultiplayerManager {
       window.addEventListener('pagehide', () => this.sendUnloadCleanup());
       window.addEventListener('beforeunload', () => this.sendUnloadCleanup());
       window.addEventListener('online', () => this.handleForegroundRecovery());
+      window.addEventListener('offline', () => {
+        if (!this.desiredRoomActive) return;
+        this.connected = false;
+        this.emitRoomStatus();
+      });
     }
     if (typeof document !== 'undefined') {
       document.addEventListener('visibilitychange', () => {
@@ -208,8 +213,6 @@ export class MultiplayerManager {
       'Content-Type': 'application/json',
     };
     try {
-      // Only remove this player's row on unload; never force player_count=0 based on
-      // potentially stale local presenceList so other active players keep the room alive.
       void fetch(`${cfg.url}/rest/v1/rpc/remove_room_player`, {
         method: 'POST',
         keepalive: true,
@@ -219,6 +222,45 @@ export class MultiplayerManager {
           p_player_id: this.localPlayerId,
         }),
       });
+
+      const otherPresence = this.presenceList.filter((p) => p.playerId !== this.localPlayerId);
+      const encodedRoomId = encodeURIComponent(this.baseRoomId);
+
+      if (otherPresence.length === 0 && this.remotePlayers.size === 0) {
+        // Last player in room: immediately delete the empty room on DB
+        void fetch(`${cfg.url}/rest/v1/active_rooms?room_id=eq.${encodedRoomId}`, {
+          method: 'DELETE',
+          keepalive: true,
+          headers,
+        });
+      } else if (this.isHost() && otherPresence.length > 0) {
+        // Host closing browser while others remain: immediately transfer host on DB
+        const nextHost = otherPresence[0];
+        const encodedNextHostId = encodeURIComponent(nextHost.playerId);
+        void fetch(
+          `${cfg.url}/rest/v1/room_players?room_id=eq.${encodedRoomId}&player_id=eq.${encodedNextHostId}`,
+          {
+            method: 'PATCH',
+            keepalive: true,
+            headers,
+            body: JSON.stringify({ is_host: true }),
+          }
+        );
+        void fetch(`${cfg.url}/rest/v1/rpc/upsert_room_heartbeat`, {
+          method: 'POST',
+          keepalive: true,
+          headers,
+          body: JSON.stringify({
+            p_room_id: this.baseRoomId,
+            p_room_name: this.baseRoomId,
+            p_host_name: nextHost.name,
+            p_scene_id: this.sceneScopeId || 'ca-van-nghe-lobby',
+            p_player_count: otherPresence.length,
+            p_has_password: Boolean(this.roomPassword),
+            p_password: this.roomPassword?.trim() || null,
+          }),
+        });
+      }
     } catch {
       // ignore unload network errors
     }
@@ -587,6 +629,10 @@ export class MultiplayerManager {
         if (status === 'SUBSCRIBED') {
           const isReconnect = hasSubscribed && !isInitialJoin;
           hasSubscribed = true;
+          if (isReconnect) {
+            // Reset joinedAt on reconnect so a previously disconnected host does not reclaim host
+            this.joinedAt = Date.now();
+          }
           this.reconnectAttempt = 0;
           this.clearReconnectTimer();
           this.connected = true;
@@ -666,12 +712,13 @@ export class MultiplayerManager {
 
     const ch = this.channel;
     const hadRemoteKaraoke = this.remoteKaraokeState;
-    const hadOtherLocalPeers =
-      this.presenceList.some((p) => p.playerId !== this.localPlayerId) ||
-      this.remotePlayers.size > 0;
+    const wasHost = this.isHost();
+    const otherPresence = this.presenceList.filter((p) => p.playerId !== this.localPlayerId);
+    const nextPresenceHost = otherPresence[0] ?? null;
     const prevBaseRoomId = this.baseRoomId;
     const prevHostName = this.hostName || this.localPlayerName;
     const prevScene = this.sceneScopeId;
+    const prevRoomPassword = this.roomPassword;
 
     if (ch || this.connected) {
       this.channel = null;
@@ -736,23 +783,33 @@ export class MultiplayerManager {
       if (prevBaseRoomId && !preserveRoomMembership) {
         DebugLogger.log('Multiplayer', `Left room "${prevBaseRoomId}" (scene=${prevScene || 'default'})`);
         await AdminService.removeRoomPlayer(prevBaseRoomId, this.localPlayerId);
-        if (!hadOtherLocalPeers) {
-          const remaining = await AdminService.fetchRoomPlayers(prevBaseRoomId);
-          const stillOccupied = remaining.some((p) => p.player_id !== this.localPlayerId);
-          const rejoinedSameRoom = this.desiredRoomActive && this.baseRoomId === prevBaseRoomId;
-          if (!stillOccupied && !rejoinedSameRoom) {
-            DebugLogger.log('Multiplayer', `Room "${prevBaseRoomId}" is empty; closing room on DB`);
-            void AdminService.upsertRoomHeartbeat({
-              roomId: prevBaseRoomId,
-              hostName: prevHostName,
-              sceneId: prevScene,
-              playerCount: 0,
-            });
-          } else if (stillOccupied) {
-            DebugLogger.warn(
+        const remaining = await AdminService.fetchRoomPlayers(prevBaseRoomId);
+        const remainingOthers = remaining.filter((p) => p.player_id !== this.localPlayerId);
+        const rejoinedSameRoom = this.desiredRoomActive && this.baseRoomId === prevBaseRoomId;
+
+        if (remainingOthers.length === 0 && !rejoinedSameRoom) {
+          DebugLogger.log('Multiplayer', `Room "${prevBaseRoomId}" is empty; deleting room on DB`);
+          await AdminService.deleteRoom(prevBaseRoomId, prevHostName, prevScene);
+        } else if (wasHost && !rejoinedSameRoom) {
+          const targetHost = nextPresenceHost
+            ? { id: nextPresenceHost.playerId, name: nextPresenceHost.name }
+            : remainingOthers[0]
+              ? { id: remainingOthers[0].player_id, name: remainingOthers[0].player_name }
+              : null;
+          if (targetHost) {
+            DebugLogger.log(
               'Multiplayer',
-              `Skipped setting playerCount=0 on "${prevBaseRoomId}" because ${remaining.length} active player(s) remain in DB`
+              `Host "${prevHostName}" left "${prevBaseRoomId}"; transferring DB host to "${targetHost.name}"`
             );
+            await AdminService.transferRoomHost({
+              roomId: prevBaseRoomId,
+              newHostId: targetHost.id,
+              newHostName: targetHost.name,
+              sceneId: prevScene,
+              playerCount: Math.max(1, otherPresence.length, remainingOthers.length),
+              hasPassword: Boolean(prevRoomPassword),
+              password: prevRoomPassword,
+            });
           }
         }
       }
@@ -1176,6 +1233,11 @@ export class MultiplayerManager {
         `Removing remote player "${playerName}" (${playerId}) after ${graceMs / 1000}s Presence & broadcast timeout`
       );
       this.remotePlayers.delete(playerId);
+      if (this.isHost() && this.baseRoomId) {
+        void AdminService.removeRoomPlayer(this.baseRoomId, playerId).then(() =>
+          this.syncRoomRegistry()
+        );
+      }
       if (this.speakingPeers.delete(playerId)) {
         window.dispatchEvent(
           new CustomEvent<Set<string>>('cavannghe:voice-speaking', {
@@ -1225,9 +1287,14 @@ export class MultiplayerManager {
       this.hostName = this.localPlayerName;
     }
 
-    // If local player just became Host, publish stageState/voicePolicy in presence
-    if (prevHostId !== this.hostId && this.hostId === this.localPlayerId && (this.hostStageState || this.voicePolicy.updatedAt > 0)) {
-      void this.trackLocalPresence();
+    // If local player just became Host, publish stageState/voicePolicy in presence and immediately update DB
+    if (prevHostId !== this.hostId && this.hostId === this.localPlayerId) {
+      if (this.hostStageState || this.voicePolicy.updatedAt > 0) {
+        void this.trackLocalPresence();
+      }
+      if (prevHostId && this.baseRoomId) {
+        void AdminService.demoteRoomHost(this.baseRoomId, prevHostId);
+      }
     }
 
     // If guest, sync stageState & voicePolicy from Host's presence when joining or when host changes

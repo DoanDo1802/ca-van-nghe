@@ -308,17 +308,35 @@ export const AdminService = {
     return data as ActiveRoomInfo[];
   },
 
+  async deleteRoom(
+    roomId: string,
+    fallbackHostName = '',
+    sceneId = 'ca-van-nghe-lobby'
+  ): Promise<void> {
+    const supabase = getSupabaseClient();
+    if (!supabase) return;
+    await supabase.from('room_players').delete().eq('room_id', roomId);
+    const { error } = await supabase.from('active_rooms').delete().eq('room_id', roomId);
+    if (error) {
+      DebugLogger.warn(
+        'AdminService',
+        `active_rooms delete failed for "${roomId}" (${error.message}), falling back to playerCount=0`
+      );
+      await this.upsertRoomHeartbeat({
+        roomId,
+        hostName: fallbackHostName,
+        sceneId,
+        playerCount: 0,
+      });
+    }
+  },
+
   async closeOwnedRoom(
     roomId: string,
     hostName: string,
     sceneId = 'ca-van-nghe-lobby'
   ): Promise<void> {
-    await this.upsertRoomHeartbeat({
-      roomId,
-      hostName,
-      sceneId,
-      playerCount: 0,
-    });
+    await this.deleteRoom(roomId, hostName, sceneId);
   },
 
   async fetchAccounts(): Promise<AdminAccount[]> {
@@ -511,6 +529,49 @@ export const AdminService = {
     }
   },
 
+  async demoteRoomHost(roomId: string, playerId: string): Promise<void> {
+    const supabase = getSupabaseClient();
+    if (!supabase) return;
+    const { error } = await supabase
+      .from('room_players')
+      .update({ is_host: false })
+      .eq('room_id', roomId)
+      .eq('player_id', playerId);
+    if (error) {
+      DebugLogger.warn(
+        'AdminService',
+        `demoteRoomHost failed (${roomId}/${playerId}): ${error.message}`
+      );
+    }
+  },
+
+  async transferRoomHost(params: {
+    roomId: string;
+    newHostId: string;
+    newHostName: string;
+    sceneId: string;
+    playerCount: number;
+    hasPassword?: boolean;
+    password?: string;
+  }): Promise<void> {
+    const supabase = getSupabaseClient();
+    if (!supabase) return;
+    await supabase
+      .from('room_players')
+      .update({ is_host: true })
+      .eq('room_id', params.roomId)
+      .eq('player_id', params.newHostId);
+    await this.upsertRoomHeartbeat({
+      roomId: params.roomId,
+      roomName: params.roomId,
+      hostName: params.newHostName,
+      sceneId: params.sceneId || 'ca-van-nghe-lobby',
+      playerCount: Math.max(1, params.playerCount),
+      hasPassword: params.hasPassword,
+      password: params.password,
+    });
+  },
+
   async fetchRoomPlayers(roomId?: string): Promise<RoomPlayerInfo[]> {
     const supabase = getSupabaseClient();
     if (!supabase) return [];
@@ -579,13 +640,11 @@ export const AdminService = {
 
     const closeRoom = Boolean(params.isHost);
     if (closeRoom) {
-      await supabase.from('room_players').delete().eq('room_id', params.roomId);
-      await this.upsertRoomHeartbeat({
-        roomId: params.roomId,
-        hostName: params.playerName,
-        sceneId: params.sceneId || 'ca-van-nghe-lobby',
-        playerCount: 0,
-      });
+      await this.deleteRoom(
+        params.roomId,
+        params.playerName,
+        params.sceneId || 'ca-van-nghe-lobby'
+      );
     } else {
       await this.removeRoomPlayer(params.roomId, params.playerId);
     }
