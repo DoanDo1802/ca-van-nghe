@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Crown, DoorOpen, MapPin, Menu, Settings, ShieldCheck, Users, X } from 'lucide-react';
+import { Crown, DoorOpen, LogOut, MapPin, Menu, Settings, ShieldCheck, Users, X } from 'lucide-react';
 import { LOBBY_SCENE_ID } from '../engine/serialization/SceneRegistry';
 
 /**
@@ -15,6 +15,7 @@ import { LOBBY_SCENE_ID } from '../engine/serialization/SceneRegistry';
  *   currentSceneName?: string;
  *   onGoToLobby?: () => void;
  *   onOpenLobbyHub?: () => void;
+ *   onLeaveLobby?: () => void;
  *   roomStatus?: {
  *     connected: boolean;
  *     roomId: string;
@@ -38,6 +39,7 @@ export default function NavigationHUD({
   currentSceneName = 'Sảnh Chờ (Lobby)',
   onGoToLobby,
   onOpenLobbyHub,
+  onLeaveLobby,
   roomStatus = null,
   canOpenSettings = true,
 }) {
@@ -199,6 +201,21 @@ export default function NavigationHUD({
                     <kbd className="hidden sm:inline-block px-1.5 py-0.5 rounded bg-white/10 border border-white/15 text-[10px] font-mono text-neutral-300">
                       Tab
                     </kbd>
+                  </button>
+                )}
+
+                {/* Leave Current Lobby Room (Out Lobby to create/join from Entry Gate) */}
+                {roomStatus?.connected && onLeaveLobby && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsMenuOpen(false);
+                      onLeaveLobby();
+                    }}
+                    className="w-full flex items-center gap-2 px-3 py-2 rounded-xl hover:bg-rose-500/20 text-rose-300 hover:text-rose-100 font-medium transition border-t border-white/10 pt-2.5"
+                  >
+                    <LogOut className="w-3.5 h-3.5 shrink-0" />
+                    <span>Rời phòng Lobby</span>
                   </button>
                 )}
               </div>

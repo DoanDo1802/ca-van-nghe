@@ -205,7 +205,7 @@ export class PlayerControllerRuntime {
     const pos = this.playerEntity.getLocalPosition();
     let vx = 0;
     let vz = 0;
-    if (this.hasLastNetPos && clampedDt > 0.001) {
+    if (!this.karaoke.isActive() && !this.isSitting && this.hasLastNetPos && clampedDt > 0.001) {
       vx = (pos.x - this.lastNetPos.x) / clampedDt;
       vz = (pos.z - this.lastNetPos.z) / clampedDt;
     }
@@ -634,6 +634,7 @@ export class PlayerControllerRuntime {
           this.playerYaw = (ch.seatRotation * 180) / Math.PI;
           this.playerEntity.setLocalEulerAngles(0, this.playerYaw, 0);
           this.playAnim('Crouch_Idle_Loop');
+          this.syncNetPositionImmediate();
           window.dispatchEvent(
             new CustomEvent('cavannghe:sit', { detail: { sitting: true, chair: ch } })
           );
@@ -785,6 +786,7 @@ export class PlayerControllerRuntime {
     this.currentSeatId = null;
     this.activeSeatChair = null;
     this.playAnim('Idle_Loop');
+    this.syncNetPositionImmediate();
     window.dispatchEvent(new CustomEvent('cavannghe:sit', { detail: { sitting: false, chair: null } }));
   };
 
@@ -900,12 +902,36 @@ export class PlayerControllerRuntime {
     this.yaw = view.camYaw;
     this.pitch = view.camPitch;
     this.playAnim('Idle_Talking_Loop');
+    this.syncNetPositionImmediate();
   }
 
   private exitKaraoke(): void {
     DebugLogger.log('KaraokeStage', 'Local player exited Acoustic Karaoke Stage');
     this.karaoke.exit();
     this.playAnim('Idle_Loop');
+    this.syncNetPositionImmediate();
+  }
+
+  private syncNetPositionImmediate(): void {
+    if (!this.playerEntity) return;
+    const pos = this.playerEntity.getLocalPosition();
+    this.lastNetPos.copy(pos);
+    this.hasLastNetPos = true;
+    MultiplayerManager.getInstance().sendLocalPlayerState(
+      {
+        x: pos.x,
+        y: pos.y,
+        z: pos.z,
+        vx: 0,
+        vz: 0,
+        yaw: this.playerYaw,
+        anim: this.currentAnimState || 'Idle_Loop',
+        emote: null,
+        isSitting: this.isSitting,
+        chairId: this.isSitting ? this.currentSeatId : null,
+      },
+      { force: true }
+    );
   }
 
   private onKaraokeExit = (): void => {

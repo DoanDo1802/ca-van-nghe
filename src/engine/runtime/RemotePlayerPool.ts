@@ -105,12 +105,18 @@ export class RemotePlayerPool {
         }
         if (state.seq !== existing.lastSeq) {
           existing.lastSeq = state.seq;
+          const rawVx = state.vx ?? 0;
+          const rawVz = state.vz ?? 0;
+          const speed = Math.hypot(rawVx, rawVz);
+          // Guard against teleport finite-difference spikes exceeding max run speed
+          const safeVx = speed <= 9.0 ? rawVx : 0;
+          const safeVz = speed <= 9.0 ? rawVz : 0;
           existing.snapshots.push({
             x: state.x,
             y: state.y,
             z: state.z,
-            vx: state.vx ?? 0,
-            vz: state.vz ?? 0,
+            vx: safeVx,
+            vz: safeVz,
             yaw: state.yaw,
             anim: state.anim || 'Idle_Loop',
             isSitting: state.isSitting,
@@ -270,7 +276,17 @@ export class RemotePlayerPool {
 
     // Either before first snapshot or slightly past latest snapshot -> extrapolate gently
     const latest = snaps[snaps.length - 1];
-    if (renderTime > latest.recvTime && !latest.isSitting) {
+    const isStationaryAnim =
+      latest.anim === 'Idle_Loop' ||
+      latest.anim === 'Idle_Talking_Loop' ||
+      latest.anim === 'Dance_Loop' ||
+      latest.anim === 'Crouch_Idle_Loop';
+    if (
+      renderTime > latest.recvTime &&
+      !latest.isSitting &&
+      !isStationaryAnim &&
+      (Math.abs(latest.vx) > 0.05 || Math.abs(latest.vz) > 0.05)
+    ) {
       const extraSec = Math.min(MAX_EXTRAPOLATE_SEC, (renderTime - latest.recvTime) / 1000);
       avatar.desiredPos.set(
         latest.x + latest.vx * extraSec,

@@ -813,18 +813,21 @@ export class MultiplayerManager {
     };
   }
 
-  sendLocalPlayerState(state: {
-    x: number;
-    y: number;
-    z: number;
-    vx?: number;
-    vz?: number;
-    yaw: number;
-    anim: string;
-    emote: string | null;
-    isSitting: boolean;
-    chairId: string | null;
-  }): void {
+  sendLocalPlayerState(
+    state: {
+      x: number;
+      y: number;
+      z: number;
+      vx?: number;
+      vz?: number;
+      yaw: number;
+      anim: string;
+      emote: string | null;
+      isSitting: boolean;
+      chairId: string | null;
+    },
+    options?: { force?: boolean }
+  ): void {
     if (!this.connected || !this.channel) return;
 
     if (state.chairId !== this.localChairId) {
@@ -833,13 +836,15 @@ export class MultiplayerManager {
     }
 
     const now = performance.now();
-    if (now - this.lastBroadcastTime < BROADCAST_INTERVAL_MS) {
+    if (!options?.force && now - this.lastBroadcastTime < BROADCAST_INTERVAL_MS) {
       return;
     }
 
-    const sig = `${state.x.toFixed(2)},${state.y.toFixed(2)},${state.z.toFixed(2)},${state.yaw.toFixed(1)},${state.anim},${state.emote ?? ''},${state.isSitting ? 1 : 0},${state.chairId ?? ''},${this.localAvatarColor}`;
+    const vxVal = state.vx ?? 0;
+    const vzVal = state.vz ?? 0;
+    const sig = `${state.x.toFixed(2)},${state.y.toFixed(2)},${state.z.toFixed(2)},${vxVal.toFixed(1)},${vzVal.toFixed(1)},${state.yaw.toFixed(1)},${state.anim},${state.emote ?? ''},${state.isSitting ? 1 : 0},${state.chairId ?? ''},${this.localAvatarColor}`;
 
-    if (sig === this.lastSentSig && now - this.lastBroadcastTime < 1500) {
+    if (!options?.force && sig === this.lastSentSig && now - this.lastBroadcastTime < 1500) {
       return;
     }
 

@@ -292,6 +292,12 @@ export const GameOverlayUI: React.FC = () => {
             setHubInitialTab('lobby');
             setIsHubModalOpen(true);
           }}
+          onLeaveLobby={() => {
+            setIsHubModalOpen(false);
+            window.dispatchEvent(
+              new CustomEvent('cavannghe:open-entry-gate', { detail: { step: 'room' } })
+            );
+          }}
           roomStatus={roomStatus}
           canOpenSettings={canOpenSettings}
         />

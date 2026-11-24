@@ -6,8 +6,8 @@ import {
   Lock,
   LogOut,
   Palette,
-  Plus,
   RefreshCw,
+  Search,
   ShieldCheck,
   Trash2,
   Unlock,
@@ -57,10 +57,9 @@ export const LobbyHubModal: React.FC<LobbyHubModalProps> = ({
 
   const [rooms, setRooms] = useState<ActiveRoomInfo[]>([]);
   const [loadingRooms, setLoadingRooms] = useState(false);
+  const [roomSearchQuery, setRoomSearchQuery] = useState('');
   const [joinPasswordRoomId, setJoinPasswordRoomId] = useState<string | null>(null);
   const [joinPassword, setJoinPassword] = useState('');
-  const [newRoomName, setNewRoomName] = useState('');
-  const [newRoomPassword, setNewRoomPassword] = useState('');
   const [roomError, setRoomError] = useState('');
   const [joiningRoomId, setJoiningRoomId] = useState<string | null>(null);
   const [closingRoomId, setClosingRoomId] = useState<string | null>(null);
@@ -165,6 +164,13 @@ export const LobbyHubModal: React.FC<LobbyHubModalProps> = ({
     MultiplayerManager.getInstance().setLocalPlayerName(clean);
   };
 
+  const handleLeaveCurrentLobby = () => {
+    onClose();
+    window.dispatchEvent(
+      new CustomEvent('cavannghe:open-entry-gate', { detail: { step: 'room' } })
+    );
+  };
+
   const handleExitToEntryGate = async () => {
     if (account) {
       AdminService.clearPlayerAccount();
@@ -175,7 +181,9 @@ export const LobbyHubModal: React.FC<LobbyHubModalProps> = ({
       MultiplayerManager.getInstance().setLocalIsAdmin(false);
     }
     onClose();
-    window.dispatchEvent(new CustomEvent('cavannghe:open-entry-gate'));
+    window.dispatchEvent(
+      new CustomEvent('cavannghe:open-entry-gate', { detail: { step: 'identity' } })
+    );
   };
 
   const handleSelectColor = (hex: string) => {
@@ -219,53 +227,14 @@ export const LobbyHubModal: React.FC<LobbyHubModalProps> = ({
     await loadRooms();
   };
 
-  const handleCreateRoom = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setRoomError('');
-    const rawSlug = newRoomName
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9-_]+/g, '-')
-      .replace(/^-+|-+$/g, '');
-    const roomId = rawSlug || `lobby-${Math.random().toString(36).slice(2, 6)}`;
-
-    setJoiningRoomId('__new__');
-    const myDisplayLower = activePlayerName.trim().toLowerCase();
-    const latestRooms = await AdminService.fetchActiveRooms();
-    const existing = latestRooms.find((r) => r.room_id === roomId);
-    if (existing) {
-      const ownedByMe =
-        Boolean(existing.host_name && existing.host_name.trim().toLowerCase() === myDisplayLower) ||
-        Boolean(isAdmin);
-      if (!ownedByMe) {
-        setJoiningRoomId(null);
-        setRoomError(
-          `Phòng "${roomId}" đang có người khác làm chủ. Hãy chọn tên khác hoặc vào phòng ở danh sách trên.`
-        );
-        return;
-      }
-      await AdminService.closeOwnedRoom(
-        roomId,
-        existing.host_name || activePlayerName,
-        existing.scene_id || LOBBY_SCENE_ID
-      );
-    }
-
-    const mp = MultiplayerManager.getInstance();
-    mp.setLocalIsAdmin(Boolean(isAdmin));
-    const ok = await mp.joinRoom(roomId, activePlayerName, LOBBY_SCENE_ID, {
-      password: newRoomPassword.trim(),
-      bypassLimits: Boolean(isAdmin),
-    });
-    setJoiningRoomId(null);
-    if (ok) {
-      setNewRoomName('');
-      setNewRoomPassword('');
-      onSwitchedRoom();
-    } else {
-      setRoomError(mp.getLastJoinError() || 'Không thể tạo phòng Lobby mới.');
-    }
-  };
+  const normalizedRoomQuery = roomSearchQuery.trim().toLowerCase();
+  const filteredRooms = normalizedRoomQuery
+    ? rooms.filter(
+        (r) =>
+          r.room_id.toLowerCase().includes(normalizedRoomQuery) ||
+          (r.host_name || '').toLowerCase().includes(normalizedRoomQuery)
+      )
+    : rooms;
 
   return (
     <div className="fixed inset-0 z-[95] flex items-center justify-center p-3 sm:p-5 bg-black/75 backdrop-blur-sm select-none">
@@ -305,6 +274,15 @@ export const LobbyHubModal: React.FC<LobbyHubModalProps> = ({
           <div className="flex items-center gap-2 shrink-0">
             <button
               type="button"
+              onClick={handleLeaveCurrentLobby}
+              className="px-2.5 py-1.5 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-[11px] text-rose-200 hover:text-white flex items-center gap-1 transition"
+              title="Rời phòng Lobby hiện tại ra ngoài Sảnh để tạo phòng mới"
+            >
+              <DoorOpen className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Rời phòng</span>
+            </button>
+            <button
+              type="button"
               onClick={() => void handleExitToEntryGate()}
               className="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-[11px] text-neutral-300 hover:text-white flex items-center gap-1 transition"
               title="Thoát ra màn hình Đăng nhập / Chọn Khách"
@@ -325,7 +303,7 @@ export const LobbyHubModal: React.FC<LobbyHubModalProps> = ({
         {/* 2 Tabs */}
         <div className="grid grid-cols-2 gap-1.5 p-2.5 border-b border-white/10 bg-[#0d0d0d]">
           {[
-            { id: 'lobby' as const, label: 'Đổi / Tạo Phòng Lobby', icon: DoorOpen },
+            { id: 'lobby' as const, label: 'Đổi Phòng Lobby', icon: DoorOpen },
             { id: 'avatar' as const, label: 'Nhân Vật & Tài Khoản', icon: Palette },
           ].map((tab) => {
             const Icon = tab.icon;
@@ -530,8 +508,8 @@ export const LobbyHubModal: React.FC<LobbyHubModalProps> = ({
               Đang chạy chế độ Offline (chưa cấu hình Supabase).
             </div>
           ) : (
-            /* Lobby Rooms List + Create Lobby Room */
-            <div className="space-y-5">
+            /* Lobby Rooms List (Switch Only while in Lobby) */
+            <div className="space-y-4">
               <div className="space-y-2.5">
                 <div className="flex items-center justify-between gap-2">
                   <h3 className="text-xs font-semibold uppercase tracking-wider text-neutral-400">
@@ -547,6 +525,28 @@ export const LobbyHubModal: React.FC<LobbyHubModalProps> = ({
                   </button>
                 </div>
 
+                {/* Search Room Input */}
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-neutral-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={roomSearchQuery}
+                    onChange={(e) => setRoomSearchQuery(e.target.value)}
+                    placeholder="Tìm kiếm mã phòng hoặc tên chủ phòng..."
+                    className="w-full pl-9 pr-8 py-2 rounded-xl bg-neutral-950 border border-white/10 text-base sm:text-xs text-white placeholder:text-neutral-500 focus:outline-none focus:border-white/30"
+                  />
+                  {roomSearchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setRoomSearchQuery('')}
+                      aria-label="Xóa tìm kiếm"
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 rounded text-neutral-400 hover:text-white transition"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+
                 {roomError && (
                   <p className="text-xs text-rose-400 bg-rose-500/10 border border-rose-500/20 rounded-lg px-3 py-2">
                     {roomError}
@@ -557,9 +557,13 @@ export const LobbyHubModal: React.FC<LobbyHubModalProps> = ({
                   <div className="py-6 text-center text-xs text-neutral-500 border border-dashed border-white/10 rounded-xl bg-[#181818]">
                     Chưa có phòng Lobby nào khác đang hoạt động.
                   </div>
+                ) : filteredRooms.length === 0 ? (
+                  <div className="py-6 text-center text-xs text-neutral-500 border border-dashed border-white/10 rounded-xl bg-[#181818]">
+                    Không tìm thấy phòng nào khớp với &ldquo;{roomSearchQuery.trim()}&rdquo;.
+                  </div>
                 ) : (
-                  <div className="space-y-2">
-                    {rooms.map((room) => {
+                  <div className="max-h-64 sm:max-h-72 overflow-y-auto overscroll-contain pr-1 space-y-2">
+                    {filteredRooms.map((room) => {
                       const myDisplayLower = activePlayerName.trim().toLowerCase();
                       const isMyRoom = Boolean(
                         room.host_name && room.host_name.trim().toLowerCase() === myDisplayLower
@@ -683,50 +687,21 @@ export const LobbyHubModal: React.FC<LobbyHubModalProps> = ({
                 )}
               </div>
 
-              {/* Create New Lobby Room */}
-              <form
-                onSubmit={(e) => void handleCreateRoom(e)}
-                className="rounded-xl bg-[#181818] border border-white/10 p-4 space-y-3"
-              >
-                <div className="flex items-center gap-2 text-xs font-semibold text-white">
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>Tạo phòng Lobby mới</span>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                  <input
-                    type="text"
-                    maxLength={24}
-                    value={newRoomName}
-                    onChange={(e) => setNewRoomName(e.target.value)}
-                    placeholder="Tên phòng (vd: phong-cua-toi)"
-                    className="px-3 py-2 rounded-lg bg-neutral-950 border border-white/10 text-base sm:text-xs text-white placeholder:text-neutral-500 focus:outline-none focus:border-white/30"
-                  />
-                  <input
-                    type="password"
-                    maxLength={32}
-                    value={newRoomPassword}
-                    onChange={(e) => setNewRoomPassword(e.target.value)}
-                    placeholder="Mật khẩu phòng (tùy chọn)"
-                    className="px-3 py-2 rounded-lg bg-neutral-950 border border-white/10 text-base sm:text-xs text-white placeholder:text-neutral-500 focus:outline-none focus:border-white/30"
-                  />
-                </div>
-
-                <div className="flex justify-end">
-                  <button
-                    type="submit"
-                    disabled={joiningRoomId === '__new__'}
-                    className="px-4 py-2 rounded-lg bg-white hover:bg-neutral-200 disabled:opacity-60 text-black text-xs font-semibold flex items-center gap-1.5 transition"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>
-                      {joiningRoomId === '__new__'
-                        ? 'Đang tạo...'
-                        : 'Tạo phòng & Làm chủ phòng'}
-                    </span>
-                  </button>
-                </div>
-              </form>
+              {/* Leave Lobby Notice & Action */}
+              <div className="rounded-xl bg-[#181818] border border-white/10 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+                <p className="text-xs text-neutral-400 flex-1 min-w-[200px]">
+                  Bạn đang ở trong phòng Lobby nên chỉ có thể chuyển sang phòng khác. Muốn tạo phòng
+                  mới, hãy rời phòng hiện tại trước.
+                </p>
+                <button
+                  type="button"
+                  onClick={handleLeaveCurrentLobby}
+                  className="px-3.5 py-2 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/35 text-rose-200 hover:text-white text-xs font-semibold flex items-center gap-1.5 transition shrink-0"
+                >
+                  <DoorOpen className="w-3.5 h-3.5" />
+                  <span>Rời phòng Lobby</span>
+                </button>
+              </div>
             </div>
           )}
         </div>

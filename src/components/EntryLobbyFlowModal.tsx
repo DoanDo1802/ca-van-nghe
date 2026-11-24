@@ -7,6 +7,7 @@ import {
   LogOut,
   Plus,
   RefreshCw,
+  Search,
   ShieldCheck,
   Sparkles,
   Trash2,
@@ -15,6 +16,7 @@ import {
   UserPlus,
   Users,
   WifiOff,
+  X,
 } from 'lucide-react';
 import { AdminService, type ActiveRoomInfo, type AdminAccount } from '../network/AdminService';
 import { MultiplayerManager } from '../network/MultiplayerManager';
@@ -28,6 +30,7 @@ import {
 
 export interface EntryLobbyFlowModalProps {
   isOpen: boolean;
+  initialStep?: 'identity' | 'room';
   notice?: string | null;
   onDismissNotice?: () => void;
   onEnteredLobby: (roomId: string) => void;
@@ -47,6 +50,7 @@ function getDefaultGuestName(): string {
 
 export const EntryLobbyFlowModal: React.FC<EntryLobbyFlowModalProps> = ({
   isOpen,
+  initialStep,
   notice,
   onDismissNotice,
   onEnteredLobby,
@@ -56,9 +60,10 @@ export const EntryLobbyFlowModal: React.FC<EntryLobbyFlowModalProps> = ({
   const [account, setAccount] = useState<AdminAccount | null>(() =>
     AdminService.getSavedPlayerAccount()
   );
-  const [step, setStep] = useState<'identity' | 'room'>(() =>
-    AdminService.getSavedPlayerAccount() ? 'room' : 'identity'
-  );
+  const [step, setStep] = useState<'identity' | 'room'>(() => {
+    if (initialStep) return initialStep;
+    return AdminService.getSavedPlayerAccount() ? 'room' : 'identity';
+  });
   const [identityMode, setIdentityMode] = useState<IdentityMode>('guest');
   const [guestName, setGuestName] = useState<string>(() => getDefaultGuestName());
   const [avatarColor, setAvatarColor] = useState<string>(() => getSavedAvatarColor());
@@ -71,6 +76,7 @@ export const EntryLobbyFlowModal: React.FC<EntryLobbyFlowModalProps> = ({
 
   const [rooms, setRooms] = useState<ActiveRoomInfo[]>([]);
   const [loadingRooms, setLoadingRooms] = useState(false);
+  const [roomSearchQuery, setRoomSearchQuery] = useState('');
   const [joinPasswordRoomId, setJoinPasswordRoomId] = useState<string | null>(null);
   const [joinPassword, setJoinPassword] = useState('');
   const [newRoomName, setNewRoomName] = useState('');
@@ -78,6 +84,11 @@ export const EntryLobbyFlowModal: React.FC<EntryLobbyFlowModalProps> = ({
   const [roomError, setRoomError] = useState('');
   const [joiningRoomId, setJoiningRoomId] = useState<string | null>(null);
   const [closingRoomId, setClosingRoomId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isOpen || !initialStep) return;
+    setStep(initialStep);
+  }, [isOpen, initialStep]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -90,11 +101,20 @@ export const EntryLobbyFlowModal: React.FC<EntryLobbyFlowModalProps> = ({
         const mp = MultiplayerManager.getInstance();
         mp.setLocalIsAdmin(true);
         mp.setLocalPlayerName(adminAcc.display_name || adminAcc.username);
-        setStep('room');
+        if (initialStep !== 'identity') {
+          setStep('room');
+        }
       } else {
         const saved = AdminService.getSavedPlayerAccount();
         setAccount(saved);
-        if (saved) {
+        if (saved && initialStep !== 'identity') {
+          setStep('room');
+        } else if (!saved && initialStep === 'room') {
+          const fallbackGuest = getDefaultGuestName();
+          setGuestName(fallbackGuest);
+          const mp = MultiplayerManager.getInstance();
+          mp.setLocalIsAdmin(false);
+          mp.setLocalPlayerName(fallbackGuest);
           setStep('room');
         }
       }
@@ -102,7 +122,7 @@ export const EntryLobbyFlowModal: React.FC<EntryLobbyFlowModalProps> = ({
     return () => {
       active = false;
     };
-  }, [isOpen]);
+  }, [isOpen, initialStep]);
 
   const loadRooms = useCallback(async () => {
     if (!supabaseReady) {
@@ -126,6 +146,15 @@ export const EntryLobbyFlowModal: React.FC<EntryLobbyFlowModalProps> = ({
   const activePlayerName = account
     ? account.display_name || account.username
     : guestName.trim() || 'Khách Lounge';
+
+  const normalizedRoomQuery = roomSearchQuery.trim().toLowerCase();
+  const filteredRooms = normalizedRoomQuery
+    ? rooms.filter(
+        (r) =>
+          r.room_id.toLowerCase().includes(normalizedRoomQuery) ||
+          (r.host_name || '').toLowerCase().includes(normalizedRoomQuery)
+      )
+    : rooms;
 
   const handleSelectColor = (hex: string) => {
     const clean = saveAvatarColor(hex);
@@ -574,6 +603,28 @@ export const EntryLobbyFlowModal: React.FC<EntryLobbyFlowModalProps> = ({
                       </button>
                     </div>
 
+                    {/* Search Room Input */}
+                    <div className="relative">
+                      <Search className="w-3.5 h-3.5 text-neutral-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      <input
+                        type="text"
+                        value={roomSearchQuery}
+                        onChange={(e) => setRoomSearchQuery(e.target.value)}
+                        placeholder="Tìm kiếm mã phòng hoặc tên chủ phòng..."
+                        className="w-full pl-9 pr-8 py-2 rounded-xl bg-neutral-950 border border-white/10 text-base sm:text-xs text-white placeholder:text-neutral-500 focus:outline-none focus:border-white/30"
+                      />
+                      {roomSearchQuery && (
+                        <button
+                          type="button"
+                          onClick={() => setRoomSearchQuery('')}
+                          aria-label="Xóa tìm kiếm"
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 p-0.5 rounded text-neutral-400 hover:text-white transition"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+
                     {roomError && (
                       <p className="text-xs text-rose-400 bg-rose-500/10 border border-rose-500/20 rounded-lg px-3 py-2">
                         {roomError}
@@ -584,9 +635,13 @@ export const EntryLobbyFlowModal: React.FC<EntryLobbyFlowModalProps> = ({
                       <div className="py-6 text-center text-xs text-neutral-500 border border-dashed border-white/10 rounded-xl bg-[#181818]">
                         Chưa có phòng Lobby nào đang hoạt động. Hãy tạo phòng mới bên dưới để làm Chủ phòng!
                       </div>
+                    ) : filteredRooms.length === 0 ? (
+                      <div className="py-6 text-center text-xs text-neutral-500 border border-dashed border-white/10 rounded-xl bg-[#181818]">
+                        Không tìm thấy phòng nào khớp với &ldquo;{roomSearchQuery.trim()}&rdquo;.
+                      </div>
                     ) : (
-                      <div className="space-y-2">
-                        {rooms.map((room) => {
+                      <div className="max-h-52 sm:max-h-60 overflow-y-auto overscroll-contain pr-1 space-y-2">
+                        {filteredRooms.map((room) => {
                           const myDisplayLower = activePlayerName.trim().toLowerCase();
                           const isMyRoom = Boolean(
                             room.host_name && room.host_name.trim().toLowerCase() === myDisplayLower

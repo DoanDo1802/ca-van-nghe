@@ -27,6 +27,9 @@ export const WebGamePlayer: React.FC = () => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [ready, setReady] = useState(false);
   const [hasEnteredLobby, setHasEnteredLobby] = useState(false);
+  const [entryInitialStep, setEntryInitialStep] = useState<'identity' | 'room' | undefined>(
+    undefined
+  );
   const [kickedNotice, setKickedNotice] = useState<string | null>(null);
   const [initialProgress] = useState<SceneLoadingProgress>(() => {
     const startupId = getStartupSceneId();
@@ -140,14 +143,17 @@ export const WebGamePlayer: React.FC = () => {
       if (!active) return;
       const mp = MultiplayerManager.getInstance();
       setKickedNotice(mp.getLastJoinError() || 'Bạn đã bị mời rời khỏi phòng.');
+      setEntryInitialStep('room');
       setHasEnteredLobby(false);
       if (engine.getSceneId() !== LOBBY_SCENE_ID) {
         void engine.loadSceneById(LOBBY_SCENE_ID, { keepPlayMode: true });
       }
     };
 
-    const onOpenEntryGate = () => {
+    const onOpenEntryGate = (e: Event) => {
       if (!active) return;
+      const detail = (e as CustomEvent<{ step?: 'identity' | 'room' } | undefined>).detail;
+      setEntryInitialStep(detail?.step ?? 'identity');
       void MultiplayerManager.getInstance().leaveRoom();
       setHasEnteredLobby(false);
       if (engine.getSceneId() !== LOBBY_SCENE_ID) {
@@ -178,10 +184,12 @@ export const WebGamePlayer: React.FC = () => {
       {ready && !hasEnteredLobby && (
         <EntryLobbyFlowModal
           isOpen
+          initialStep={entryInitialStep}
           notice={kickedNotice}
           onDismissNotice={() => setKickedNotice(null)}
           onEnteredLobby={() => {
             setKickedNotice(null);
+            setEntryInitialStep(undefined);
             setHasEnteredLobby(true);
           }}
         />
