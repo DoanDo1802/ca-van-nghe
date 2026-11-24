@@ -58,8 +58,10 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
   const [youtubeVideoId, setYoutubeVideoId] = useState<string | null>(null);
   const [customFileName, setCustomFileName] = useState<string | null>(null);
   const [isPlayerCompact, setIsPlayerCompact] = useState(true);
+  const [playerWidth, setPlayerWidth] = useState<number | null>(null);
   const [playerPos, setPlayerPos] = useState<{ x: number; y: number } | null>(null);
   const [isDraggingPlayer, setIsDraggingPlayer] = useState(false);
+  const [isResizingPlayer, setIsResizingPlayer] = useState(false);
 
   const [isFilePlaying, setIsFilePlaying] = useState(false);
   const [micEnabled, setMicEnabled] = useState(false);
@@ -91,12 +93,26 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
   const ytCurrentTimeRef = useRef<number>(0);
   const lastTimeSyncSentRef = useRef<number>(0);
   const lastVolumeSyncSentRef = useRef<number>(0);
+  const audienceMusicVolumeRef = useRef<number>(audienceMusicVolume);
+  audienceMusicVolumeRef.current = audienceMusicVolume;
+  const trailingVolumeTimerRef = useRef<number | null>(null);
+  const presenceVolumeTimerRef = useRef<number | null>(null);
   const playerBoxRef = useRef<HTMLDivElement>(null);
   const dragStateRef = useRef<{
     pointerId: number;
     offsetX: number;
     offsetY: number;
   } | null>(null);
+  const resizeStateRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startWidth: number;
+  } | null>(null);
+
+  const clampPlayerWidth = (w: number) => {
+    const maxW = Math.max(220, Math.min(720, window.innerWidth - 16));
+    return Math.max(180, Math.min(maxW, Math.round(w)));
+  };
 
   const clampPlayerPos = (x: number, y: number) => {
     const boxW = playerBoxRef.current?.offsetWidth ?? 240;
@@ -111,6 +127,7 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
 
   useEffect(() => {
     const onResize = () => {
+      setPlayerWidth((prev) => (prev !== null ? clampPlayerWidth(prev) : null));
       setPlayerPos((prev) => (prev ? clampPlayerPos(prev.x, prev.y) : null));
     };
     window.addEventListener('resize', onResize);
@@ -124,7 +141,7 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
   useEffect(() => {
     if (!isOpen) return;
     setPlayerPos((prev) => (prev ? clampPlayerPos(prev.x, prev.y) : null));
-  }, [isOpen, isPlayerCompact, youtubeVideoId]);
+  }, [isOpen, isPlayerCompact, playerWidth, youtubeVideoId]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -184,36 +201,71 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
     }
   };
 
-  const broadcastAudienceMusicVolume = (vol: number, commitPresence: boolean) => {
-    const now = Date.now();
-    if (!commitPresence && now - lastVolumeSyncSentRef.current < 80) return;
-    lastVolumeSyncSentRef.current = now;
+  const handleResizePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.stopPropagation();
+    const box = playerBoxRef.current;
+    if (!box) return;
+    const rect = box.getBoundingClientRect();
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+    resizeStateRef.current = {
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startWidth: rect.width,
+    };
+    setIsResizingPlayer(true);
+    setPlayerWidth(clampPlayerWidth(rect.width));
+  };
 
-    if (youtubeVideoId) {
-      MultiplayerManager.getInstance().broadcastKaraokeState(
-        {
-          active: true,
-          youtubeVideoId,
-          title: activeSong?.title ?? 'YouTube Karaoke',
-          isPlaying: lastYtPlayingRef.current ?? true,
-          currentTime: ytCurrentTimeRef.current,
-          musicVolume: vol,
-        },
-        { updatePresence: commitPresence }
-      );
-    } else if (customFileName) {
-      MultiplayerManager.getInstance().broadcastKaraokeState(
-        {
-          active: true,
-          youtubeVideoId: null,
-          title: customFileName,
-          isPlaying: isFilePlaying,
-          currentTime: karaokeAudio.getCurrentTime(),
-          musicVolume: vol,
-        },
-        { updatePresence: commitPresence }
-      );
+  const handleResizePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const rs = resizeStateRef.current;
+    if (!rs || rs.pointerId !== e.pointerId) return;
+    const nextW = clampPlayerWidth(rs.startWidth + (e.clientX - rs.startX));
+    setPlayerWidth(nextW);
+    setPlayerPos((prev) => (prev ? clampPlayerPos(prev.x, prev.y) : null));
+  };
+
+  const handleResizePointerEnd = (e: React.PointerEvent<HTMLDivElement>) => {
+    const rs = resizeStateRef.current;
+    if (!rs || rs.pointerId !== e.pointerId) return;
+    resizeStateRef.current = null;
+    setIsResizingPlayer(false);
+    if (e.currentTarget.hasPointerCapture?.(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
     }
+  };
+
+  const scheduleAudienceMusicVolumeSync = (vol: number) => {
+    audienceMusicVolumeRef.current = vol;
+    const now = Date.now();
+    const elapsed = now - lastVolumeSyncSentRef.current;
+
+    if (trailingVolumeTimerRef.current !== null) {
+      window.clearTimeout(trailingVolumeTimerRef.current);
+      trailingVolumeTimerRef.current = null;
+    }
+
+    if (elapsed >= 60) {
+      lastVolumeSyncSentRef.current = now;
+      MultiplayerManager.getInstance().broadcastKaraokeVolume(vol, { updatePresence: false });
+    } else {
+      trailingVolumeTimerRef.current = window.setTimeout(() => {
+        trailingVolumeTimerRef.current = null;
+        lastVolumeSyncSentRef.current = Date.now();
+        MultiplayerManager.getInstance().broadcastKaraokeVolume(audienceMusicVolumeRef.current, {
+          updatePresence: false,
+        });
+      }, 60 - elapsed);
+    }
+
+    if (presenceVolumeTimerRef.current !== null) {
+      window.clearTimeout(presenceVolumeTimerRef.current);
+    }
+    presenceVolumeTimerRef.current = window.setTimeout(() => {
+      presenceVolumeTimerRef.current = null;
+      MultiplayerManager.getInstance().broadcastKaraokeVolume(audienceMusicVolumeRef.current, {
+        updatePresence: true,
+      });
+    }, 260);
   };
 
   const isOpenRef = useRef(isOpen);
@@ -296,6 +348,12 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
 
   useEffect(() => {
     return () => {
+      if (trailingVolumeTimerRef.current !== null) {
+        window.clearTimeout(trailingVolumeTimerRef.current);
+      }
+      if (presenceVolumeTimerRef.current !== null) {
+        window.clearTimeout(presenceVolumeTimerRef.current);
+      }
       KaraokeVoiceManager.getInstance().stopBroadcasting();
       MultiplayerManager.getInstance().broadcastKaraokeState({
         active: false,
@@ -357,7 +415,7 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
               title: activeSong?.title ?? 'YouTube Karaoke',
               isPlaying: true,
               currentTime: nextTime,
-              musicVolume: audienceMusicVolume,
+              musicVolume: audienceMusicVolumeRef.current,
             },
             { updatePresence: false }
           );
@@ -385,12 +443,12 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
         title: activeSong?.title ?? 'YouTube Karaoke',
         isPlaying: nextPlaying,
         currentTime: ytCurrentTimeRef.current,
-        musicVolume: audienceMusicVolume,
+        musicVolume: audienceMusicVolumeRef.current,
       });
     };
     window.addEventListener('message', onMessage);
     return () => window.removeEventListener('message', onMessage);
-  }, [isOpen, youtubeVideoId, activeSong?.title, audienceMusicVolume]);
+  }, [isOpen, youtubeVideoId, activeSong?.title]);
 
   const displayedSongs = useMemo(() => {
     if (ytResults) return ytResults;
@@ -599,13 +657,18 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
         {youtubeVideoId ? (
           <div
             ref={playerBoxRef}
-            style={playerPos ? { left: playerPos.x, top: playerPos.y } : undefined}
+            style={{
+              ...(playerPos ? { left: playerPos.x, top: playerPos.y } : {}),
+              ...(playerWidth !== null ? { width: playerWidth } : {}),
+            }}
             className={`pointer-events-auto rounded-xl overflow-hidden bg-black/95 border border-white/15 shadow-2xl ${
               playerPos ? 'fixed z-40' : 'relative'
             } ${
-              isPlayerCompact
-                ? 'w-[215px] sm:w-[240px]'
-                : 'w-[min(295px,calc(100vw-1.25rem))] sm:w-[360px]'
+              playerWidth !== null
+                ? ''
+                : isPlayerCompact
+                  ? 'w-[215px] sm:w-[240px]'
+                  : 'w-[min(295px,calc(100vw-1.25rem))] sm:w-[360px]'
             }`}
           >
             <div
@@ -632,7 +695,10 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
                   </button>
                 )}
                 <button
-                  onClick={() => setIsPlayerCompact((c) => !c)}
+                  onClick={() => {
+                    setPlayerWidth(null);
+                    setIsPlayerCompact((c) => !c);
+                  }}
                   className="p-1 text-neutral-400 hover:text-white"
                   title={isPlayerCompact ? 'Phóng to màn hình hát' : 'Thu nhỏ màn hình hát'}
                 >
@@ -655,22 +721,40 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
                 </button>
               </div>
             </div>
-            <iframe
-              ref={ytIframeRef}
-              key={youtubeVideoId}
-              className={`w-full aspect-video ${isDraggingPlayer ? 'pointer-events-none' : ''}`}
-              src={`https://www.youtube.com/embed/${youtubeVideoId}?autoplay=1&rel=0&modestbranding=1&enablejsapi=1&origin=${encodeURIComponent(window.location.origin)}`}
-              title="YouTube Karaoke Player"
-              allow="autoplay; encrypted-media; picture-in-picture"
-              allowFullScreen
-              onLoad={() => {
-                const win = ytIframeRef.current?.contentWindow;
-                win?.postMessage(
-                  JSON.stringify({ event: 'listening', id: 1, channel: 'widget' }),
-                  '*'
-                );
-              }}
-            />
+            <div className="relative">
+              <iframe
+                ref={ytIframeRef}
+                key={youtubeVideoId}
+                className={`w-full aspect-video block ${isDraggingPlayer || isResizingPlayer ? 'pointer-events-none' : ''}`}
+                src={`https://www.youtube.com/embed/${youtubeVideoId}?autoplay=1&rel=0&modestbranding=1&enablejsapi=1&origin=${encodeURIComponent(window.location.origin)}`}
+                title="YouTube Karaoke Player"
+                allow="autoplay; encrypted-media; picture-in-picture"
+                allowFullScreen
+                onLoad={() => {
+                  const sendListening = () => {
+                    const win = ytIframeRef.current?.contentWindow;
+                    win?.postMessage(
+                      JSON.stringify({ event: 'listening', id: 1, channel: 'widget' }),
+                      '*'
+                    );
+                  };
+                  sendListening();
+                  window.setTimeout(sendListening, 500);
+                  window.setTimeout(sendListening, 1400);
+                }}
+              />
+              {/* Bottom-right resize handle */}
+              <div
+                onPointerDown={handleResizePointerDown}
+                onPointerMove={handleResizePointerMove}
+                onPointerUp={handleResizePointerEnd}
+                onPointerCancel={handleResizePointerEnd}
+                title="Kéo góc để co dãn khung YouTube"
+                className="absolute bottom-0 right-0 w-5 h-5 cursor-nwse-resize touch-none flex items-end justify-end p-1 bg-gradient-to-tl from-black/70 via-black/25 to-transparent hover:from-white/30 transition select-none z-10"
+              >
+                <span className="w-2.5 h-2.5 border-r-2 border-b-2 border-white/75 rounded-br-[2px]" />
+              </div>
+            </div>
           </div>
         ) : customFileName ? (
           <div className="pointer-events-auto flex items-center gap-2.5 px-3.5 py-2 rounded-xl bg-neutral-950/85 backdrop-blur-xl border border-white/15 text-xs text-white shadow-xl">
@@ -953,11 +1037,7 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
                       const v = parseFloat(e.target.value);
                       setAudienceMusicVolume(v);
                       karaokeAudio.setAudienceMusicVolume(v / 100);
-                      broadcastAudienceMusicVolume(v, false);
-                    }}
-                    onPointerUp={(e) => {
-                      const v = parseFloat((e.target as HTMLInputElement).value);
-                      broadcastAudienceMusicVolume(v, true);
+                      scheduleAudienceMusicVolumeSync(v);
                     }}
                     className="w-full accent-sky-400"
                   />

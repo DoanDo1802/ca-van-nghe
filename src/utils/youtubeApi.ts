@@ -9,7 +9,9 @@ export interface YTPlayerInstance {
   pauseVideo: () => void;
   mute: () => void;
   unMute: () => void;
+  isMuted?: () => boolean;
   setVolume: (vol: number) => void;
+  getVolume?: () => number;
   setPlaybackQuality: (quality: string) => void;
   getDuration?: () => number;
   getCurrentTime?: () => number;

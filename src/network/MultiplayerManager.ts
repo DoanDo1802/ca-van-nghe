@@ -419,6 +419,33 @@ export class MultiplayerManager {
       this.onRemoteKaraokeCallback?.(k);
     });
 
+    channel.on('broadcast', { event: 'karaoke:volume' }, ({ payload }) => {
+      if (this.channel !== channel) return;
+      const data = payload as { singerId?: string; musicVolume?: number } | undefined;
+      if (
+        !data ||
+        !data.singerId ||
+        data.singerId === this.localPlayerId ||
+        typeof data.musicVolume !== 'number'
+      ) {
+        return;
+      }
+      const clamped = Math.max(0, Math.min(100, Math.round(data.musicVolume)));
+      this.touchRemoteBroadcast(data.singerId);
+      if (this.remoteKaraokeState && this.remoteKaraokeState.singerId === data.singerId) {
+        this.remoteKaraokeState = {
+          ...this.remoteKaraokeState,
+          musicVolume: clamped,
+        };
+      }
+      window.dispatchEvent(
+        new CustomEvent<{ singerId: string; musicVolume: number }>(
+          'cavannghe:remote-karaoke-volume',
+          { detail: { singerId: data.singerId, musicVolume: clamped } }
+        )
+      );
+    });
+
     channel.on('broadcast', { event: 'rtc:signal' }, ({ payload }) => {
       if (this.channel !== channel) return;
       const msg = payload as RtcSignalMessage;
@@ -945,6 +972,29 @@ export class MultiplayerManager {
       payload: state,
     });
     if (options?.updatePresence !== false) {
+      void this.trackLocalPresence();
+    }
+  }
+
+  broadcastKaraokeVolume(musicVolume: number, options?: { updatePresence?: boolean }): void {
+    const clamped = Math.max(0, Math.min(100, Math.round(musicVolume)));
+    if (this.localKaraokeState) {
+      this.localKaraokeState = {
+        ...this.localKaraokeState,
+        musicVolume: clamped,
+      };
+    }
+    if (!this.connected || !this.channel) return;
+
+    void this.channel.send({
+      type: 'broadcast',
+      event: 'karaoke:volume',
+      payload: {
+        singerId: this.localPlayerId,
+        musicVolume: clamped,
+      },
+    });
+    if (options?.updatePresence) {
       void this.trackLocalPresence();
     }
   }
