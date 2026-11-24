@@ -79,11 +79,9 @@ export class KaraokeStageController {
       const pulse = 3.2 + this.smoothedEnergy * 4.5;
       this.stageSpot.light.intensity = pulse;
       const mix = 0.5 + 0.5 * Math.sin(this.phase * 1.4 + mic * 2.0);
-      this.stageSpot.light.color = new pc.Color(
-        1.0,
-        0.74 - mix * 0.34,
-        0.34 + mix * 0.48
-      );
+      this.stageSpot.light.color = karaokeAudio.isAutoTuneEnabled()
+        ? new pc.Color(0.55 + mix * 0.4, 0.2 + (1 - mix) * 0.55, 1.0)
+        : new pc.Color(1.0, 0.74 - mix * 0.34, 0.34 + mix * 0.48);
     }
 
     if (this.style === 'dance' || this.smoothedEnergy > 0.62) {

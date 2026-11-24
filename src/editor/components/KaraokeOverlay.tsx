@@ -23,8 +23,17 @@ import {
   Upload,
   X,
   Youtube,
+  Zap,
 } from 'lucide-react';
 import { KARAOKE_SONGS, karaokeAudio, type KaraokeSong } from '../../utils/karaokeAudio';
+import {
+  MUSICAL_KEYS,
+  SCALE_DEFINITIONS,
+  type AutoTuneConfig,
+  type AutoTuneTelemetry,
+  type MusicalKey,
+  type ScaleType,
+} from '../../utils/rapAutoTune';
 import { karaokeRecorder } from '../../utils/karaokeRecorder';
 import { loungeAudio } from '../../utils/audio';
 import { MultiplayerManager } from '../../network/MultiplayerManager';
@@ -84,7 +93,9 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
   const [echoAmount, setEchoAmount] = useState(0.55);
   const [bassDb, setBassDb] = useState(3.5);
   const [trebleDb, setTrebleDb] = useState(4.5);
-  const [activePreset, setActivePreset] = useState<'acoustic' | 'lounge' | 'stage' | null>('lounge');
+  const [activePreset, setActivePreset] = useState<'acoustic' | 'lounge' | 'stage' | 'rapper' | null>('lounge');
+  const [autoTune, setAutoTune] = useState<AutoTuneConfig>(() => karaokeAudio.getAutoTuneConfig());
+  const [pitchTelemetry, setPitchTelemetry] = useState<AutoTuneTelemetry | null>(null);
   const [audienceMusicVolume, setAudienceMusicVolume] = useState(60);
   const [style, setStyle] = useState<'chill' | 'dance'>('chill');
   const [micLevel, setMicLevel] = useState(0);
@@ -324,6 +335,10 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
       }
       karaokeAudio.stop();
       karaokeAudio.disableMic();
+      const resetAt = karaokeAudio.setAutoTuneConfig({ enabled: false });
+      setAutoTune(resetAt);
+      setPitchTelemetry(null);
+      setActivePreset('lounge');
       setMicEnabled(false);
       setMicError(null);
       setIsMenuOpen(false);
@@ -407,6 +422,16 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
   }, [isOpen, micEnabled]);
+
+  useEffect(() => {
+    if (!isOpen || !micEnabled || !autoTune.enabled) {
+      setPitchTelemetry(null);
+      return;
+    }
+    return karaokeAudio.subscribeAutoTuneTelemetry((t) => {
+      setPitchTelemetry(t);
+    });
+  }, [isOpen, micEnabled, autoTune.enabled]);
 
   useEffect(() => {
     return () => {
@@ -677,13 +702,23 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
     }
   };
 
-  const applyPreset = (preset: 'acoustic' | 'lounge' | 'stage') => {
+  const updateAutoTune = (partial: Partial<AutoTuneConfig>) => {
+    const next = karaokeAudio.setAutoTuneConfig(partial);
+    setAutoTune(next);
+    if (partial.enabled === false) {
+      setPitchTelemetry(null);
+    }
+  };
+
+  const applyPreset = (preset: 'acoustic' | 'lounge' | 'stage' | 'rapper') => {
     const cfg =
       preset === 'acoustic'
         ? { micPct: 85, echo: 0.25, bass: 2.5, treble: 3.0 }
         : preset === 'lounge'
           ? { micPct: 100, echo: 0.55, bass: 3.5, treble: 4.5 }
-          : { micPct: 120, echo: 0.78, bass: 4.5, treble: 5.5 };
+          : preset === 'stage'
+            ? { micPct: 120, echo: 0.78, bass: 4.5, treble: 5.5 }
+            : { micPct: 115, echo: 0.3, bass: 2.0, treble: 5.5 };
     setActivePreset(preset);
     setMicPercent(cfg.micPct);
     setEchoAmount(cfg.echo);
@@ -692,6 +727,24 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
     karaokeAudio.setMicVolume(micPercentToGain(cfg.micPct));
     karaokeAudio.setEchoAmount(cfg.echo);
     karaokeAudio.setToneEQ(cfg.bass, cfg.treble);
+    if (preset === 'rapper') {
+      updateAutoTune({
+        enabled: true,
+        retuneSpeedMs: 0,
+        formantPreserve: true,
+        mix: 1.0,
+      });
+    } else {
+      updateAutoTune({ enabled: false });
+    }
+  };
+
+  const toggleRapperMode = () => {
+    if (autoTune.enabled) {
+      applyPreset('lounge');
+    } else {
+      applyPreset('rapper');
+    }
   };
 
   const handleToggleStyle = () => {
@@ -850,6 +903,30 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
 
         <div className="pointer-events-auto fixed top-[max(0.75rem,env(safe-area-inset-top))] right-3 z-40">
           <div className="flex items-center gap-2">
+            {autoTune.enabled && (
+              <button
+                type="button"
+                onClick={() => {
+                  setIsMenuOpen(false);
+                  setIsRecordingsOpen(false);
+                  setIsMixerOpen(true);
+                  void karaokeAudio.listInputDevices().then(setInputDevices);
+                }}
+                title="Chế độ Rapper (Auto-Tune) đang bật — Nhấn để chỉnh Tone / Scale"
+                className="h-10 px-2.5 rounded-xl border border-fuchsia-400/50 bg-gradient-to-r from-violet-600/80 to-fuchsia-600/80 hover:from-violet-500/90 hover:to-fuchsia-500/90 text-white backdrop-blur-xl shadow-lg shadow-fuchsia-950/50 flex items-center gap-1.5 text-xs font-semibold transition"
+              >
+                <Zap className="w-3.5 h-3.5 text-fuchsia-200" />
+                <span className="hidden sm:inline">
+                  {pitchTelemetry?.voiced
+                    ? `${pitchTelemetry.detectedNote} → ${pitchTelemetry.targetNote}`
+                    : `Rapper • ${autoTune.key} ${SCALE_DEFINITIONS[autoTune.scale].shortLabel}`}
+                </span>
+                <span className="sm:hidden font-mono text-[11px]">
+                  {pitchTelemetry?.voiced ? pitchTelemetry.targetNote : 'RAP'}
+                </span>
+              </button>
+            )}
+
             <button
               type="button"
               onClick={() => void handleToggleRecord()}
@@ -989,6 +1066,33 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
                   }`}
                 >
                   {style === 'dance' ? 'Phiêu' : 'Nhẹ'}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={toggleRapperMode}
+                title="Bật/tắt Auto-Tune T-Pain (Chế độ Rapper)"
+                className={`w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl font-medium transition ${
+                  autoTune.enabled
+                    ? 'bg-gradient-to-r from-violet-600/35 to-fuchsia-600/35 text-fuchsia-100 border border-fuchsia-400/40'
+                    : 'hover:bg-white/10 text-neutral-200'
+                }`}
+              >
+                <span className="flex items-center gap-2">
+                  <Zap className={`w-3.5 h-3.5 ${autoTune.enabled ? 'text-fuchsia-300' : ''}`} />
+                  <span>Chế độ Rapper</span>
+                </span>
+                <span
+                  className={`px-2 py-0.5 rounded-md text-[10px] font-semibold ${
+                    autoTune.enabled
+                      ? 'bg-fuchsia-500/30 text-fuchsia-100 border border-fuchsia-300/30'
+                      : 'bg-white/10 text-neutral-400'
+                  }`}
+                >
+                  {autoTune.enabled
+                    ? `${autoTune.key} ${SCALE_DEFINITIONS[autoTune.scale].shortLabel}`
+                    : 'Tắt'}
                 </span>
               </button>
 
@@ -1223,27 +1327,159 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
                 <span className="font-mono">{localMonitor ? 'BẬT' : 'TẮT'}</span>
               </button>
 
-              {/* 3 Quick Presets */}
-              <div className="flex items-center gap-1.5">
+              {/* 4 Quick Presets */}
+              <div className="grid grid-cols-2 gap-1.5">
                 {(
                   [
                     { id: 'acoustic', label: 'Acoustic Mộc' },
                     { id: 'lounge', label: 'Phòng Trà' },
                     { id: 'stage', label: 'Sân Khấu' },
+                    { id: 'rapper', label: 'Rapper (Auto-Tune)' },
                   ] as const
-                ).map((p) => (
+                ).map((p) => {
+                  const isActive = activePreset === p.id;
+                  const isRapper = p.id === 'rapper';
+                  return (
+                    <button
+                      key={p.id}
+                      onClick={() => applyPreset(p.id)}
+                      className={`py-1.5 px-2 rounded-lg border text-[11px] font-medium flex items-center justify-center gap-1 transition ${
+                        isActive
+                          ? isRapper
+                            ? 'bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white border-fuchsia-300 shadow-sm shadow-fuchsia-900/50'
+                            : 'bg-amber-500 text-stone-950 border-amber-300'
+                          : isRapper
+                            ? 'bg-violet-500/10 hover:bg-violet-500/20 border-fuchsia-400/25 text-fuchsia-200'
+                            : 'bg-white/5 hover:bg-white/15 border-white/10 text-neutral-200'
+                      }`}
+                    >
+                      {isRapper && <Zap className="w-3 h-3 shrink-0" />}
+                      <span>{p.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Rapper Mode (Real-Time Hard-Tune Auto-Tune) */}
+              <div className="rounded-xl bg-gradient-to-br from-violet-950/55 via-[#181224] to-fuchsia-950/40 border border-fuchsia-400/25 p-2.5 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="flex items-center gap-1.5 font-semibold text-fuchsia-200 text-[11px]">
+                    <Zap className="w-3.5 h-3.5 text-fuchsia-400" />
+                    Auto-Tune (T-Pain)
+                  </span>
                   <button
-                    key={p.id}
-                    onClick={() => applyPreset(p.id)}
-                    className={`flex-1 py-1 rounded-lg border text-[11px] font-medium transition ${
-                      activePreset === p.id
-                        ? 'bg-amber-500 text-stone-950 border-amber-300'
-                        : 'bg-white/5 hover:bg-white/15 border-white/10 text-neutral-200'
+                    type="button"
+                    onClick={() => {
+                      const nextEnabled = !autoTune.enabled;
+                      setActivePreset(nextEnabled ? 'rapper' : null);
+                      updateAutoTune({ enabled: nextEnabled });
+                    }}
+                    className={`px-2 py-0.5 rounded-md text-[10px] font-bold border transition ${
+                      autoTune.enabled
+                        ? 'bg-fuchsia-500 text-white border-fuchsia-300'
+                        : 'bg-white/10 text-neutral-300 border-white/15 hover:bg-white/20'
                     }`}
                   >
-                    {p.label}
+                    {autoTune.enabled ? 'ĐANG BẬT' : 'ĐANG TẮT'}
                   </button>
-                ))}
+                </div>
+
+                {autoTune.enabled && (
+                  <>
+                    <div className="px-2 py-1 rounded-lg bg-black/40 border border-white/10 flex items-center justify-between text-[10px]">
+                      <span className="text-neutral-400">
+                        {micEnabled ? 'Cao độ trực tiếp:' : 'Micro đang tắt'}
+                      </span>
+                      <span className="font-mono font-semibold text-fuchsia-200">
+                        {!micEnabled
+                          ? 'Hãy bật Micro'
+                          : pitchTelemetry?.voiced
+                            ? `${pitchTelemetry.detectedNote} (${Math.round(pitchTelemetry.detectedFreq)}Hz) → ${pitchTelemetry.targetNote}`
+                            : `${autoTune.key} ${SCALE_DEFINITIONS[autoTune.scale].shortLabel} • Chờ giọng...`}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-[74px_1fr] gap-1.5">
+                      <select
+                        value={autoTune.key}
+                        onChange={(e) => updateAutoTune({ key: e.target.value as MusicalKey })}
+                        aria-label="Tone gốc (Key)"
+                        className="bg-[#1b1526] border border-fuchsia-400/25 rounded-lg px-2 py-1 text-[11px] text-white outline-none focus:border-fuchsia-400"
+                      >
+                        {MUSICAL_KEYS.map((k) => (
+                          <option key={k} value={k}>
+                            Tone {k}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        value={autoTune.scale}
+                        onChange={(e) => updateAutoTune({ scale: e.target.value as ScaleType })}
+                        aria-label="Âm giai (Scale)"
+                        className="bg-[#1b1526] border border-fuchsia-400/25 rounded-lg px-2 py-1 text-[11px] text-white outline-none focus:border-fuchsia-400"
+                      >
+                        {(Object.keys(SCALE_DEFINITIONS) as ScaleType[]).map((s) => (
+                          <option key={s} value={s}>
+                            {SCALE_DEFINITIONS[s].label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <label className="flex items-center justify-between gap-2 text-[11px]">
+                      <span className="text-fuchsia-200/90 w-24 shrink-0">Retune Speed</span>
+                      <input
+                        type="range"
+                        min={0}
+                        max={80}
+                        step={5}
+                        value={autoTune.retuneSpeedMs}
+                        onChange={(e) =>
+                          updateAutoTune({ retuneSpeedMs: parseFloat(e.target.value) })
+                        }
+                        className="flex-1 accent-fuchsia-400"
+                      />
+                      <span className="w-16 text-right font-mono text-[10px] text-fuchsia-200">
+                        {autoTune.retuneSpeedMs === 0 ? '0ms (T-Pain)' : `${autoTune.retuneSpeedMs}ms`}
+                      </span>
+                    </label>
+
+                    <div className="flex items-center gap-2 text-[11px]">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          updateAutoTune({ formantPreserve: !autoTune.formantPreserve })
+                        }
+                        className={`flex-1 py-1 px-2 rounded-lg border flex items-center justify-between text-[10px] font-medium transition ${
+                          autoTune.formantPreserve
+                            ? 'bg-emerald-500/20 border-emerald-400/35 text-emerald-200'
+                            : 'bg-white/5 border-white/10 text-neutral-400 hover:bg-white/10'
+                        }`}
+                      >
+                        <span>Giữ Formant (Tự nhiên)</span>
+                        <span className="font-mono font-bold">
+                          {autoTune.formantPreserve ? 'BẬT' : 'TẮT'}
+                        </span>
+                      </button>
+                    </div>
+
+                    <label className="flex items-center justify-between gap-2 text-[11px]">
+                      <span className="text-fuchsia-200/90 w-24 shrink-0">Độ trộn (Mix)</span>
+                      <input
+                        type="range"
+                        min={0}
+                        max={1}
+                        step={0.05}
+                        value={autoTune.mix}
+                        onChange={(e) => updateAutoTune({ mix: parseFloat(e.target.value) })}
+                        className="flex-1 accent-fuchsia-400"
+                      />
+                      <span className="w-10 text-right font-mono text-[10px] text-fuchsia-200">
+                        {Math.round(autoTune.mix * 100)}%
+                      </span>
+                    </label>
+                  </>
+                )}
               </div>
 
               {/* Focused Mixer Sliders */}
