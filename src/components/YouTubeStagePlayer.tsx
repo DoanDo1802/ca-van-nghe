@@ -1,61 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { ScreenProjectionData, StageMediaState } from '../engine/runtime/StageAudioManager';
 import { DebugLogger } from '../utils/debugLogger';
-
-interface YTPlayerInstance {
-  loadVideoById: (opts: { videoId: string; suggestedQuality?: string }) => void;
-  cueVideoById?: (opts: { videoId: string; startSeconds?: number; suggestedQuality?: string }) => void;
-  playVideo: () => void;
-  pauseVideo: () => void;
-  mute: () => void;
-  unMute: () => void;
-  setVolume: (vol: number) => void;
-  setPlaybackQuality: (quality: string) => void;
-  getDuration?: () => number;
-  getCurrentTime?: () => number;
-  getVideoData?: () => { isLive?: boolean; video_id?: string; title?: string };
-  seekTo?: (seconds: number, allowSeekAhead: boolean) => void;
-  destroy: () => void;
-}
-
-declare global {
-  interface Window {
-    YT?: {
-      Player: new (
-        el: HTMLElement | string,
-        opts: {
-          width?: string | number;
-          height?: string | number;
-          videoId: string;
-          playerVars?: Record<string, string | number>;
-          events?: {
-            onReady?: (e: { target: YTPlayerInstance }) => void;
-            onStateChange?: (e: { target: YTPlayerInstance; data: number }) => void;
-            onError?: (e: { data: number }) => void;
-          };
-        }
-      ) => YTPlayerInstance;
-    };
-    onYouTubeIframeAPIReady?: () => void;
-  }
-}
-
-let ytApiPromise: Promise<void> | null = null;
-function loadYouTubeIframeApi(): Promise<void> {
-  if (window.YT?.Player) return Promise.resolve();
-  if (ytApiPromise) return ytApiPromise;
-  ytApiPromise = new Promise<void>((resolve) => {
-    const prev = window.onYouTubeIframeAPIReady;
-    window.onYouTubeIframeAPIReady = () => {
-      prev?.();
-      resolve();
-    };
-    const tag = document.createElement('script');
-    tag.src = 'https://www.youtube.com/iframe_api';
-    document.head.appendChild(tag);
-  });
-  return ytApiPromise;
-}
+import { loadYouTubeIframeApi, type YTPlayerInstance } from '../utils/youtubeApi';
 
 function getYouTubeErrorMessage(code: number): string {
   switch (code) {

@@ -105,6 +105,7 @@ class KaraokeAudioEngine {
   private micStream: MediaStream | null = null;
   private micSource: MediaStreamAudioSourceNode | null = null;
   private micBroadcastDest: MediaStreamAudioDestinationNode | null = null;
+  private broadcastLimiter: DynamicsCompressorNode | null = null;
   private localMonitorGain: GainNode | null = null;
   private localMonitorEnabled = true;
 
@@ -148,10 +149,19 @@ class KaraokeAudioEngine {
       this.musicAnalyser.connect(this.masterGain);
 
       this.micBroadcastDest = this.ctx.createMediaStreamDestination();
+      const broadcastLimiter = this.ctx.createDynamicsCompressor();
+      broadcastLimiter.threshold.value = -2;
+      broadcastLimiter.knee.value = 0;
+      broadcastLimiter.ratio.value = 12;
+      broadcastLimiter.attack.value = 0.002;
+      broadcastLimiter.release.value = 0.08;
+      broadcastLimiter.connect(this.micBroadcastDest);
+      this.broadcastLimiter = broadcastLimiter;
+
       this.broadcastMusicGain = this.ctx.createGain();
       this.broadcastMusicGain.gain.value = this.audienceMusicVol;
       this.musicGain.connect(this.broadcastMusicGain);
-      this.broadcastMusicGain.connect(this.micBroadcastDest);
+      this.broadcastMusicGain.connect(broadcastLimiter);
     }
     if (this.ctx.state === 'suspended') {
       void this.ctx.resume();
@@ -217,9 +227,9 @@ class KaraokeAudioEngine {
       this.micStream = stream;
       this.micSource = ctx.createMediaStreamSource(stream);
 
-      // 1. Preamp Gain (high sensitivity)
-      this.micGain = ctx.createGain();
-      this.micGain.gain.value = micSensitivity;
+      // 1. Fixed gentle Preamp Gain before EQ & Compressor
+      const preamp = ctx.createGain();
+      preamp.gain.value = 2.6;
 
       // 2. Vocal Sculpting EQ: High-pass (85Hz) + Warmth (220Hz) + Presence Clarity (3.2kHz)
       const hp = ctx.createBiquadFilter();
@@ -240,30 +250,34 @@ class KaraokeAudioEngine {
       presence.gain.value = trebleDb;
       this.micPresenceEq = presence;
 
-      // 3. Vocal Compressor (evens out quiet & loud singing, prevents clipping)
+      // 3. Gentle Vocal Compressor (keeps dynamics natural instead of brickwall clipping)
       const comp = ctx.createDynamicsCompressor();
-      comp.threshold.value = -24;
-      comp.knee.value = 18;
-      comp.ratio.value = 4.5;
-      comp.attack.value = 0.004;
-      comp.release.value = 0.16;
+      comp.threshold.value = -18;
+      comp.knee.value = 16;
+      comp.ratio.value = 3.0;
+      comp.attack.value = 0.005;
+      comp.release.value = 0.18;
 
       this.micAnalyser = ctx.createAnalyser();
       this.micAnalyser.fftSize = 256;
       this.micAnalyser.smoothingTimeConstant = 0.75;
 
-      // 4. Studio Vocal Chain: Make-up Boost + Dry + Warm Hall Reverb + Stereo Karaoke Echo
+      // 4. Post-Compressor Output Level (controlled by singer's Mic % slider) + Studio Reverb/Echo
       const makeup = ctx.createGain();
-      makeup.gain.value = 2.0;
+      makeup.gain.value = 1.15;
       comp.connect(makeup);
 
+      this.micGain = ctx.createGain();
+      this.micGain.gain.value = Math.max(0, Math.min(2.5, micSensitivity));
+      makeup.connect(this.micGain);
+
       const dry = ctx.createGain();
-      dry.gain.value = 1.05;
+      dry.gain.value = 0.95;
 
       const convolver = ctx.createConvolver();
       convolver.buffer = this.createReverbImpulse(ctx, 1.65, 2.5);
       const wet = ctx.createGain();
-      wet.gain.value = echoAmount * 0.9;
+      wet.gain.value = echoAmount * 0.85;
       this.micWetGain = wet;
 
       const delay = ctx.createDelay(0.5);
@@ -274,29 +288,29 @@ class KaraokeAudioEngine {
       const delayFeedback = ctx.createGain();
       delayFeedback.gain.value = 0.28;
       const delayOut = ctx.createGain();
-      delayOut.gain.value = echoAmount * 0.5;
+      delayOut.gain.value = echoAmount * 0.45;
       this.micDelayGain = delayOut;
 
       this.micSource.connect(hp);
       hp.connect(warmth);
       warmth.connect(presence);
-      presence.connect(this.micGain);
-      this.micGain.connect(comp);
-      comp.connect(this.micAnalyser);
+      presence.connect(preamp);
+      preamp.connect(comp);
+      this.micGain.connect(this.micAnalyser);
 
       const monitorGain = ctx.createGain();
       monitorGain.gain.value = this.localMonitorEnabled ? 1.0 : 0.0;
       monitorGain.connect(this.masterGain!);
       this.localMonitorGain = monitorGain;
 
-      makeup.connect(dry);
+      this.micGain.connect(dry);
       dry.connect(monitorGain);
 
-      makeup.connect(convolver);
+      this.micGain.connect(convolver);
       convolver.connect(wet);
       wet.connect(monitorGain);
 
-      makeup.connect(delay);
+      this.micGain.connect(delay);
       delay.connect(delayFilter);
       delayFilter.connect(delayFeedback);
       delayFeedback.connect(delay);
@@ -305,20 +319,32 @@ class KaraokeAudioEngine {
 
       const broadcastDest =
         this.micBroadcastDest ?? ctx.createMediaStreamDestination();
+      let broadcastInput: AudioNode = this.broadcastLimiter ?? broadcastDest;
+      if (!this.broadcastLimiter) {
+        const limiter = ctx.createDynamicsCompressor();
+        limiter.threshold.value = -2;
+        limiter.knee.value = 0;
+        limiter.ratio.value = 12;
+        limiter.attack.value = 0.002;
+        limiter.release.value = 0.08;
+        limiter.connect(broadcastDest);
+        this.broadcastLimiter = limiter;
+        broadcastInput = limiter;
+      }
       if (!this.micBroadcastDest && this.musicGain) {
         if (!this.broadcastMusicGain) {
           this.broadcastMusicGain = ctx.createGain();
           this.broadcastMusicGain.gain.value = this.audienceMusicVol;
         }
         this.musicGain.connect(this.broadcastMusicGain);
-        this.broadcastMusicGain.connect(broadcastDest);
+        this.broadcastMusicGain.connect(broadcastInput);
       }
       this.micBroadcastDest = broadcastDest;
-      dry.connect(broadcastDest);
-      wet.connect(broadcastDest);
-      delayOut.connect(broadcastDest);
+      dry.connect(broadcastInput);
+      wet.connect(broadcastInput);
+      delayOut.connect(broadcastInput);
 
-      this.micNodes = [hp, warmth, presence, comp, makeup, dry, convolver, wet, delay, delayFilter, delayFeedback, delayOut, monitorGain];
+      this.micNodes = [preamp, hp, warmth, presence, comp, makeup, dry, convolver, wet, delay, delayFilter, delayFeedback, delayOut, monitorGain];
       return true;
     } catch {
       return false;
@@ -392,7 +418,14 @@ class KaraokeAudioEngine {
   }
 
   setMicVolume(v: number): void {
-    if (this.micGain) this.micGain.gain.value = Math.max(0.2, Math.min(7.0, v));
+    const clamped = Math.max(0, Math.min(2.5, v));
+    if (this.micGain && this.ctx) {
+      const now = this.ctx.currentTime;
+      this.micGain.gain.cancelScheduledValues(now);
+      this.micGain.gain.setTargetAtTime(clamped, now, 0.02);
+    } else if (this.micGain) {
+      this.micGain.gain.value = clamped;
+    }
   }
 
   setEchoAmount(v: number): void {

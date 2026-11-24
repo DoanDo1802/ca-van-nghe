@@ -62,6 +62,12 @@ interface SpatialVoiceSink {
   panner: PannerNode | null;
 }
 
+function toPerceptualVoiceGain(volRatio: number): number {
+  const clamped = Math.max(0, Math.min(1.5, volRatio));
+  if (clamped <= 0) return 0;
+  return 0.45 * Math.pow(clamped, 2.0);
+}
+
 /**
  * Manages WebRTC P2P voice streaming over Supabase Realtime signaling (`rtc:signal`)
  * with 3D HRTF Spatial Audio (`PannerNode` + `AudioListener`) so audience members
@@ -86,7 +92,7 @@ export class KaraokeVoiceManager {
   private spatialCtx: AudioContext | null = null;
   private listenerInitialized = false;
   private audienceMuted = false;
-  private audienceVolume = 1.0;
+  private audienceVolume = toPerceptualVoiceGain(1.0);
 
   private constructor() {}
 
@@ -166,7 +172,7 @@ export class KaraokeVoiceManager {
   }
 
   setAudienceVolume(vol: number): void {
-    this.audienceVolume = Math.max(0, Math.min(1.5, vol));
+    this.audienceVolume = toPerceptualVoiceGain(vol);
     this.syncAllSinkGains();
   }
 
@@ -236,7 +242,9 @@ export class KaraokeVoiceManager {
     for (const sink of this.voiceSinks.values()) {
       if (sink.gain && ctxRunning && this.spatialCtx) {
         sink.audioEl.muted = true;
-        sink.gain.gain.setTargetAtTime(targetGain, this.spatialCtx.currentTime, 0.03);
+        const now = this.spatialCtx.currentTime;
+        sink.gain.gain.cancelScheduledValues(now);
+        sink.gain.gain.setTargetAtTime(targetGain, now, 0.02);
       } else {
         if (sink.gain) sink.gain.gain.value = 0;
         sink.audioEl.muted = this.audienceMuted;

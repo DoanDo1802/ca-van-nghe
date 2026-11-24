@@ -79,7 +79,11 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
   const [style, setStyle] = useState<'chill' | 'dance'>('chill');
   const [micLevel, setMicLevel] = useState(0);
 
-  const micPercentToGain = (pct: number) => (Math.max(0, Math.min(150, pct)) / 100) * 3.6;
+  const micPercentToGain = (pct: number) => {
+    const clamped = Math.max(0, Math.min(150, pct));
+    if (clamped <= 0) return 0;
+    return Math.pow(clamped / 100, 1.8);
+  };
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const ytIframeRef = useRef<HTMLIFrameElement>(null);
