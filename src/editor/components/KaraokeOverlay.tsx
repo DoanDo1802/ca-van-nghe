@@ -1,6 +1,9 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import {
+  Circle,
+  Download,
   GripHorizontal,
+  Headphones,
   ListMusic,
   Loader2,
   LogOut,
@@ -15,12 +18,14 @@ import {
   Search,
   SlidersHorizontal,
   Sparkles,
+  Square,
   Trash2,
   Upload,
   X,
   Youtube,
 } from 'lucide-react';
 import { KARAOKE_SONGS, karaokeAudio, type KaraokeSong } from '../../utils/karaokeAudio';
+import { karaokeRecorder } from '../../utils/karaokeRecorder';
 import { loungeAudio } from '../../utils/audio';
 import { MultiplayerManager } from '../../network/MultiplayerManager';
 import { KaraokeVoiceManager } from '../../network/KaraokeVoiceManager';
@@ -68,6 +73,9 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
   const [micError, setMicError] = useState<string | null>(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isMixerOpen, setIsMixerOpen] = useState(false);
+  const [isRecordingsOpen, setIsRecordingsOpen] = useState(false);
+  const [recordingElapsedSec, setRecordingElapsedSec] = useState(0);
+  const recState = useSyncExternalStore(karaokeRecorder.subscribe, karaokeRecorder.getSnapshot);
   const [inputDevices, setInputDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState('');
   const [echoCancellation, setEchoCancellation] = useState(true);
@@ -311,12 +319,16 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
   useEffect(() => {
     loungeAudio.setDucked(isOpen);
     if (!isOpen) {
+      if (karaokeRecorder.getSnapshot().isRecording) {
+        void karaokeRecorder.stop();
+      }
       karaokeAudio.stop();
       karaokeAudio.disableMic();
       setMicEnabled(false);
       setMicError(null);
       setIsMenuOpen(false);
       setIsMixerOpen(false);
+      setIsRecordingsOpen(false);
       setIsFilePlaying(false);
       setYoutubeVideoId(null);
       KaraokeVoiceManager.getInstance().stopBroadcasting();
@@ -331,6 +343,56 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
     setIsPickerOpen(true);
     void enableSingerMic();
   }, [isOpen]);
+
+  useEffect(() => {
+    if (!recState.isRecording || !recState.recordingStartedAt) {
+      setRecordingElapsedSec(0);
+      return;
+    }
+    const updateElapsed = () => {
+      setRecordingElapsedSec(
+        Math.max(0, Math.floor((Date.now() - (recState.recordingStartedAt ?? Date.now())) / 1000))
+      );
+    };
+    updateElapsed();
+    const timer = window.setInterval(updateElapsed, 500);
+    return () => window.clearInterval(timer);
+  }, [recState.isRecording, recState.recordingStartedAt]);
+
+  const handleToggleRecord = async () => {
+    if (recState.isRecording) {
+      await karaokeRecorder.stop();
+      setIsMenuOpen(false);
+      setIsMixerOpen(false);
+      setIsRecordingsOpen(true);
+      return;
+    }
+    if (!karaokeRecorder.isSupported()) {
+      setMicError('Trình duyệt không hỗ trợ ghi âm MediaRecorder');
+      return;
+    }
+    if (!micEnabled) {
+      const ok = await enableSingerMic();
+      if (!ok) return;
+    }
+    const stream = karaokeAudio.getBroadcastStream();
+    if (!stream) {
+      setMicError('Chưa có luồng âm thanh Micro để ghi âm');
+      return;
+    }
+    const singerName = MultiplayerManager.getInstance().getRoomStatus().localPlayerName || 'Ca sĩ';
+    const songTitle =
+      activeSong?.title ||
+      customFileName ||
+      (youtubeVideoId ? `YouTube (${youtubeVideoId})` : 'Bản thu Karaoke');
+    karaokeRecorder.start(stream, { title: songTitle, singerName });
+  };
+
+  const formatDurationSec = (totalSec: number) => {
+    const mins = Math.floor(totalSec / 60);
+    const secs = totalSec % 60;
+    return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  };
 
   useEffect(() => {
     if (!isOpen || !micEnabled) {
@@ -787,24 +849,76 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
         )}
 
         <div className="pointer-events-auto fixed top-[max(0.75rem,env(safe-area-inset-top))] right-3 z-40">
-          <button
-            type="button"
-            onClick={() => {
-              if (isMixerOpen) {
-                setIsMixerOpen(false);
-                setIsMenuOpen(true);
-              } else {
-                setIsMenuOpen((o) => !o);
-              }
-            }}
-            aria-label="Mở menu Karaoke"
-            className="relative w-10 h-10 rounded-xl bg-[#121212]/90 hover:bg-[#1e1e1e] border border-white/15 text-white backdrop-blur-xl shadow-xl flex items-center justify-center transition"
-          >
-            {isMenuOpen || isMixerOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
-            {micEnabled && (
-              <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void handleToggleRecord()}
+              title={recState.isRecording ? 'Dừng ghi âm & nghe lại' : 'Ghi âm giọng hát'}
+              className={`h-10 px-3 rounded-xl border backdrop-blur-xl shadow-xl flex items-center gap-2 text-xs font-semibold transition ${
+                recState.isRecording
+                  ? 'bg-rose-600/90 hover:bg-rose-500 border-rose-300/40 text-white'
+                  : 'bg-[#121212]/90 hover:bg-[#1e1e1e] border-white/15 text-neutral-100'
+              }`}
+            >
+              {recState.isRecording ? (
+                <>
+                  <Square className="w-3.5 h-3.5 fill-current animate-pulse" />
+                  <span className="font-mono">{formatDurationSec(recordingElapsedSec)}</span>
+                </>
+              ) : (
+                <>
+                  <Circle className="w-3.5 h-3.5 text-rose-400 fill-rose-400" />
+                  <span className="hidden sm:inline">Ghi âm</span>
+                </>
+              )}
+            </button>
+
+            {recState.recordings.length > 0 && !recState.isRecording && (
+              <button
+                type="button"
+                onClick={() => {
+                  setIsMenuOpen(false);
+                  setIsMixerOpen(false);
+                  setIsRecordingsOpen((v) => !v);
+                }}
+                title="Nghe lại & tải về bản thu"
+                className={`h-10 px-2.5 rounded-xl border backdrop-blur-xl shadow-xl flex items-center gap-1.5 text-xs font-medium transition ${
+                  isRecordingsOpen
+                    ? 'bg-amber-500/25 border-amber-400/50 text-amber-200'
+                    : 'bg-[#121212]/90 hover:bg-[#1e1e1e] border-white/15 text-neutral-100'
+                }`}
+              >
+                <Headphones className="w-3.5 h-3.5 text-amber-400" />
+                <span className="px-1.5 py-0.5 rounded-full bg-white/15 text-[10px] font-mono">
+                  {recState.recordings.length}
+                </span>
+              </button>
             )}
-          </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                if (isMixerOpen || isRecordingsOpen) {
+                  setIsMixerOpen(false);
+                  setIsRecordingsOpen(false);
+                  setIsMenuOpen(true);
+                } else {
+                  setIsMenuOpen((o) => !o);
+                }
+              }}
+              aria-label="Mở menu Karaoke"
+              className="relative w-10 h-10 rounded-xl bg-[#121212]/90 hover:bg-[#1e1e1e] border border-white/15 text-white backdrop-blur-xl shadow-xl flex items-center justify-center transition"
+            >
+              {isMenuOpen || isMixerOpen || isRecordingsOpen ? (
+                <X className="w-4 h-4" />
+              ) : (
+                <Menu className="w-4 h-4" />
+              )}
+              {micEnabled && (
+                <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              )}
+            </button>
+          </div>
 
           {isMenuOpen && (
             <div className="absolute right-0 top-full mt-2 w-56 rounded-2xl bg-[#121212]/95 backdrop-blur-2xl border border-white/15 shadow-2xl p-1.5 space-y-1 text-xs text-neutral-200">
@@ -882,6 +996,7 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
                 type="button"
                 onClick={() => {
                   setIsMenuOpen(false);
+                  setIsRecordingsOpen(false);
                   setIsMixerOpen(true);
                   void karaokeAudio.listInputDevices().then(setInputDevices);
                 }}
@@ -892,6 +1007,49 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
                   <span>Âm thanh</span>
                 </span>
                 <span className="text-[11px] text-neutral-400">Mixer</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setIsMenuOpen(false);
+                  void handleToggleRecord();
+                }}
+                className={`w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl font-medium transition ${
+                  recState.isRecording
+                    ? 'bg-rose-600/30 text-rose-200 border border-rose-400/35'
+                    : 'hover:bg-white/10 text-neutral-200'
+                }`}
+              >
+                <span className="flex items-center gap-2">
+                  {recState.isRecording ? (
+                    <Square className="w-3.5 h-3.5 fill-current" />
+                  ) : (
+                    <Circle className="w-3.5 h-3.5 text-rose-400 fill-rose-400" />
+                  )}
+                  <span>{recState.isRecording ? 'Dừng ghi âm' : 'Ghi âm'}</span>
+                </span>
+                <span className="text-[11px] font-mono text-neutral-400">
+                  {recState.isRecording ? formatDurationSec(recordingElapsedSec) : 'REC'}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setIsMenuOpen(false);
+                  setIsMixerOpen(false);
+                  setIsRecordingsOpen(true);
+                }}
+                className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl hover:bg-white/10 font-medium text-neutral-200 transition"
+              >
+                <span className="flex items-center gap-2">
+                  <Headphones className="w-3.5 h-3.5 text-amber-400" />
+                  <span>Nghe lại & Tải về</span>
+                </span>
+                <span className="px-1.5 py-0.5 rounded-full bg-white/10 text-[10px] font-mono text-neutral-300">
+                  {recState.recordings.length}
+                </span>
               </button>
 
               <div className="border-t border-white/10 my-1" />
@@ -907,6 +1065,74 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
                 <LogOut className="w-3.5 h-3.5" />
                 <span>Xuống sân khấu</span>
               </button>
+            </div>
+          )}
+
+          {isRecordingsOpen && (
+            <div className="absolute right-0 top-full mt-2 z-40 w-[min(340px,calc(100vw-1.5rem))] max-h-[75dvh] overflow-y-auto rounded-2xl bg-[#121212]/95 backdrop-blur-2xl border border-white/15 shadow-2xl p-3.5 text-xs text-neutral-200 space-y-3">
+              <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                <span className="font-semibold text-white flex items-center gap-1.5">
+                  <Headphones className="w-3.5 h-3.5 text-amber-400" />
+                  Bản thu âm & Nghe lại
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setIsRecordingsOpen(false)}
+                  className="text-neutral-400 hover:text-white"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              {recState.recordings.length === 0 ? (
+                <div className="py-5 text-center space-y-2 text-neutral-400">
+                  <p>Chưa có bản thu nào.</p>
+                  <p className="text-[11px] text-neutral-500">
+                    Nhấn nút <span className="text-rose-400 font-semibold">Ghi âm</span> khi hát để lưu lại giọng hát kèm hiệu ứng Echo/Reverb.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-2.5">
+                  {recState.recordings.map((rec) => {
+                    const sec = Math.max(1, Math.round(rec.durationMs / 1000));
+                    const sizeKb = Math.max(1, Math.round(rec.sizeBytes / 1024));
+                    return (
+                      <div
+                        key={rec.id}
+                        className="rounded-xl bg-white/5 border border-white/10 p-2.5 space-y-2"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="font-medium text-white truncate">{rec.title}</p>
+                            <p className="text-[11px] text-neutral-400 truncate">
+                              {rec.singerName} • {formatDurationSec(sec)} • {sizeKb} KB
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => karaokeRecorder.downloadRecording(rec)}
+                              title="Tải về máy"
+                              className="p-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/35 text-amber-200 border border-amber-400/30 transition"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => karaokeRecorder.deleteRecording(rec.id)}
+                              title="Xóa bản thu"
+                              className="p-1.5 rounded-lg bg-white/5 hover:bg-rose-500/25 text-neutral-400 hover:text-rose-200 border border-white/10 transition"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                        <audio controls src={rec.url} className="w-full h-8" />
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
 
