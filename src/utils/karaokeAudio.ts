@@ -118,6 +118,8 @@ class KaraokeAudioEngine {
   private autoTuneTelemetryListeners = new Set<(t: AutoTuneTelemetry) => void>();
   private micBroadcastDest: MediaStreamAudioDestinationNode | null = null;
   private broadcastLimiter: DynamicsCompressorNode | null = null;
+  private micRecordBus: GainNode | null = null;
+  private recordMicGain: GainNode | null = null;
   private localMonitorGain: GainNode | null = null;
   private localMonitorEnabled = true;
 
@@ -174,6 +176,9 @@ class KaraokeAudioEngine {
       this.broadcastMusicGain.gain.value = this.audienceMusicVol;
       this.musicGain.connect(this.broadcastMusicGain);
       this.broadcastMusicGain.connect(broadcastLimiter);
+
+      this.micRecordBus = this.ctx.createGain();
+      this.micRecordBus.gain.value = 1.0;
     }
     if (this.ctx.state === 'suspended') {
       void this.ctx.resume();
@@ -390,6 +395,12 @@ class KaraokeAudioEngine {
       wet.connect(broadcastInput);
       delayOut.connect(broadcastInput);
 
+      if (this.micRecordBus) {
+        dry.connect(this.micRecordBus);
+        wet.connect(this.micRecordBus);
+        delayOut.connect(this.micRecordBus);
+      }
+
       this.micNodes = [
         preamp,
         hp,
@@ -452,6 +463,11 @@ class KaraokeAudioEngine {
     if (this.localMonitorGain && this.ctx) {
       this.localMonitorGain.gain.setTargetAtTime(enabled ? 1.0 : 0.0, this.ctx.currentTime, 0.02);
     }
+    if (this.recordMicGain && this.ctx) {
+      // When local monitor is ON, tab audio capture already includes mic via ctx.destination.
+      // Mute direct mic in the recording mix to prevent double-voice phasing.
+      this.recordMicGain.gain.setTargetAtTime(enabled ? 0.0 : 1.0, this.ctx.currentTime, 0.02);
+    }
   }
 
   isLocalMonitorEnabled(): boolean {
@@ -463,6 +479,87 @@ class KaraokeAudioEngine {
       this.ensureContext();
     }
     return this.micBroadcastDest?.stream ?? this.micStream;
+  }
+
+  /**
+   * Builds a recording MediaStream combining the processed mic and any backing music.
+   * When `tabAudioStream` is provided (captured via getDisplayMedia for YouTube),
+   * it mixes tab audio with mic while avoiding mic doubling when local monitor is active.
+   */
+  createRecordingStream(
+    tabAudioStream?: MediaStream | null
+  ): { stream: MediaStream; cleanup: () => void } | null {
+    if (!tabAudioStream || tabAudioStream.getAudioTracks().length === 0) {
+      const broadcastStream = this.getBroadcastStream();
+      if (!broadcastStream) return null;
+      return { stream: broadcastStream, cleanup: () => {} };
+    }
+
+    const ctx = this.ensureContext();
+    const recordDest = ctx.createMediaStreamDestination();
+    const recordLimiter = ctx.createDynamicsCompressor();
+    recordLimiter.threshold.value = -2;
+    recordLimiter.knee.value = 0;
+    recordLimiter.ratio.value = 12;
+    recordLimiter.attack.value = 0.002;
+    recordLimiter.release.value = 0.08;
+    recordLimiter.connect(recordDest);
+
+    const tabSource = ctx.createMediaStreamSource(tabAudioStream);
+    const tabGain = ctx.createGain();
+    tabGain.gain.value = 1.0;
+    tabSource.connect(tabGain);
+    tabGain.connect(recordLimiter);
+
+    const recordMicGain = ctx.createGain();
+    recordMicGain.gain.value = this.localMonitorEnabled ? 0.0 : 1.0;
+    this.recordMicGain = recordMicGain;
+    if (this.micRecordBus) {
+      this.micRecordBus.connect(recordMicGain);
+    }
+    recordMicGain.connect(recordLimiter);
+
+    const audioTrack = tabAudioStream.getAudioTracks()[0];
+    const handleTabEnded = () => {
+      if (this.recordMicGain && this.ctx) {
+        this.recordMicGain.gain.setTargetAtTime(1.0, this.ctx.currentTime, 0.02);
+      }
+    };
+    audioTrack?.addEventListener('ended', handleTabEnded);
+
+    let cleaned = false;
+    const cleanup = () => {
+      if (cleaned) return;
+      cleaned = true;
+      audioTrack?.removeEventListener('ended', handleTabEnded);
+      if (this.recordMicGain === recordMicGain) {
+        this.recordMicGain = null;
+      }
+      try {
+        if (this.micRecordBus) {
+          this.micRecordBus.disconnect(recordMicGain);
+        }
+      } catch {
+        // ignore if already disconnected
+      }
+      try {
+        tabSource.disconnect();
+        tabGain.disconnect();
+        recordMicGain.disconnect();
+        recordLimiter.disconnect();
+      } catch {
+        // ignore
+      }
+      tabAudioStream.getTracks().forEach((t) => {
+        try {
+          t.stop();
+        } catch {
+          // ignore
+        }
+      });
+    };
+
+    return { stream: recordDest.stream, cleanup };
   }
 
   isMicActive(): boolean {

@@ -390,8 +390,37 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
       const ok = await enableSingerMic();
       if (!ok) return;
     }
-    const stream = karaokeAudio.getBroadcastStream();
-    if (!stream) {
+
+    let tabAudioStream: MediaStream | null = null;
+    if (youtubeVideoId && navigator.mediaDevices?.getDisplayMedia) {
+      try {
+        const displayStream = await navigator.mediaDevices.getDisplayMedia({
+          video: true,
+          audio: {
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false,
+            suppressLocalAudioPlayback: false,
+          } as MediaTrackConstraints,
+          preferCurrentTab: true,
+          selfBrowserSurface: 'include',
+          systemAudio: 'include',
+        } as DisplayMediaStreamOptions);
+        displayStream.getVideoTracks().forEach((t) => t.stop());
+        if (displayStream.getAudioTracks().length > 0) {
+          tabAudioStream = displayStream;
+        } else {
+          displayStream.getTracks().forEach((t) => t.stop());
+          setMicError('Chưa bật "Chia sẻ âm thanh tab" — đang ghi âm chỉ có giọng hát.');
+        }
+      } catch {
+        setMicError('Chưa chia sẻ âm thanh tab — đang ghi âm chỉ có giọng hát.');
+      }
+    }
+
+    const recSession = karaokeAudio.createRecordingStream(tabAudioStream);
+    if (!recSession) {
+      tabAudioStream?.getTracks().forEach((t) => t.stop());
       setMicError('Chưa có luồng âm thanh Micro để ghi âm');
       return;
     }
@@ -400,7 +429,15 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
       activeSong?.title ||
       customFileName ||
       (youtubeVideoId ? `YouTube (${youtubeVideoId})` : 'Bản thu Karaoke');
-    karaokeRecorder.start(stream, { title: songTitle, singerName });
+    const started = karaokeRecorder.start(
+      recSession.stream,
+      { title: songTitle, singerName },
+      recSession.cleanup
+    );
+    if (!started) {
+      recSession.cleanup();
+      setMicError('Không thể bắt đầu ghi âm trên trình duyệt này');
+    }
   };
 
   const formatDurationSec = (totalSec: number) => {
@@ -1192,7 +1229,7 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
                 <div className="py-5 text-center space-y-2 text-neutral-400">
                   <p>Chưa có bản thu nào.</p>
                   <p className="text-[11px] text-neutral-500">
-                    Nhấn nút <span className="text-rose-400 font-semibold">Ghi âm</span> khi hát để lưu lại giọng hát kèm hiệu ứng Echo/Reverb.
+                    Nhấn nút <span className="text-rose-400 font-semibold">Ghi âm</span> khi hát để lưu lại giọng hát kèm nhạc nền & hiệu ứng Echo/Reverb.
                   </p>
                 </div>
               ) : (

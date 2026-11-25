@@ -63,6 +63,7 @@ class KaraokeRecorderManager {
   private recordings: KaraokeRecording[] = [];
   private listeners = new Set<() => void>();
   private stopResolvers: Array<(rec: KaraokeRecording | null) => void> = [];
+  private onCleanup: (() => void) | null = null;
   private snapshot: KaraokeRecorderSnapshot = {
     isRecording: false,
     recordingStartedAt: null,
@@ -97,7 +98,23 @@ class KaraokeRecorderManager {
     return typeof window !== 'undefined' && typeof MediaRecorder !== 'undefined';
   }
 
-  start(stream: MediaStream, meta: { title: string; singerName: string }): boolean {
+  private runCleanup(): void {
+    const fn = this.onCleanup;
+    this.onCleanup = null;
+    if (fn) {
+      try {
+        fn();
+      } catch {
+        // ignore cleanup errors
+      }
+    }
+  }
+
+  start(
+    stream: MediaStream,
+    meta: { title: string; singerName: string },
+    onCleanup?: () => void
+  ): boolean {
     if (!this.isSupported() || this.isRecording) return false;
     if (!stream || stream.getAudioTracks().length === 0) return false;
 
@@ -107,6 +124,7 @@ class KaraokeRecorderManager {
         ? new MediaRecorder(stream, { mimeType })
         : new MediaRecorder(stream);
 
+      this.onCleanup = onCleanup ?? null;
       this.chunks = [];
       this.recorder = recorder;
       this.isRecording = true;
@@ -148,6 +166,7 @@ class KaraokeRecorderManager {
         }
 
         this.currentTitle = '';
+        this.runCleanup();
         this.emit();
 
         const resolvers = this.stopResolvers.splice(0, this.stopResolvers.length);
@@ -162,6 +181,7 @@ class KaraokeRecorderManager {
         this.recorder = null;
         this.chunks = [];
         this.currentTitle = '';
+        this.runCleanup();
         this.emit();
         const resolvers = this.stopResolvers.splice(0, this.stopResolvers.length);
         for (const resolve of resolvers) {
@@ -177,6 +197,7 @@ class KaraokeRecorderManager {
       this.recordingStartedAt = null;
       this.recorder = null;
       this.chunks = [];
+      this.runCleanup();
       return false;
     }
   }
