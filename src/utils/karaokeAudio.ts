@@ -1,5 +1,6 @@
 import {
   DEFAULT_AUTOTUNE_CONFIG,
+  KeyToneMatcher,
   createRapAutoTuneNode,
   midiToNoteName,
   postAutoTuneConfig,
@@ -104,6 +105,10 @@ class KaraokeAudioEngine {
   private broadcastMusicGain: GainNode | null = null;
   private audienceMusicVol = 0.6;
   private musicAnalyser: AnalyserNode | null = null;
+  private keyAnalyser: AnalyserNode | null = null;
+  private keyFreqBuf: Uint8Array<ArrayBuffer> | null = null;
+  private keyMatcher = new KeyToneMatcher();
+  private keyPollTimer: number | null = null;
   private micAnalyser: AnalyserNode | null = null;
   private micGain: GainNode | null = null;
   private micWarmthEq: BiquadFilterNode | null = null;
@@ -116,6 +121,7 @@ class KaraokeAudioEngine {
   private autoTuneNode: AudioWorkletNode | null = null;
   private autoTuneConfig: AutoTuneConfig = { ...DEFAULT_AUTOTUNE_CONFIG };
   private autoTuneTelemetryListeners = new Set<(t: AutoTuneTelemetry) => void>();
+  private autoTuneConfigListeners = new Set<(cfg: AutoTuneConfig) => void>();
   private micBroadcastDest: MediaStreamAudioDestinationNode | null = null;
   private broadcastLimiter: DynamicsCompressorNode | null = null;
   private micRecordBus: GainNode | null = null;
@@ -161,6 +167,12 @@ class KaraokeAudioEngine {
       this.musicAnalyser.fftSize = 128;
       this.musicGain.connect(this.musicAnalyser);
       this.musicAnalyser.connect(this.masterGain);
+
+      this.keyAnalyser = this.ctx.createAnalyser();
+      this.keyAnalyser.fftSize = 4096;
+      this.keyAnalyser.smoothingTimeConstant = 0.65;
+      this.keyFreqBuf = new Uint8Array(this.keyAnalyser.frequencyBinCount);
+      this.musicGain.connect(this.keyAnalyser);
 
       this.micBroadcastDest = this.ctx.createMediaStreamDestination();
       const broadcastLimiter = this.ctx.createDynamicsCompressor();
@@ -327,9 +339,14 @@ class KaraokeAudioEngine {
           } | null;
           if (!data || data.type !== 'telemetry') return;
           const voiced = Boolean(data.voiced);
+          const detectedFreq = voiced ? Number(data.detectedFreq) || 0 : 0;
+          if (voiced && detectedFreq > 0 && this.autoTuneConfig.enabled && this.autoTuneConfig.autoMatchTone) {
+            this.keyMatcher.feedFreq(detectedFreq, 1.0);
+            this.applyAutoMatchedTone();
+          }
           const telemetry: AutoTuneTelemetry = {
             voiced,
-            detectedFreq: voiced ? Number(data.detectedFreq) || 0 : 0,
+            detectedFreq,
             targetFreq: voiced ? Number(data.targetFreq) || 0 : 0,
             detectedNote: voiced ? midiToNoteName(Number(data.detectedMidi) || 0) : '--',
             targetNote: voiced ? midiToNoteName(Number(data.targetMidi) || 0) : '--',
@@ -602,7 +619,58 @@ class KaraokeAudioEngine {
     if (this.micPresenceEq) this.micPresenceEq.gain.value = Math.max(-8, Math.min(10, trebleDb));
   }
 
+  private applyAutoMatchedTone(): void {
+    if (!this.autoTuneConfig.enabled || !this.autoTuneConfig.autoMatchTone) return;
+    const match = this.keyMatcher.estimate(this.autoTuneConfig.key, this.autoTuneConfig.scale);
+    if (!match) return;
+    if (match.key === this.autoTuneConfig.key && match.scale === this.autoTuneConfig.scale) return;
+
+    this.autoTuneConfig = {
+      ...this.autoTuneConfig,
+      key: match.key,
+      scale: match.scale,
+    };
+    if (this.autoTuneNode) {
+      postAutoTuneConfig(this.autoTuneNode, this.autoTuneConfig);
+    }
+    const snapshot = this.getAutoTuneConfig();
+    for (const cb of this.autoTuneConfigListeners) {
+      cb(snapshot);
+    }
+  }
+
+  private syncKeyPollTimer(): void {
+    const shouldPoll = this.autoTuneConfig.enabled && this.autoTuneConfig.autoMatchTone;
+    if (!shouldPoll) {
+      if (this.keyPollTimer !== null) {
+        clearInterval(this.keyPollTimer);
+        this.keyPollTimer = null;
+      }
+      return;
+    }
+    if (this.keyPollTimer !== null) return;
+    this.keyPollTimer = window.setInterval(() => {
+      if (!this.isPlaying || !this.keyAnalyser || !this.keyFreqBuf || !this.ctx) return;
+      this.keyAnalyser.getByteFrequencyData(this.keyFreqBuf);
+      const fed = this.keyMatcher.feedSpectrum(
+        this.keyFreqBuf,
+        this.ctx.sampleRate,
+        this.keyAnalyser.fftSize
+      );
+      if (fed) {
+        this.applyAutoMatchedTone();
+      }
+    }, 200);
+  }
+
   setAutoTuneConfig(partial: Partial<AutoTuneConfig>): AutoTuneConfig {
+    const turningOnAutoMatch =
+      partial.autoMatchTone === true && !this.autoTuneConfig.autoMatchTone;
+    const turningOnAutoTune = partial.enabled === true && !this.autoTuneConfig.enabled;
+    if (turningOnAutoMatch || (turningOnAutoTune && (partial.autoMatchTone ?? this.autoTuneConfig.autoMatchTone))) {
+      this.keyMatcher.reset();
+    }
+
     this.autoTuneConfig = {
       ...this.autoTuneConfig,
       ...partial,
@@ -612,6 +680,7 @@ class KaraokeAudioEngine {
     if (this.autoTuneNode) {
       postAutoTuneConfig(this.autoTuneNode, this.autoTuneConfig);
     }
+    this.syncKeyPollTimer();
     if (!this.autoTuneConfig.enabled) {
       const cleared: AutoTuneTelemetry = {
         voiced: false,
@@ -624,7 +693,11 @@ class KaraokeAudioEngine {
         cb(cleared);
       }
     }
-    return this.getAutoTuneConfig();
+    const snapshot = this.getAutoTuneConfig();
+    for (const cb of this.autoTuneConfigListeners) {
+      cb(snapshot);
+    }
+    return snapshot;
   }
 
   getAutoTuneConfig(): AutoTuneConfig {
@@ -633,6 +706,17 @@ class KaraokeAudioEngine {
 
   isAutoTuneEnabled(): boolean {
     return this.autoTuneConfig.enabled;
+  }
+
+  isAutoMatchToneLocked(): boolean {
+    return this.keyMatcher.hasLock();
+  }
+
+  subscribeAutoTuneConfig(cb: (cfg: AutoTuneConfig) => void): () => void {
+    this.autoTuneConfigListeners.add(cb);
+    return () => {
+      this.autoTuneConfigListeners.delete(cb);
+    };
   }
 
   subscribeAutoTuneTelemetry(cb: (t: AutoTuneTelemetry) => void): () => void {
@@ -805,6 +889,10 @@ class KaraokeAudioEngine {
   dispose(): void {
     this.stop();
     this.disableMic();
+    if (this.keyPollTimer !== null) {
+      clearInterval(this.keyPollTimer);
+      this.keyPollTimer = null;
+    }
     if (this.customObjectUrl) {
       URL.revokeObjectURL(this.customObjectUrl);
       this.customObjectUrl = null;

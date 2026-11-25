@@ -71,6 +71,7 @@ export const SCALE_DEFINITIONS: Record<ScaleType, ScaleDefinition> = {
 
 export interface AutoTuneConfig {
   enabled: boolean;
+  autoMatchTone: boolean;
   key: MusicalKey;
   scale: ScaleType;
   retuneSpeedMs: number;
@@ -80,6 +81,7 @@ export interface AutoTuneConfig {
 
 export const DEFAULT_AUTOTUNE_CONFIG: AutoTuneConfig = {
   enabled: false,
+  autoMatchTone: false,
   key: 'C',
   scale: 'minor',
   retuneSpeedMs: 0,
@@ -221,5 +223,144 @@ export async function createRapAutoTuneNode(
     return node;
   } catch {
     return null;
+  }
+}
+
+// Krumhansl-Kessler key-finding profiles (relative to tonic = 0)
+const MAJOR_PROFILE = [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88];
+const MINOR_PROFILE = [6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17];
+
+function pearsonCorrelation(a: Float64Array, b: readonly number[], shift: number): number {
+  let sumA = 0;
+  let sumB = 0;
+  for (let i = 0; i < 12; i++) {
+    sumA += a[(i + shift) % 12];
+    sumB += b[i];
+  }
+  const meanA = sumA / 12;
+  const meanB = sumB / 12;
+  let num = 0;
+  let denA = 0;
+  let denB = 0;
+  for (let i = 0; i < 12; i++) {
+    const da = a[(i + shift) % 12] - meanA;
+    const db = b[i] - meanB;
+    num += da * db;
+    denA += da * da;
+    denB += db * db;
+  }
+  const den = Math.sqrt(denA * denB);
+  return den > 1e-9 ? num / den : 0;
+}
+
+/**
+ * Real-time musical key & scale (Major/Minor) detector using a decaying 12-bin
+ * chromagram and Krumhansl-Schmuckler key-profile correlation with hysteresis.
+ */
+export class KeyToneMatcher {
+  private chroma = new Float64Array(12);
+  private sampleCount = 0;
+  private locked = false;
+
+  reset(): void {
+    this.chroma.fill(0);
+    this.sampleCount = 0;
+    this.locked = false;
+  }
+
+  hasLock(): boolean {
+    return this.locked;
+  }
+
+  feedFreq(freqHz: number, weight = 1): void {
+    if (!Number.isFinite(freqHz) || freqHz < 65 || freqHz > 1400) return;
+    const midiFloat = freqToMidi(freqHz);
+    const rounded = Math.round(midiFloat);
+    const pc = ((rounded % 12) + 12) % 12;
+    const closeness = Math.max(0.25, 1 - Math.abs(midiFloat - rounded));
+
+    for (let i = 0; i < 12; i++) {
+      this.chroma[i] *= 0.985;
+    }
+    this.chroma[pc] += weight * closeness;
+    this.sampleCount += 1;
+  }
+
+  feedSpectrum(freqData: Uint8Array, sampleRate: number, fftSize: number): boolean {
+    if (!freqData.length || sampleRate <= 0 || fftSize <= 0) return false;
+    const binHz = sampleRate / fftSize;
+    const minBin = Math.max(1, Math.floor(80 / binHz));
+    const maxBin = Math.min(freqData.length - 1, Math.ceil(2000 / binHz));
+
+    let frameEnergy = 0;
+    const frameChroma = new Float64Array(12);
+    for (let k = minBin; k <= maxBin; k++) {
+      const mag = freqData[k] / 255;
+      if (mag < 0.08) continue;
+      const freq = k * binHz;
+      const midi = Math.round(freqToMidi(freq));
+      const pc = ((midi % 12) + 12) % 12;
+      frameChroma[pc] += mag * mag;
+      frameEnergy += mag * mag;
+    }
+
+    if (frameEnergy < 0.15) return false;
+
+    for (let i = 0; i < 12; i++) {
+      this.chroma[i] = this.chroma[i] * 0.94 + (frameChroma[i] / frameEnergy) * 2.0;
+    }
+    this.sampleCount += 1;
+    return true;
+  }
+
+  estimate(
+    currentKey: MusicalKey,
+    currentScale: ScaleType
+  ): { key: MusicalKey; scale: 'major' | 'minor'; confidence: number } | null {
+    if (this.sampleCount < 14) return null;
+
+    let bestKeyIdx = 0;
+    let bestScale: 'major' | 'minor' = 'minor';
+    let bestScore = -Infinity;
+
+    const currentKeyIdx = getRootKeyIndex(currentKey);
+    const currentIsMajorOrMinor = currentScale === 'major' || currentScale === 'minor';
+    let currentScore = -Infinity;
+
+    for (let k = 0; k < 12; k++) {
+      const majScore = pearsonCorrelation(this.chroma, MAJOR_PROFILE, k);
+      const minScore = pearsonCorrelation(this.chroma, MINOR_PROFILE, k);
+
+      if (k === currentKeyIdx && currentScale === 'major') currentScore = majScore;
+      if (k === currentKeyIdx && currentScale === 'minor') currentScore = minScore;
+
+      if (majScore > bestScore) {
+        bestScore = majScore;
+        bestKeyIdx = k;
+        bestScale = 'major';
+      }
+      if (minScore > bestScore) {
+        bestScore = minScore;
+        bestKeyIdx = k;
+        bestScale = 'minor';
+      }
+    }
+
+    if (bestScore < 0.32) return null;
+
+    // Hysteresis: once locked, require a clear margin before switching keys
+    if (this.locked && currentIsMajorOrMinor) {
+      const isSame = bestKeyIdx === currentKeyIdx && bestScale === currentScale;
+      if (!isSame && bestScore < currentScore + 0.08) {
+        return null;
+      }
+    }
+
+    this.locked = true;
+    return {
+      key: MUSICAL_KEYS[bestKeyIdx],
+      scale: bestScale,
+      confidence: bestScore,
+    };
   }
 }

@@ -461,6 +461,13 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
   }, [isOpen, micEnabled]);
 
   useEffect(() => {
+    if (!isOpen) return;
+    return karaokeAudio.subscribeAutoTuneConfig((cfg) => {
+      setAutoTune(cfg);
+    });
+  }, [isOpen]);
+
+  useEffect(() => {
     if (!isOpen || !micEnabled || !autoTune.enabled) {
       setPitchTelemetry(null);
       return;
@@ -1436,10 +1443,39 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
                       </span>
                     </div>
 
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          updateAutoTune({ autoMatchTone: !autoTune.autoMatchTone })
+                        }
+                        className={`flex-1 py-1 px-2 rounded-lg border flex items-center justify-between text-[10px] font-medium transition ${
+                          autoTune.autoMatchTone
+                            ? 'bg-sky-500/20 border-sky-400/40 text-sky-200'
+                            : 'bg-white/5 border-white/10 text-neutral-300 hover:bg-white/10'
+                        }`}
+                        title="Tự động nghe giọng hát hoặc nhạc nền để chọn Tone & Scale phù hợp"
+                      >
+                        <span className="flex items-center gap-1">
+                          <Sparkles className="w-3 h-3 text-sky-300" />
+                          <span>Tự Match Tone</span>
+                        </span>
+                        <span className="font-mono font-bold">
+                          {autoTune.autoMatchTone
+                            ? karaokeAudio.isAutoMatchToneLocked()
+                              ? `${autoTune.key} ${SCALE_DEFINITIONS[autoTune.scale].shortLabel}`
+                              : 'Đang dò...'
+                            : 'TẮT'}
+                        </span>
+                      </button>
+                    </div>
+
                     <div className="grid grid-cols-[74px_1fr] gap-1.5">
                       <select
                         value={autoTune.key}
-                        onChange={(e) => updateAutoTune({ key: e.target.value as MusicalKey })}
+                        onChange={(e) =>
+                          updateAutoTune({ key: e.target.value as MusicalKey, autoMatchTone: false })
+                        }
                         aria-label="Tone gốc (Key)"
                         className="bg-[#1b1526] border border-fuchsia-400/25 rounded-lg px-2 py-1 text-[11px] text-white outline-none focus:border-fuchsia-400"
                       >
@@ -1451,7 +1487,9 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
                       </select>
                       <select
                         value={autoTune.scale}
-                        onChange={(e) => updateAutoTune({ scale: e.target.value as ScaleType })}
+                        onChange={(e) =>
+                          updateAutoTune({ scale: e.target.value as ScaleType, autoMatchTone: false })
+                        }
                         aria-label="Âm giai (Scale)"
                         className="bg-[#1b1526] border border-fuchsia-400/25 rounded-lg px-2 py-1 text-[11px] text-white outline-none focus:border-fuchsia-400"
                       >
