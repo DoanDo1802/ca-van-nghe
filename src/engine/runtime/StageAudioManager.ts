@@ -19,6 +19,7 @@ export interface StageMediaState {
 export interface ScreenProjectionData {
   visible: boolean;
   matrix3d: string;
+  tooSmall?: boolean;
 }
 
 const DEFAULT_LEFT_SPEAKER_POS = new pc.Vec3(-6.45, 1.5, -9.7);
@@ -856,13 +857,13 @@ export class StageAudioManager {
     }
   };
 
-  private dispatchProjectionIfChanged(visible: boolean, matrix3d: string): void {
-    const sig = visible && matrix3d ? matrix3d : 'hidden';
+  private dispatchProjectionIfChanged(visible: boolean, matrix3d: string, tooSmall = false): void {
+    const sig = visible && matrix3d ? `${matrix3d}|${tooSmall ? '1' : '0'}` : 'hidden';
     if (sig === this.lastScreenProjectionSig) return;
     this.lastScreenProjectionSig = sig;
     window.dispatchEvent(
       new CustomEvent<ScreenProjectionData>('cavannghe:screen-projection', {
-        detail: { visible, matrix3d },
+        detail: { visible, matrix3d, tooSmall },
       })
     );
   }
@@ -910,7 +911,17 @@ export class StageAudioManager {
       _s3.y
     );
 
-    this.dispatchProjectionIfChanged(Boolean(matrix3d), matrix3d ?? '');
+    const projW = Math.min(
+      Math.hypot(_s1.x - _s0.x, _s1.y - _s0.y),
+      Math.hypot(_s3.x - _s2.x, _s3.y - _s2.y)
+    );
+    const projH = Math.min(
+      Math.hypot(_s2.x - _s0.x, _s2.y - _s0.y),
+      Math.hypot(_s3.x - _s1.x, _s3.y - _s1.y)
+    );
+    const tooSmall = projW < 200 || projH < 200;
+
+    this.dispatchProjectionIfChanged(Boolean(matrix3d), matrix3d ?? '', tooSmall);
   }
 
   private computeYouTubeSpatialVolume(cam: pc.Entity | null): number {

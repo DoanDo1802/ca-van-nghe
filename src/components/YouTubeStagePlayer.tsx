@@ -42,6 +42,8 @@ export const YouTubeStagePlayer: React.FC = () => {
     isMuted: false,
   });
 
+  const [interactiveMode, setInteractiveMode] = useState(false);
+  const [fallbackMiniMode, setFallbackMiniMode] = useState(false);
   const stagePlaneRef = useRef<HTMLDivElement>(null);
   const playerHostRef = useRef<HTMLDivElement>(null);
   const domVideoRef = useRef<HTMLVideoElement>(null);
@@ -79,12 +81,12 @@ export const YouTubeStagePlayer: React.FC = () => {
     };
 
     const onProjection = (e: Event) => {
-      const { visible, matrix3d } = (e as CustomEvent<ScreenProjectionData>).detail;
+      const { visible, matrix3d, tooSmall } = (e as CustomEvent<ScreenProjectionData>).detail;
+      setFallbackMiniMode(Boolean(!visible || !matrix3d || tooSmall));
       const el = stagePlaneRef.current;
       if (!el) return;
-      if (!visible || !matrix3d) {
-        el.style.opacity = '0';
-        el.style.visibility = 'hidden';
+      if (!visible || !matrix3d || tooSmall) {
+        el.style.transform = 'none';
       } else {
         el.style.visibility = 'visible';
         el.style.opacity = '1';
@@ -217,6 +219,7 @@ export const YouTubeStagePlayer: React.FC = () => {
     const { videoId, quality } = stageState;
     if (!videoId) {
       readyRef.current = false;
+      setInteractiveMode(false);
       playerRef.current?.destroy();
       playerRef.current = null;
       return;
@@ -263,9 +266,8 @@ export const YouTubeStagePlayer: React.FC = () => {
         playerVars: {
           autoplay: 1,
           mute: 1,
-          controls: 0,
+          controls: 1,
           rel: 0,
-          modestbranding: 1,
           playsinline: 1,
           enablejsapi: 1,
           origin: window.location.origin,
@@ -378,48 +380,109 @@ export const YouTubeStagePlayer: React.FC = () => {
 
   if (!stageState.videoId && !stageState.domVideoUrl) return null;
 
+  const isForegroundInteractive = Boolean(stageState.videoId && (interactiveMode || fallbackMiniMode));
+  const useMiniDock = Boolean(stageState.videoId && fallbackMiniMode && !interactiveMode);
+
   return (
-    <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
+    <>
       <div
-        ref={stagePlaneRef}
-        style={{
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          width: '1280px',
-          height: '720px',
-          transformOrigin: '0 0',
-          backgroundColor: '#050608',
-          pointerEvents: 'none',
-          visibility: 'hidden',
-          opacity: 0,
-          willChange: 'transform',
-        }}
+        className={`fixed inset-0 overflow-hidden ${
+          isForegroundInteractive ? 'z-[84] pointer-events-none' : 'z-0 pointer-events-none'
+        }`}
       >
-        {stageState.videoId ? (
-          <div ref={playerHostRef} className="w-full h-full pointer-events-none" />
-        ) : (
-          <video
-            ref={domVideoRef}
-            src={stageState.domVideoUrl ?? undefined}
-            loop
-            playsInline
-            autoPlay
-            muted={stageState.isMuted}
-            onError={() => {
-              const msg =
-                'Không thể phát video từ link này. Vui lòng kiểm tra lại đường dẫn trực tiếp (.mp4/.webm) hoặc dùng link YouTube.';
-              DebugLogger.error('YouTubeStage', `DOM video fallback playback error for URL: ${stageState.domVideoUrl}`);
-              window.dispatchEvent(
-                new CustomEvent<string>('cavannghe:stage-media-error', {
-                  detail: msg,
-                })
-              );
-            }}
-            className="w-full h-full object-cover pointer-events-none"
-          />
-        )}
+        <div
+          ref={stagePlaneRef}
+          style={
+            interactiveMode && stageState.videoId
+              ? {
+                  position: 'fixed',
+                  top: '50%',
+                  left: '50%',
+                  width: 'min(854px, calc(100vw - 2rem))',
+                  height: 'min(480px, calc((100vw - 2rem) * 9 / 16))',
+                  minWidth: '356px',
+                  minHeight: '200px',
+                  transform: 'translate(-50%, -50%)',
+                  backgroundColor: '#050608',
+                  pointerEvents: 'auto',
+                  visibility: 'visible',
+                  opacity: 1,
+                  borderRadius: '12px',
+                  overflow: 'hidden',
+                  boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.75)',
+                }
+              : useMiniDock
+                ? {
+                    position: 'fixed',
+                    bottom: '12px',
+                    left: '12px',
+                    width: '356px',
+                    height: '200px',
+                    maxWidth: 'calc(100vw - 1.5rem)',
+                    transform: 'none',
+                    backgroundColor: '#050608',
+                    pointerEvents: 'auto',
+                    visibility: 'visible',
+                    opacity: 1,
+                    borderRadius: '12px',
+                    overflow: 'hidden',
+                    border: '1px solid rgba(255,255,255,0.15)',
+                    boxShadow: '0 20px 40px rgba(0,0,0,0.65)',
+                  }
+                : {
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    width: '1280px',
+                    height: '720px',
+                    transformOrigin: '0 0',
+                    backgroundColor: '#050608',
+                    pointerEvents: 'none',
+                    visibility: 'hidden',
+                    opacity: 0,
+                    willChange: 'transform',
+                  }
+          }
+        >
+          {stageState.videoId ? (
+            <div
+              ref={playerHostRef}
+              className={`w-full h-full ${isForegroundInteractive ? 'pointer-events-auto' : 'pointer-events-none'}`}
+            />
+          ) : (
+            <video
+              ref={domVideoRef}
+              src={stageState.domVideoUrl ?? undefined}
+              loop
+              playsInline
+              autoPlay
+              muted={stageState.isMuted}
+              onError={() => {
+                const msg =
+                  'Không thể phát video từ link này. Vui lòng kiểm tra lại đường dẫn trực tiếp (.mp4/.webm) hoặc dùng link YouTube.';
+                DebugLogger.error('YouTubeStage', `DOM video fallback playback error for URL: ${stageState.domVideoUrl}`);
+                window.dispatchEvent(
+                  new CustomEvent<string>('cavannghe:stage-media-error', {
+                    detail: msg,
+                  })
+                );
+              }}
+              className="w-full h-full object-cover pointer-events-none"
+            />
+          )}
+        </div>
       </div>
-    </div>
+
+      {stageState.videoId && (
+        <button
+          type="button"
+          onClick={() => setInteractiveMode((v) => !v)}
+          className="fixed bottom-3 right-3 z-[86] pointer-events-auto px-3 py-1.5 rounded-full bg-black/80 hover:bg-black text-xs text-white border border-white/20 shadow-lg backdrop-blur-md transition"
+          title="Chuyển giữa màn hình 3D và chế độ tương tác trực tiếp YouTube"
+        >
+          {interactiveMode ? 'Thu về màn hình 3D' : 'Tương tác YouTube'}
+        </button>
+      )}
+    </>
   );
 };

@@ -75,7 +75,6 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
   const [playerWidth, setPlayerWidth] = useState<number | null>(null);
   const [playerPos, setPlayerPos] = useState<{ x: number; y: number } | null>(null);
   const [isDraggingPlayer, setIsDraggingPlayer] = useState(false);
-  const [isResizingPlayer, setIsResizingPlayer] = useState(false);
 
   const [isFilePlaying, setIsFilePlaying] = useState(false);
   const [micEnabled, setMicEnabled] = useState(false);
@@ -122,15 +121,11 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
     offsetX: number;
     offsetY: number;
   } | null>(null);
-  const resizeStateRef = useRef<{
-    pointerId: number;
-    startX: number;
-    startWidth: number;
-  } | null>(null);
 
   const clampPlayerWidth = (w: number) => {
-    const maxW = Math.max(220, Math.min(720, window.innerWidth - 16));
-    return Math.max(180, Math.min(maxW, Math.round(w)));
+    const minW = Math.min(356, Math.max(200, window.innerWidth - 16));
+    const maxW = Math.max(minW, Math.min(720, window.innerWidth - 16));
+    return Math.max(minW, Math.min(maxW, Math.round(w)));
   };
 
   const clampPlayerPos = (x: number, y: number) => {
@@ -215,39 +210,6 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
     if (!drag || drag.pointerId !== e.pointerId) return;
     dragStateRef.current = null;
     setIsDraggingPlayer(false);
-    if (e.currentTarget.hasPointerCapture?.(e.pointerId)) {
-      e.currentTarget.releasePointerCapture(e.pointerId);
-    }
-  };
-
-  const handleResizePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    e.stopPropagation();
-    const box = playerBoxRef.current;
-    if (!box) return;
-    const rect = box.getBoundingClientRect();
-    e.currentTarget.setPointerCapture?.(e.pointerId);
-    resizeStateRef.current = {
-      pointerId: e.pointerId,
-      startX: e.clientX,
-      startWidth: rect.width,
-    };
-    setIsResizingPlayer(true);
-    setPlayerWidth(clampPlayerWidth(rect.width));
-  };
-
-  const handleResizePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    const rs = resizeStateRef.current;
-    if (!rs || rs.pointerId !== e.pointerId) return;
-    const nextW = clampPlayerWidth(rs.startWidth + (e.clientX - rs.startX));
-    setPlayerWidth(nextW);
-    setPlayerPos((prev) => (prev ? clampPlayerPos(prev.x, prev.y) : null));
-  };
-
-  const handleResizePointerEnd = (e: React.PointerEvent<HTMLDivElement>) => {
-    const rs = resizeStateRef.current;
-    if (!rs || rs.pointerId !== e.pointerId) return;
-    resizeStateRef.current = null;
-    setIsResizingPlayer(false);
     if (e.currentTarget.hasPointerCapture?.(e.pointerId)) {
       e.currentTarget.releasePointerCapture(e.pointerId);
     }
@@ -826,8 +788,8 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
               playerWidth !== null
                 ? ''
                 : isPlayerCompact
-                  ? 'w-[215px] sm:w-[240px]'
-                  : 'w-[min(295px,calc(100vw-1.25rem))] sm:w-[360px]'
+                  ? 'w-[min(356px,calc(100vw-1rem))]'
+                  : 'w-[min(480px,calc(100vw-1.25rem))]'
             }`}
           >
             <div
@@ -884,8 +846,8 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
               <iframe
                 ref={ytIframeRef}
                 key={youtubeVideoId}
-                className={`w-full aspect-video block ${isDraggingPlayer || isResizingPlayer ? 'pointer-events-none' : ''}`}
-                src={`https://www.youtube.com/embed/${youtubeVideoId}?autoplay=1&rel=0&modestbranding=1&enablejsapi=1&origin=${encodeURIComponent(window.location.origin)}`}
+                className={`w-full aspect-video min-h-[200px] block ${isDraggingPlayer ? 'pointer-events-none' : ''}`}
+                src={`https://www.youtube.com/embed/${youtubeVideoId}?autoplay=1&rel=0&enablejsapi=1&origin=${encodeURIComponent(window.location.origin)}`}
                 title="YouTube Karaoke Player"
                 allow="autoplay; encrypted-media; picture-in-picture"
                 allowFullScreen
@@ -902,17 +864,6 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
                   window.setTimeout(sendListening, 1400);
                 }}
               />
-              {/* Bottom-right resize handle */}
-              <div
-                onPointerDown={handleResizePointerDown}
-                onPointerMove={handleResizePointerMove}
-                onPointerUp={handleResizePointerEnd}
-                onPointerCancel={handleResizePointerEnd}
-                title="Kéo góc để co dãn khung YouTube"
-                className="absolute bottom-0 right-0 w-5 h-5 cursor-nwse-resize touch-none flex items-end justify-end p-1 bg-gradient-to-tl from-black/70 via-black/25 to-transparent hover:from-white/30 transition select-none z-10"
-              >
-                <span className="w-2.5 h-2.5 border-r-2 border-b-2 border-white/75 rounded-br-[2px]" />
-              </div>
             </div>
           </div>
         ) : customFileName ? (

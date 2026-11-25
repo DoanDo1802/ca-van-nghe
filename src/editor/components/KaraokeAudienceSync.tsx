@@ -213,15 +213,14 @@ export const KaraokeAudienceSync: React.FC<KaraokeAudienceSyncProps> = ({ isSing
       playerHostRef.current.appendChild(mountEl);
 
       playerRef.current = new window.YT.Player(mountEl, {
-        width: 240,
-        height: 135,
+        width: 356,
+        height: 200,
         videoId: activeYoutubeId,
         playerVars: {
           autoplay: 1,
           mute: 1,
-          controls: 0,
+          controls: 1,
           rel: 0,
-          modestbranding: 1,
           playsinline: 1,
           enablejsapi: 1,
           origin: window.location.origin,
@@ -368,13 +367,14 @@ export const KaraokeAudienceSync: React.FC<KaraokeAudienceSyncProps> = ({ isSing
 
   return (
     <>
-      {/* Keep inside viewport behind canvas (z-0) so Chromium never throttles cross-origin YouTube subframe */}
+      {/* Visible interactive YouTube player (>= 200x200px) complying with YouTube IFrame API policy */}
       {activeYoutubeId && (
-        <div
-          ref={playerHostRef}
-          aria-hidden="true"
-          className="fixed bottom-0 left-0 z-0 w-[240px] h-[135px] opacity-[0.002] pointer-events-none overflow-hidden"
-        />
+        <div className="fixed bottom-3 left-3 z-[84] w-[356px] max-w-[calc(100vw-1.5rem)] rounded-xl overflow-hidden bg-black/95 border border-white/15 shadow-2xl pointer-events-auto">
+          <div className="px-2.5 py-1 bg-[#0f0f0f] text-[10px] text-neutral-300 truncate border-b border-white/10">
+            YouTube • {remoteKaraoke.title}
+          </div>
+          <div ref={playerHostRef} className="w-full h-[200px] min-h-[200px]" />
+        </div>
       )}
       <div className="fixed top-[max(0.75rem,env(safe-area-inset-top))] left-3 right-16 sm:right-auto z-[85] pointer-events-auto flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#121212]/90 border border-white/10 backdrop-blur-md shadow-xl text-xs text-white max-w-[calc(100vw-4.75rem)] sm:max-w-[420px]">
         <span className="w-6 h-6 rounded-full bg-white/10 flex items-center justify-center shrink-0">

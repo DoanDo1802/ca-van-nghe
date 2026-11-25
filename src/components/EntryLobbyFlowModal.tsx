@@ -27,6 +27,7 @@ import {
   getSavedAvatarColor,
   saveAvatarColor,
 } from '../utils/avatarColor';
+import { LegalNoticeModal } from './LegalNoticeModal';
 
 export interface EntryLobbyFlowModalProps {
   isOpen: boolean;
@@ -64,6 +65,7 @@ export const EntryLobbyFlowModal: React.FC<EntryLobbyFlowModalProps> = ({
     if (initialStep) return initialStep;
     return AdminService.getSavedPlayerAccount() ? 'room' : 'identity';
   });
+  const [legalTab, setLegalTab] = useState<'terms' | 'privacy' | null>(null);
   const [identityMode, setIdentityMode] = useState<IdentityMode>('guest');
   const [guestName, setGuestName] = useState<string>(() => getDefaultGuestName());
   const [avatarColor, setAvatarColor] = useState<string>(() => getSavedAvatarColor());
@@ -806,8 +808,52 @@ export const EntryLobbyFlowModal: React.FC<EntryLobbyFlowModalProps> = ({
               )}
             </div>
           )}
+
+          {/* Legal & YouTube API Services Compliance Footer */}
+          <div className="px-6 py-3 border-t border-white/10 bg-[#0d0d0d] text-[11px] text-neutral-400 text-center leading-relaxed">
+            Sử dụng{' '}
+            <a
+              href="https://www.youtube.com/t/terms"
+              target="_blank"
+              rel="noreferrer"
+              className="text-neutral-200 underline hover:text-white"
+            >
+              YouTube Terms of Service
+            </a>{' '}
+            &amp;{' '}
+            <a
+              href="https://policies.google.com/privacy"
+              target="_blank"
+              rel="noreferrer"
+              className="text-neutral-200 underline hover:text-white"
+            >
+              Google Privacy Policy
+            </a>{' '}
+            (YouTube API Services).{' '}
+            <button
+              type="button"
+              onClick={() => setLegalTab('terms')}
+              className="text-amber-300 underline hover:text-amber-200"
+            >
+              Điều khoản sử dụng
+            </button>{' '}
+            •{' '}
+            <button
+              type="button"
+              onClick={() => setLegalTab('privacy')}
+              className="text-amber-300 underline hover:text-amber-200"
+            >
+              Chính sách bảo mật
+            </button>
+          </div>
         </div>
       </div>
+
+      <LegalNoticeModal
+        tab={legalTab}
+        onClose={() => setLegalTab(null)}
+        onSwitchTab={(t) => setLegalTab(t)}
+      />
     </div>
   );
 };
