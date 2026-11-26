@@ -95,14 +95,14 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
   const [selectedDeviceId, setSelectedDeviceId] = useState('');
   const [echoCancellation, setEchoCancellation] = useState(true);
   const [localMonitor, setLocalMonitor] = useState(() => karaokeAudio.isLocalMonitorEnabled());
-  const [micPercent, setMicPercent] = useState(100);
+  const [micPercent, setMicPercent] = useState(40);
   const [echoAmount, setEchoAmount] = useState(0.55);
   const [bassDb, setBassDb] = useState(0);
   const [trebleDb, setTrebleDb] = useState(0);
   const [activePreset, setActivePreset] = useState<'acoustic' | 'lounge' | 'stage' | 'rapper' | null>('lounge');
   const [autoTune, setAutoTune] = useState<AutoTuneConfig>(() => karaokeAudio.getAutoTuneConfig());
   const [pitchTelemetry, setPitchTelemetry] = useState<AutoTuneTelemetry | null>(null);
-  const [audienceMusicVolume, setAudienceMusicVolume] = useState(60);
+  const [audienceMusicVolume] = useState(60);
   const [style, setStyle] = useState<'chill' | 'dance'>('chill');
   const [micLevel, setMicLevel] = useState(0);
 
@@ -292,6 +292,7 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
       });
     }, 260);
   };
+  void scheduleAudienceMusicVolumeSync;
 
   const isOpenRef = useRef(isOpen);
   isOpenRef.current = isOpen;
@@ -1020,18 +1021,16 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
   const applyPreset = (preset: 'acoustic' | 'lounge' | 'stage' | 'rapper') => {
     const cfg =
       preset === 'acoustic'
-        ? { micPct: 85, echo: 0.25, bass: 0, treble: -0.5 }
+        ? { echo: 0.25, bass: 0, treble: -0.5 }
         : preset === 'lounge'
-          ? { micPct: 100, echo: 0.55, bass: 0.5, treble: 0 }
+          ? { echo: 0.55, bass: 0.5, treble: 0 }
           : preset === 'stage'
-            ? { micPct: 120, echo: 0.78, bass: 1.0, treble: 1.0 }
-            : { micPct: 115, echo: 0.3, bass: 0, treble: 0 };
+            ? { echo: 0.78, bass: 1.0, treble: 1.0 }
+            : { echo: 0.3, bass: 0, treble: 0 };
     setActivePreset(preset);
-    setMicPercent(cfg.micPct);
     setEchoAmount(cfg.echo);
     setBassDb(cfg.bass);
     setTrebleDb(cfg.treble);
-    karaokeAudio.setMicVolume(micPercentToGain(cfg.micPct));
     karaokeAudio.setEchoAmount(cfg.echo);
     karaokeAudio.setToneEQ(cfg.bass, cfg.treble);
     if (preset === 'rapper') {
@@ -1930,34 +1929,6 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
 
               {/* Focused Mixer Sliders */}
               <div className="space-y-2.5 pt-2 border-t border-white/10 text-[11px]">
-                <div className="space-y-1">
-                  <label className="flex items-center justify-between gap-2">
-                    <span className="text-sky-300 font-medium">
-                      {youtubeVideoId ? 'Nhạc nền gửi khán giả' : 'Âm lượng nhạc đang phát'}
-                    </span>
-                    <span className="w-10 text-right font-mono text-sky-200">{audienceMusicVolume}%</span>
-                  </label>
-                  <input
-                    type="range"
-                    min={0}
-                    max={100}
-                    step={5}
-                    value={audienceMusicVolume}
-                    onChange={(e) => {
-                      const v = parseFloat(e.target.value);
-                      setAudienceMusicVolume(v);
-                      karaokeAudio.setBackingMusicVolume(v / 100);
-                      scheduleAudienceMusicVolumeSync(v);
-                    }}
-                    className="w-full accent-sky-400"
-                  />
-                  <p className="text-[10px] text-neutral-400 leading-snug">
-                    {youtubeVideoId
-                      ? 'Âm lượng bạn nghe chỉnh trên trình phát YouTube.'
-                      : 'Chỉnh nhạc bạn nghe và nhạc trong bản trộn gửi khán giả.'}
-                  </p>
-                </div>
-
                 <label className="flex items-center justify-between gap-2">
                   <span className="text-emerald-300 w-24 shrink-0">Giọng hát (Mic)</span>
                   <input
@@ -1968,7 +1939,6 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
                     value={micPercent}
                     onChange={(e) => {
                       const v = parseFloat(e.target.value);
-                      setActivePreset(null);
                       setMicPercent(v);
                       karaokeAudio.setMicVolume(micPercentToGain(v));
                     }}
