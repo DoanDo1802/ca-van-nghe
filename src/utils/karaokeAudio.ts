@@ -560,11 +560,17 @@ class KaraokeAudioEngine {
    */
   createRecordingStream(
     tabAudioStream?: MediaStream | null
-  ): { stream: MediaStream; cleanup: () => void } | null {
+  ): { stream: MediaStream; audioContext: AudioContext; sourceNode: AudioNode; cleanup: () => void } | null {
     if (!tabAudioStream || tabAudioStream.getAudioTracks().length === 0) {
+      const ctx = this.ensureContext();
       const broadcastStream = this.getBroadcastStream();
-      if (!broadcastStream) return null;
-      return { stream: broadcastStream, cleanup: () => {} };
+      if (!broadcastStream || !this.broadcastLimiter) return null;
+      return {
+        stream: broadcastStream,
+        audioContext: ctx,
+        sourceNode: this.broadcastLimiter,
+        cleanup: () => {},
+      };
     }
 
     const ctx = this.ensureContext();
@@ -631,7 +637,12 @@ class KaraokeAudioEngine {
       });
     };
 
-    return { stream: recordDest.stream, cleanup };
+    return {
+      stream: recordDest.stream,
+      audioContext: ctx,
+      sourceNode: recordLimiter,
+      cleanup,
+    };
   }
 
   isMicActive(): boolean {
