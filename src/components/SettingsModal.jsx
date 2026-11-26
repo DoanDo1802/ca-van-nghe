@@ -14,7 +14,6 @@ import {
   Utensils,
   Calendar,
   Keyboard,
-  Music,
   Sparkles,
   MessageSquare,
   Hand,
@@ -35,10 +34,9 @@ export default function SettingsModal({
   isStageVideoMuted,
   onToggleStageMute,
   onOpenStageScreenModal,
+  karaokeTurnControl = /** @type {React.ReactNode} */ (null),
   isNightMode,
   onToggleNightMode,
-  isAudioPlaying,
-  onToggleAudio,
   onOpenMenu,
   onOpenReservation,
   onResetLayout,
@@ -219,6 +217,8 @@ export default function SettingsModal({
                     { id: 'samba', key: '6', label: 'Nhảy Samba', icon: Sparkles },
                     { id: 'hiphop', key: '7', label: 'Slide Hip Hop', icon: Sparkles },
                     { id: 'swing', key: '8', label: 'Swing Dance', icon: Sparkles },
+                    { id: 'wavehiphop', key: '9', label: 'Wave Hip Hop', icon: Sparkles },
+                    { id: 'twerk', key: '0', label: 'Dancing Twerk', icon: Sparkles },
                   ].map((em) => {
                     const IconComp = em.icon;
                     const isActive = activeEmote === em.id;
@@ -313,27 +313,7 @@ export default function SettingsModal({
                 </button>
               </div>
 
-              <div className="p-4 rounded-xl bg-white/[0.03] border border-white/10 flex items-center justify-between gap-4">
-                <div>
-                  <h4 className="text-xs font-semibold text-white flex items-center gap-2">
-                    <Music className="w-4 h-4 text-neutral-400" />
-                    Nhạc nền Lounge
-                  </h4>
-                  <p className="text-[11px] text-neutral-400 mt-0.5">
-                    Nhạc Lofi / Jazz nhẹ trong không gian
-                  </p>
-                </div>
-                <button
-                  onClick={onToggleAudio}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition shrink-0 ${
-                    isAudioPlaying
-                      ? 'bg-white text-black border-white'
-                      : 'bg-white/5 text-neutral-300 border-white/10'
-                  }`}
-                >
-                  {isAudioPlaying ? 'Đang bật' : 'Đang tắt'}
-                </button>
-              </div>
+              {karaokeTurnControl}
             </div>
           )}
 

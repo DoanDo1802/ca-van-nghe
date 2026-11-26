@@ -5,14 +5,8 @@ import {
   type RoomStatusSnapshot,
   type RtcSignalMessage,
 } from './MultiplayerManager';
+import { addRemoteIceCandidate, getVoiceRtcConfig, setVoiceRemoteDescription } from './voiceIce';
 import { DebugLogger } from '../utils/debugLogger';
-
-const RTC_CONFIG: RTCConfiguration = {
-  iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-  ],
-};
 
 /**
  * Upgrades Opus SDP parameters to high-bitrate stereo Music Mode (128kbps)
@@ -36,12 +30,11 @@ function preferOpusMusicSdp(sdp?: string): string | undefined {
   const out = lines.map((line) => {
     if (line.startsWith(`a=fmtp:${opusPayload} `)) {
       patched = true;
-      const base = line
-        .replace(/;?stereo=\d/g, '')
-        .replace(/;?sprop-stereo=\d/g, '')
-        .replace(/;?maxaveragebitrate=\d+/g, '')
-        .replace(/;?usedtx=\d/g, '');
-      return `${base};${extraParams}`;
+      const prefix = `a=fmtp:${opusPayload} `;
+      const replaced = new Set(['stereo', 'sprop-stereo', 'maxaveragebitrate', 'useinbandfec', 'usedtx']);
+      const retained = line.slice(prefix.length).split(';').map((param) => param.trim())
+        .filter((param) => param && !replaced.has(param.split('=', 1)[0].toLowerCase()));
+      return prefix + [...retained, extraParams].join(';');
     }
     return line;
   });
@@ -88,9 +81,13 @@ export class KaraokeVoiceManager {
   private outgoingPeers = new Map<string, RTCPeerConnection>();
 
   private incomingPeers = new Map<string, RTCPeerConnection>();
+  private negotiationIds = new WeakMap<RTCPeerConnection, string>();
+  private earlyIce = new Map<string, { expiresAt: number; candidates: RTCIceCandidateInit[] }>();
+  private incomingOffers = new WeakMap<RTCPeerConnection, string>();
   private voiceSinks = new Map<string, SpatialVoiceSink>();
   private spatialCtx: AudioContext | null = null;
   private listenerInitialized = false;
+  private activeTurnId: string | undefined;
   private audienceMuted = false;
   private audienceVolume = toPerceptualVoiceGain(1.0);
 
@@ -111,6 +108,7 @@ export class KaraokeVoiceManager {
     window.addEventListener('pointerdown', this.onUserGesture, { passive: true });
     window.addEventListener('keydown', this.onUserGesture, { passive: true });
 
+    this.activeTurnId = mp.getRoomStatus().karaokeTurn?.id;
     if (mp.isConnected()) {
       mp.sendRtcSignal({ targetId: '*', kind: 'ready' });
     }
@@ -119,6 +117,7 @@ export class KaraokeVoiceManager {
   destroyListener(): void {
     if (!this.listenerInitialized) return;
     this.listenerInitialized = false;
+    this.earlyIce.clear();
     window.removeEventListener('cavannghe:room-status', this.onRoomStatus);
     window.removeEventListener('cavannghe:room-left', this.onRoomLeft);
     window.removeEventListener('cavannghe:channel-subscribed', this.onChannelSubscribed);
@@ -137,6 +136,7 @@ export class KaraokeVoiceManager {
 
   startBroadcasting(stream: MediaStream): void {
     this.initListener();
+    if (this.isBroadcasting && this.localStream === stream) return;
     this.stopBroadcasting();
     this.localStream = stream;
     this.isBroadcasting = true;
@@ -182,7 +182,8 @@ export class KaraokeVoiceManager {
    */
   updateSpatialAudio(
     cam: pc.Entity | null,
-    remotePlayers: Map<string, RemotePlayerState>
+    remotePlayers: Map<string, RemotePlayerState>,
+    getRenderedPosition: (playerId: string) => pc.Vec3 | undefined
   ): void {
     if (this.voiceSinks.size === 0 || !this.spatialCtx || this.spatialCtx.state !== 'running') {
       return;
@@ -208,7 +209,7 @@ export class KaraokeVoiceManager {
 
     for (const [peerId, sink] of this.voiceSinks.entries()) {
       if (!sink.panner) continue;
-      const rp = remotePlayers.get(peerId);
+      const rp = getRenderedPosition(peerId) ?? remotePlayers.get(peerId);
       const sx = rp ? rp.x : 0;
       const sy = rp ? rp.y + 1.65 : 1.8;
       const sz = rp ? rp.z : -8.5;
@@ -254,6 +255,7 @@ export class KaraokeVoiceManager {
   }
 
   private onRoomLeft = (): void => {
+    this.earlyIce.clear();
     this.stopBroadcasting();
     for (const id of [...this.incomingPeers.keys()]) {
       this.cleanupIncomingPeer(id);
@@ -266,6 +268,17 @@ export class KaraokeVoiceManager {
   private onRoomStatus = (e: Event): void => {
     const status = (e as CustomEvent<RoomStatusSnapshot>).detail;
     if (!status) return;
+
+    const turnId = status.karaokeTurn?.id;
+    if (turnId !== this.activeTurnId) {
+      this.activeTurnId = turnId;
+      this.earlyIce.clear();
+      this.stopBroadcasting();
+      for (const id of this.incomingPeers.keys()) this.cleanupIncomingPeer(id);
+      if (status.connected && turnId && status.karaokeTurn?.singerId !== status.localPlayerId) {
+        MultiplayerManager.getInstance().sendRtcSignal({ targetId: '*', kind: 'ready' });
+      }
+    }
 
     if (!status.connected) {
       DebugLogger.warn('KaraokeVoice', 'Channel disconnected transiently; pausing outgoing WebRTC peers until reconnect');
@@ -321,44 +334,88 @@ export class KaraokeVoiceManager {
     }
   };
 
-  private async createOfferForPeer(peerId: string): Promise<void> {
+  private async createOfferForPeer(peerId: string, isRetry = false): Promise<void> {
     if (!this.isBroadcasting || !this.localStream) return;
+    const mp = MultiplayerManager.getInstance();
+    const status = mp.getRoomStatus();
+    if (!status.connected || status.karaokeTurn?.singerId !== status.localPlayerId) return;
     const old = this.outgoingPeers.get(peerId);
     if (old) old.close();
 
-    const pc = new RTCPeerConnection(RTC_CONFIG);
+    const pc = new RTCPeerConnection();
     this.outgoingPeers.set(peerId, pc);
+    const negotiationId = crypto.randomUUID();
+    this.negotiationIds.set(pc, negotiationId);
 
     for (const track of this.localStream.getAudioTracks()) {
       pc.addTrack(track, this.localStream);
     }
 
     pc.onicecandidate = (ev) => {
-      if (ev.candidate) {
+      if (ev.candidate && this.outgoingPeers.get(peerId) === pc) {
         MultiplayerManager.getInstance().sendRtcSignal({
           targetId: peerId,
           kind: 'ice',
+          negotiationId,
           candidate: ev.candidate.toJSON(),
         });
       }
     };
 
+    let canRetry = !isRetry;
+    pc.onconnectionstatechange = () => {
+      if (this.outgoingPeers.get(peerId) !== pc) return;
+      if (pc.connectionState === 'connected') canRetry = true;
+      if (pc.connectionState !== 'failed' || !canRetry) return;
+      canRetry = false;
+      window.setTimeout(() => {
+        if (this.outgoingPeers.get(peerId) === pc && pc.connectionState === 'failed' &&
+            MultiplayerManager.getInstance().isConnected()) {
+          void this.createOfferForPeer(peerId, true);
+        }
+      }, 1500);
+    };
+
     try {
+      const config = await getVoiceRtcConfig();
+      if (this.outgoingPeers.get(peerId) !== pc) return;
+      pc.setConfiguration(config);
       const offer = await pc.createOffer();
       const tunedOffer: RTCSessionDescriptionInit = {
         type: offer.type,
         sdp: preferOpusMusicSdp(offer.sdp),
       };
       await pc.setLocalDescription(tunedOffer);
+      if (this.outgoingPeers.get(peerId) !== pc) return;
       MultiplayerManager.getInstance().sendRtcSignal({
         targetId: peerId,
         kind: 'offer',
+        negotiationId,
         sdp: pc.localDescription?.toJSON() ?? tunedOffer,
       });
     } catch (err) {
+      if (this.outgoingPeers.get(peerId) !== pc) return;
       DebugLogger.error('KaraokeVoice', `Failed to create WebRTC offer for peer ${peerId}`, err);
       pc.close();
       this.outgoingPeers.delete(peerId);
+    }
+  }
+
+  private iceKey(msg: RtcSignalMessage): string {
+    return JSON.stringify([msg.turnId, msg.fromId, msg.negotiationId]);
+  }
+
+  private rememberEarlyIce(msg: RtcSignalMessage, candidate: RTCIceCandidateInit): void {
+    const now = performance.now();
+    for (const [key, entry] of this.earlyIce) {
+      if (entry.expiresAt <= now) this.earlyIce.delete(key);
+    }
+    const key = this.iceKey(msg);
+    const entry = this.earlyIce.get(key);
+    if (entry) {
+      if (entry.candidates.length < 64) entry.candidates.push(candidate);
+    } else if (this.earlyIce.size < 64) {
+      this.earlyIce.set(key, { expiresAt: now + 15000, candidates: [candidate] });
     }
   }
 
@@ -366,51 +423,93 @@ export class KaraokeVoiceManager {
     const mp = MultiplayerManager.getInstance();
 
     if (msg.kind === 'ready') {
-      if (this.isBroadcasting && this.localStream) {
+      const peer = this.outgoingPeers.get(msg.fromId);
+      if (this.isBroadcasting && this.localStream && (!peer || peer.connectionState === 'failed')) {
         void this.createOfferForPeer(msg.fromId);
+      } else if (peer?.signalingState === 'have-local-offer' && peer.localDescription) {
+        mp.sendRtcSignal({
+          targetId: msg.fromId, kind: 'offer', negotiationId: this.negotiationIds.get(peer),
+          sdp: peer.localDescription.toJSON(),
+        });
       }
       return;
     }
 
     if (msg.kind === 'bye') {
+      this.earlyIce.clear();
       this.cleanupIncomingPeer(msg.fromId);
       return;
     }
 
     if (msg.kind === 'offer' && msg.sdp) {
+      const existing = this.incomingPeers.get(msg.fromId);
+      if (existing && (msg.negotiationId
+        ? this.negotiationIds.get(existing) === msg.negotiationId
+        : this.incomingOffers.get(existing) === msg.sdp.sdp)) {
+        const answer = existing.localDescription;
+        if (answer) mp.sendRtcSignal({
+          targetId: msg.fromId, kind: 'answer', negotiationId: msg.negotiationId, sdp: answer.toJSON(),
+        });
+        return;
+      }
       this.cleanupIncomingPeer(msg.fromId);
-      const pc = new RTCPeerConnection(RTC_CONFIG);
+      const pc = new RTCPeerConnection();
       this.incomingPeers.set(msg.fromId, pc);
+      if (msg.negotiationId) this.negotiationIds.set(pc, msg.negotiationId);
+      const iceKey = this.iceKey(msg);
+      const earlyIce = this.earlyIce.get(iceKey);
+      this.earlyIce.delete(iceKey);
+      if (earlyIce && earlyIce.expiresAt > performance.now()) {
+        for (const candidate of earlyIce.candidates) await addRemoteIceCandidate(pc, candidate);
+      }
+      if (msg.sdp.sdp) this.incomingOffers.set(pc, msg.sdp.sdp);
 
       pc.onicecandidate = (ev) => {
-        if (ev.candidate) {
+        if (ev.candidate && this.incomingPeers.get(msg.fromId) === pc) {
           mp.sendRtcSignal({
             targetId: msg.fromId,
             kind: 'ice',
+            negotiationId: msg.negotiationId,
             candidate: ev.candidate.toJSON(),
           });
         }
       };
 
+      pc.onconnectionstatechange = () => {
+        if (this.incomingPeers.get(msg.fromId) === pc && pc.connectionState === 'failed') {
+          this.cleanupIncomingPeer(msg.fromId);
+          if (mp.isConnected() && this.activeTurnId) {
+            mp.sendRtcSignal({ targetId: msg.fromId, kind: 'ready' });
+          }
+        }
+      };
+
       pc.ontrack = (ev) => {
+        if (this.incomingPeers.get(msg.fromId) !== pc) return;
         const stream = ev.streams[0] ?? new MediaStream([ev.track]);
         this.attachSpatialSink(msg.fromId, stream);
       };
 
       try {
-        await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+        const config = await getVoiceRtcConfig();
+        if (this.incomingPeers.get(msg.fromId) !== pc) return;
+        pc.setConfiguration(config);
+        await setVoiceRemoteDescription(pc, msg.sdp);
         const answer = await pc.createAnswer();
         const tunedAnswer: RTCSessionDescriptionInit = {
           type: answer.type,
           sdp: preferOpusMusicSdp(answer.sdp),
         };
         await pc.setLocalDescription(tunedAnswer);
+        if (this.incomingPeers.get(msg.fromId) !== pc) return;
         mp.sendRtcSignal({
           targetId: msg.fromId,
           kind: 'answer',
+          negotiationId: msg.negotiationId,
           sdp: pc.localDescription?.toJSON() ?? tunedAnswer,
         });
       } catch (err) {
+        if (this.incomingPeers.get(msg.fromId) !== pc) return;
         DebugLogger.error('KaraokeVoice', `Failed to handle WebRTC offer from peer ${msg.fromId}`, err);
         this.cleanupIncomingPeer(msg.fromId);
       }
@@ -419,9 +518,10 @@ export class KaraokeVoiceManager {
 
     if (msg.kind === 'answer' && msg.sdp) {
       const pc = this.outgoingPeers.get(msg.fromId);
-      if (pc && pc.signalingState !== 'stable') {
+      if (pc && pc.signalingState !== 'stable' &&
+          (!msg.negotiationId || this.negotiationIds.get(pc) === msg.negotiationId)) {
         try {
-          await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+          await setVoiceRemoteDescription(pc, msg.sdp);
         } catch {
           // ignore
         }
@@ -432,12 +532,10 @@ export class KaraokeVoiceManager {
     if (msg.kind === 'ice' && msg.candidate) {
       const targetPc =
         this.incomingPeers.get(msg.fromId) ?? this.outgoingPeers.get(msg.fromId);
-      if (targetPc) {
-        try {
-          await targetPc.addIceCandidate(new RTCIceCandidate(msg.candidate));
-        } catch {
-          // ignore
-        }
+      if (targetPc && (!msg.negotiationId || this.negotiationIds.get(targetPc) === msg.negotiationId)) {
+        await addRemoteIceCandidate(targetPc, msg.candidate);
+      } else {
+        this.rememberEarlyIce(msg, msg.candidate);
       }
     }
   }

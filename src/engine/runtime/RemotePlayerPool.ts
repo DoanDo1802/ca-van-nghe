@@ -46,6 +46,7 @@ interface RemoteAvatarInstance {
   avatarColor?: string;
   avatarModel: AvatarModelId;
   lastSeq: number;
+  joinedAt: number;
   snapshots: SnapshotSample[];
 }
 
@@ -172,6 +173,11 @@ export class RemotePlayerPool {
         if (state.avatarColor && state.avatarColor !== existing.avatarColor) {
           existing.avatarColor = state.avatarColor;
           applyAvatarColor(existing.entity, state.avatarColor, existing.avatarModel);
+        }
+        if (state.joinedAt !== existing.joinedAt) {
+          existing.joinedAt = state.joinedAt;
+          existing.lastSeq = -1;
+          existing.snapshots.length = 0;
         }
         if (state.seq !== existing.lastSeq) {
           existing.lastSeq = state.seq;
@@ -313,6 +319,10 @@ export class RemotePlayerPool {
     );
   }
 
+  getRenderedPosition(id: string): pc.Vec3 | undefined {
+    return this.avatars.get(id)?.entity.getPosition();
+  }
+
   private sampleSnapshots(avatar: RemoteAvatarInstance, renderTime: number): void {
     const snaps = avatar.snapshots;
     if (snaps.length === 0) return;
@@ -354,6 +364,8 @@ export class RemotePlayerPool {
       latest.anim === 'Samba_Dancing' ||
       latest.anim === 'Slide_Hip_Hop_Dance' ||
       latest.anim === 'Swing_Dancing' ||
+      latest.anim === 'Wave_Hip_Hop_Dance' ||
+      latest.anim === 'Dancing_Twerk' ||
       latest.anim === 'Crouch_Idle_Loop';
     if (
       renderTime > latest.recvTime &&
@@ -445,6 +457,7 @@ export class RemotePlayerPool {
         avatarColor: state.avatarColor,
         avatarModel: preset.id,
         lastSeq: state.seq,
+        joinedAt: state.joinedAt,
         snapshots: [
           {
             x: state.x,
@@ -489,7 +502,11 @@ export class RemotePlayerPool {
         } else if (target === 'Singing' && layer.states.includes('Idle_Talking_Loop')) {
           target = 'Idle_Talking_Loop';
         } else if (
-          (target === 'Samba_Dancing' || target === 'Slide_Hip_Hop_Dance' || target === 'Swing_Dancing') &&
+          (target === 'Samba_Dancing' ||
+            target === 'Slide_Hip_Hop_Dance' ||
+            target === 'Swing_Dancing' ||
+            target === 'Wave_Hip_Hop_Dance' ||
+            target === 'Dancing_Twerk') &&
           layer.states.includes('Dance_Loop')
         ) {
           target = 'Dance_Loop';

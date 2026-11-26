@@ -1,3 +1,4 @@
+import { addRemoteIceCandidate, getVoiceRtcConfig, setVoiceRemoteDescription } from './voiceIce';
 import {
   MultiplayerManager,
   type RoomStatusSnapshot,
@@ -24,13 +25,6 @@ export interface LobbyVoiceSnapshot {
   voicePolicy: RoomVoicePolicy;
   connectedPeerCount: number;
 }
-
-const RTC_CONFIG: RTCConfiguration = {
-  iceServers: [
-    { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-  ],
-};
 
 const STORAGE_MODE_KEY = 'cavannghe:voice-mic-mode';
 const STORAGE_PTT_KEY = 'cavannghe:voice-ptt-key';
@@ -88,6 +82,9 @@ export class LobbyVoiceManager {
   private meterRaf: number | null = null;
 
   private peers = new Map<string, RTCPeerConnection>();
+  private peerOps = new Map<string, Promise<void>>();
+  private pendingRenegotiate = new Set<string>();
+  private pendingMicPromise: Promise<boolean> | null = null;
   private remoteAudios = new Map<string, HTMLAudioElement>();
   private voicePolicy: RoomVoicePolicy = MultiplayerManager.getInstance().getVoicePolicy();
 
@@ -147,6 +144,9 @@ export class LobbyVoiceManager {
     for (const id of [...this.peers.keys()]) {
       this.cleanupPeer(id);
     }
+    this.peerOps.clear();
+    this.pendingRenegotiate.clear();
+    this.pendingMicPromise = null;
 
     if (this.micSource) {
       this.micSource.disconnect();
@@ -170,40 +170,69 @@ export class LobbyVoiceManager {
   async ensureMic(): Promise<boolean> {
     this.init();
     if (this.localStream) return true;
+    if (this.pendingMicPromise) return this.pendingMicPromise;
+
     this.micError = null;
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      });
-      this.localStream = stream;
-      for (const t of stream.getAudioTracks()) {
-        t.enabled = false;
+    let req!: Promise<boolean>;
+    req = (async (): Promise<boolean> => {
+      let stream: MediaStream | null = null;
+      let createdCtx: AudioContext | null = null;
+      let createdSource: MediaStreamAudioSourceNode | null = null;
+      let createdAnalyser: AnalyserNode | null = null;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        });
+        if (!this.initialized) {
+          stream.getTracks().forEach((t) => t.stop());
+          return false;
+        }
+        for (const t of stream.getAudioTracks()) {
+          t.enabled = false;
+        }
+
+        const AC =
+          window.AudioContext ||
+          (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        createdCtx = new AC({ latencyHint: 'interactive' });
+        createdSource = createdCtx.createMediaStreamSource(stream);
+        createdAnalyser = createdCtx.createAnalyser();
+        createdAnalyser.fftSize = 256;
+        createdAnalyser.smoothingTimeConstant = 0.6;
+        createdSource.connect(createdAnalyser);
+
+        this.localStream = stream;
+        this.audioCtx = createdCtx;
+        this.micSource = createdSource;
+        this.analyser = createdAnalyser;
+
+        this.startMeterLoop();
+        this.attachLocalTracksToExistingPeers();
+        this.syncMicTransmission();
+        this.emitState();
+        return true;
+      } catch {
+        createdSource?.disconnect();
+        createdAnalyser?.disconnect();
+        if (createdCtx) void createdCtx.close().catch(() => {});
+        if (stream) stream.getTracks().forEach((t) => t.stop());
+        this.localStream = null;
+        this.micError = 'Chưa cấp quyền Micro trên trình duyệt';
+        this.emitState();
+        return false;
+      } finally {
+        if (this.pendingMicPromise === req) {
+          this.pendingMicPromise = null;
+        }
       }
+    })();
 
-      const AC =
-        window.AudioContext ||
-        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      this.audioCtx = new AC({ latencyHint: 'interactive' });
-      this.micSource = this.audioCtx.createMediaStreamSource(stream);
-      this.analyser = this.audioCtx.createAnalyser();
-      this.analyser.fftSize = 256;
-      this.analyser.smoothingTimeConstant = 0.6;
-      this.micSource.connect(this.analyser);
-
-      this.startMeterLoop();
-      this.attachLocalTracksToExistingPeers();
-      this.syncMicTransmission();
-      this.emitState();
-      return true;
-    } catch {
-      this.micError = 'Chưa cấp quyền Micro trên trình duyệt';
-      this.emitState();
-      return false;
-    }
+    this.pendingMicPromise = req;
+    return req;
   }
 
   async toggleMute(): Promise<void> {
@@ -259,6 +288,7 @@ export class LobbyVoiceManager {
   setPausedForKaraoke(paused: boolean): void {
     if (this.pausedForKaraoke === paused) return;
     this.pausedForKaraoke = paused;
+    this.syncRemoteAudioVolumes();
     this.syncMicTransmission();
     this.emitState();
   }
@@ -294,7 +324,7 @@ export class LobbyVoiceManager {
       micLevel: this.micLevel,
       incomingVolume: this.incomingVolume,
       voicePolicy: this.voicePolicy,
-      connectedPeerCount: this.peers.size,
+      connectedPeerCount: [...this.peers.values()].filter((pc) => pc.connectionState === 'connected').length,
     };
   }
 
@@ -426,7 +456,7 @@ export class LobbyVoiceManager {
 
     const activeIds = new Set(status.players.filter((p) => !p.isLocal).map((p) => p.id));
     for (const id of [...this.peers.keys()]) {
-      if (!activeIds.has(id)) {
+      if (!status.connected || !activeIds.has(id)) {
         this.cleanupPeer(id);
       }
     }
@@ -459,24 +489,46 @@ export class LobbyVoiceManager {
     }
   }
 
-  private async renegotiatePeer(peerId: string, pc: RTCPeerConnection): Promise<void> {
-    if (pc.signalingState !== 'stable') return;
-    try {
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      MultiplayerManager.getInstance().sendVoiceSignal({
-        targetId: peerId,
-        kind: 'offer',
-        sdp: pc.localDescription?.toJSON() ?? offer,
-      });
-    } catch {
-      // ignore transient negotiation error
-    }
+  private enqueuePeerOp(peerId: string, op: () => Promise<void>): void {
+    const prev = this.peerOps.get(peerId) ?? Promise.resolve();
+    const next = prev.then(op, op).finally(() => {
+      if (this.peerOps.get(peerId) === next) {
+        this.peerOps.delete(peerId);
+      }
+    });
+    this.peerOps.set(peerId, next);
   }
 
-  private createPeerConnection(peerId: string): RTCPeerConnection {
+  private renegotiatePeer(peerId: string, pc: RTCPeerConnection, iceRestart = false): void {
+    if (pc.signalingState !== 'stable') {
+      this.pendingRenegotiate.add(peerId);
+      return;
+    }
+    this.enqueuePeerOp(peerId, async () => {
+      if (!this.initialized || this.peers.get(peerId) !== pc || pc.signalingState !== 'stable') return;
+      try {
+        if (iceRestart) {
+          const config = await getVoiceRtcConfig();
+          if (!this.initialized || this.peers.get(peerId) !== pc || pc.signalingState !== 'stable') return;
+          pc.setConfiguration(config);
+        }
+        const offer = await pc.createOffer({ iceRestart });
+        await pc.setLocalDescription(offer);
+        if (this.peers.get(peerId) !== pc) return;
+        MultiplayerManager.getInstance().sendVoiceSignal({
+          targetId: peerId,
+          kind: 'offer',
+          sdp: pc.localDescription?.toJSON() ?? offer,
+        });
+      } catch {
+        // ignore transient negotiation error
+      }
+    });
+  }
+
+  private createPeerConnection(peerId: string, config: RTCConfiguration): RTCPeerConnection {
     this.cleanupPeer(peerId);
-    const pc = new RTCPeerConnection(RTC_CONFIG);
+    const pc = new RTCPeerConnection(config);
     this.peers.set(peerId, pc);
 
     if (this.localStream) {
@@ -488,7 +540,7 @@ export class LobbyVoiceManager {
     }
 
     pc.onicecandidate = (ev) => {
-      if (ev.candidate) {
+      if (ev.candidate && this.peers.get(peerId) === pc) {
         MultiplayerManager.getInstance().sendVoiceSignal({
           targetId: peerId,
           kind: 'ice',
@@ -497,34 +549,94 @@ export class LobbyVoiceManager {
       }
     };
 
+    pc.onsignalingstatechange = () => {
+      if (
+        this.peers.get(peerId) === pc &&
+        pc.signalingState === 'stable' &&
+        this.pendingRenegotiate.delete(peerId)
+      ) {
+        this.renegotiatePeer(peerId, pc, false);
+      }
+    };
+
     pc.ontrack = (ev) => {
+      if (this.peers.get(peerId) !== pc) return;
       const stream = ev.streams[0] ?? new MediaStream([ev.track]);
       this.attachRemoteAudio(peerId, stream);
     };
 
+    let canRetry = true;
     pc.onconnectionstatechange = () => {
-      if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+      if (this.peers.get(peerId) !== pc) return;
+      if (pc.connectionState === 'connected') canRetry = true;
+      this.emitState();
+      if (pc.connectionState === 'closed') {
         this.cleanupPeer(peerId);
         this.emitState();
+        return;
+      }
+      if (pc.connectionState !== 'failed') return;
+
+      const mp = MultiplayerManager.getInstance();
+      if (!canRetry) {
+        this.cleanupPeer(peerId);
+        this.emitState();
+        return;
+      }
+      canRetry = false;
+
+      if (mp.getLocalPlayerId() < peerId) {
+        // The same peer that starts the call drives ICE restarts to avoid competing offers.
+        window.setTimeout(() => {
+          if (
+            this.initialized &&
+            this.peers.get(peerId) === pc &&
+            pc.connectionState === 'failed' &&
+            mp.isConnected()
+          ) {
+            this.renegotiatePeer(peerId, pc, true);
+          }
+        }, 1500);
+      } else {
+        window.setTimeout(() => {
+          if (this.initialized && this.peers.get(peerId) === pc && pc.connectionState === 'failed') {
+            this.cleanupPeer(peerId);
+            this.emitState();
+            if (mp.isConnected()) {
+              mp.sendVoiceSignal({ targetId: peerId, kind: 'ready' });
+            }
+          }
+        }, 4500);
       }
     };
 
     return pc;
   }
 
-  private async initiatePeer(peerId: string): Promise<void> {
-    const pc = this.createPeerConnection(peerId);
-    try {
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      MultiplayerManager.getInstance().sendVoiceSignal({
-        targetId: peerId,
-        kind: 'offer',
-        sdp: pc.localDescription?.toJSON() ?? offer,
-      });
-    } catch {
-      this.cleanupPeer(peerId);
-    }
+  private initiatePeer(peerId: string): void {
+    this.enqueuePeerOp(peerId, async () => {
+      const mp = MultiplayerManager.getInstance();
+      if (!this.initialized || !mp.isConnected() || this.peers.has(peerId)) return;
+      let pc: RTCPeerConnection | null = null;
+      try {
+        const config = await getVoiceRtcConfig();
+        if (!this.initialized || !mp.isConnected() || this.peers.has(peerId)) return;
+        pc = this.createPeerConnection(peerId, config);
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        if (this.peers.get(peerId) !== pc) return;
+        mp.sendVoiceSignal({
+          targetId: peerId,
+          kind: 'offer',
+          sdp: pc.localDescription?.toJSON() ?? offer,
+        });
+      } catch {
+        if (pc && this.peers.get(peerId) === pc) {
+          this.cleanupPeer(peerId);
+          this.emitState();
+        }
+      }
+    });
   }
 
   private async handleSignal(msg: RtcSignalMessage): Promise<void> {
@@ -533,7 +645,7 @@ export class LobbyVoiceManager {
 
     if (msg.kind === 'ready') {
       if (!this.peers.has(msg.fromId) && localId < msg.fromId) {
-        void this.initiatePeer(msg.fromId);
+        this.initiatePeer(msg.fromId);
       }
       return;
     }
@@ -545,53 +657,71 @@ export class LobbyVoiceManager {
     }
 
     if (msg.kind === 'offer' && msg.sdp) {
-      let pc = this.peers.get(msg.fromId);
-      if (!pc) {
-        pc = this.createPeerConnection(msg.fromId);
-      }
-      try {
-        await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
-        if (this.localStream) {
-          const senders = pc.getSenders();
-          for (const track of this.localStream.getAudioTracks()) {
-            if (!senders.some((s) => s.track?.id === track.id)) {
-              pc.addTrack(track, this.localStream);
+      const offerSdp = msg.sdp;
+      this.enqueuePeerOp(msg.fromId, async () => {
+        if (!this.initialized || !mp.isConnected()) return;
+        const existing = this.peers.get(msg.fromId);
+        let pc = existing;
+        try {
+          if (!existing || existing.connectionState === 'failed' || existing.connectionState === 'disconnected') {
+            const config = await getVoiceRtcConfig();
+            if (!this.initialized || !mp.isConnected()) return;
+            if (!existing) {
+              if (this.peers.has(msg.fromId)) return;
+              pc = this.createPeerConnection(msg.fromId, config);
+            } else {
+              if (this.peers.get(msg.fromId) !== existing) return;
+              existing.setConfiguration(config);
+              pc = existing;
             }
           }
+          if (!pc || this.peers.get(msg.fromId) !== pc) return;
+          await setVoiceRemoteDescription(pc, offerSdp);
+          if (this.localStream) {
+            const senders = pc.getSenders();
+            for (const track of this.localStream.getAudioTracks()) {
+              if (!senders.some((s) => s.track?.id === track.id)) {
+                pc.addTrack(track, this.localStream);
+              }
+            }
+          }
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          if (this.peers.get(msg.fromId) !== pc) return;
+          mp.sendVoiceSignal({
+            targetId: msg.fromId,
+            kind: 'answer',
+            sdp: pc.localDescription?.toJSON() ?? answer,
+          });
+        } catch {
+          if (pc && this.peers.get(msg.fromId) === pc) {
+            this.cleanupPeer(msg.fromId);
+            this.emitState();
+          }
         }
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        mp.sendVoiceSignal({
-          targetId: msg.fromId,
-          kind: 'answer',
-          sdp: pc.localDescription?.toJSON() ?? answer,
-        });
-      } catch {
-        this.cleanupPeer(msg.fromId);
-      }
+      });
       return;
     }
 
     if (msg.kind === 'answer' && msg.sdp) {
-      const pc = this.peers.get(msg.fromId);
-      if (pc && pc.signalingState !== 'stable') {
-        try {
-          await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
-        } catch {
-          // ignore
+      const answerSdp = msg.sdp;
+      this.enqueuePeerOp(msg.fromId, async () => {
+        const pc = this.peers.get(msg.fromId);
+        if (pc && pc.signalingState !== 'stable') {
+          try {
+            await setVoiceRemoteDescription(pc, answerSdp);
+          } catch {
+            // ignore
+          }
         }
-      }
+      });
       return;
     }
 
     if (msg.kind === 'ice' && msg.candidate) {
       const pc = this.peers.get(msg.fromId);
       if (pc) {
-        try {
-          await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
-        } catch {
-          // ignore
-        }
+        await addRemoteIceCandidate(pc, msg.candidate);
       }
     }
   }
@@ -606,7 +736,7 @@ export class LobbyVoiceManager {
     audio.autoplay = true;
     (audio as HTMLAudioElement & { playsInline?: boolean }).playsInline = true;
     audio.srcObject = stream;
-    audio.muted = this.isDeafened;
+    audio.muted = this.isDeafened || this.pausedForKaraoke;
     audio.volume = this.incomingVolume;
     void audio.play().catch(() => {});
     this.remoteAudios.set(peerId, audio);
@@ -614,12 +744,13 @@ export class LobbyVoiceManager {
 
   private syncRemoteAudioVolumes(): void {
     for (const audio of this.remoteAudios.values()) {
-      audio.muted = this.isDeafened;
+      audio.muted = this.isDeafened || this.pausedForKaraoke;
       audio.volume = this.incomingVolume;
     }
   }
 
   private cleanupPeer(peerId: string): void {
+    this.pendingRenegotiate.delete(peerId);
     const pc = this.peers.get(peerId);
     if (pc) {
       pc.close();

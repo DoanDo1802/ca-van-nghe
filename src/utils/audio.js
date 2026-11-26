@@ -1,85 +1,17 @@
-// Warm Ambient Lo-Fi Jazz Synthesizer & Procedural Foley Sound FX
-// Generates lush Rhodes jazz chords + footsteps + sitting sound effects using Web Audio API
-
-class AmbientLoungeAudio {
+class SoundEffects {
   constructor() {
     this.ctx = null;
-    this.isPlaying = false;
-    this.timer = null;
-    this.currentChord = 0;
     this.lastFootstepTime = 0;
-    this.duckFactor = 1.0;
-    this.busGain = null;
   }
 
   init() {
     if (!this.ctx) {
       const AudioContext = window.AudioContext || window.webkitAudioContext;
       this.ctx = new AudioContext();
-      this.busGain = this.ctx.createGain();
-      this.busGain.gain.value = this.duckFactor;
-      this.busGain.connect(this.ctx.destination);
     }
     if (this.ctx.state === 'suspended') {
       this.ctx.resume();
     }
-  }
-
-  setDucked(ducked) {
-    this.duckFactor = ducked ? 0.12 : 1.0;
-    if (this.ctx && this.busGain) {
-      this.busGain.gain.setTargetAtTime(this.duckFactor, this.ctx.currentTime, 0.25);
-    }
-  }
-
-  // Jazz chord progressions in Hz (Emaj9 -> C#m9 -> F#m9 -> B13)
-  chords = [
-    [164.81, 246.94, 311.13, 370.00, 493.88], // Emaj9
-    [138.59, 207.65, 277.18, 329.63, 440.00], // C#m9
-    [185.00, 277.18, 329.63, 440.00, 523.25], // F#m9
-    [123.47, 196.00, 277.18, 369.99, 493.88]  // B13
-  ];
-
-  playChord(notes) {
-    if (!this.ctx || !this.isPlaying) return;
-
-    const now = this.ctx.currentTime;
-    const masterGain = this.ctx.createGain();
-    masterGain.gain.setValueAtTime(0.08, now);
-
-    const filter = this.ctx.createBiquadFilter();
-    filter.type = 'lowpass';
-    filter.frequency.setValueAtTime(650, now);
-    filter.Q.setValueAtTime(1.2, now);
-
-    masterGain.connect(filter);
-    filter.connect(this.busGain || this.ctx.destination);
-
-    notes.forEach((freq, idx) => {
-      const osc = this.ctx.createOscillator();
-      const gain = this.ctx.createGain();
-
-      osc.type = idx % 2 === 0 ? 'sine' : 'triangle';
-      osc.frequency.setValueAtTime(freq, now);
-
-      const vibrato = this.ctx.createOscillator();
-      const vibratoGain = this.ctx.createGain();
-      vibrato.frequency.value = 4.5;
-      vibratoGain.gain.value = 1.2;
-      vibrato.connect(osc.frequency);
-      vibrato.start(now);
-
-      gain.gain.setValueAtTime(0, now);
-      gain.gain.linearRampToValueAtTime(0.12, now + 0.8 + idx * 0.1);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + 5.5);
-
-      osc.connect(gain);
-      gain.connect(masterGain);
-
-      osc.start(now);
-      osc.stop(now + 6.0);
-      vibrato.stop(now + 6.0);
-    });
   }
 
   // Soft wooden floor footstep sound effect
@@ -199,38 +131,6 @@ class AmbientLoungeAudio {
       src.start(t);
     }
   }
-
-  start() {
-    this.init();
-    this.isPlaying = true;
-
-    const playNext = () => {
-      if (!this.isPlaying) return;
-      this.playChord(this.chords[this.currentChord]);
-      this.currentChord = (this.currentChord + 1) % this.chords.length;
-      this.timer = setTimeout(playNext, 4500);
-    };
-
-    playNext();
-  }
-
-  stop() {
-    this.isPlaying = false;
-    if (this.timer) {
-      clearTimeout(this.timer);
-      this.timer = null;
-    }
-  }
-
-  toggle() {
-    if (this.isPlaying) {
-      this.stop();
-      return false;
-    } else {
-      this.start();
-      return true;
-    }
-  }
 }
 
-export const loungeAudio = new AmbientLoungeAudio();
+export const soundEffects = new SoundEffects();

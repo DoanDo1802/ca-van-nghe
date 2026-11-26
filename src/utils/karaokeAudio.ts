@@ -102,8 +102,9 @@ class KaraokeAudioEngine {
   private ctx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
   private musicGain: GainNode | null = null;
-  private broadcastMusicGain: GainNode | null = null;
-  private audienceMusicVol = 0.6;
+  private broadcastTabGain: GainNode | null = null;
+  private broadcastTabSource: MediaStreamAudioSourceNode | null = null;
+  private backingMusicVolume = 0.6;
   private musicAnalyser: AnalyserNode | null = null;
   private keyAnalyser: AnalyserNode | null = null;
   private keyFreqBuf: Uint8Array<ArrayBuffer> | null = null;
@@ -127,9 +128,10 @@ class KaraokeAudioEngine {
   private micRecordBus: GainNode | null = null;
   private recordMicGain: GainNode | null = null;
   private localMonitorGain: GainNode | null = null;
-  private localMonitorEnabled = true;
+  private localMonitorEnabled = false;
+  private micRequestId = 0;
 
-  private audioEl: HTMLAudioElement | null = null;
+  private audioEl: HTMLMediaElement | null = null;
   private mediaSource: MediaElementAudioSourceNode | null = null;
   private customObjectUrl: string | null = null;
 
@@ -162,7 +164,7 @@ class KaraokeAudioEngine {
       limiter.connect(this.ctx.destination);
 
       this.musicGain = this.ctx.createGain();
-      this.musicGain.gain.value = 0.35;
+      this.musicGain.gain.value = this.backingMusicVolume;
       this.musicAnalyser = this.ctx.createAnalyser();
       this.musicAnalyser.fftSize = 128;
       this.musicGain.connect(this.musicAnalyser);
@@ -184,10 +186,10 @@ class KaraokeAudioEngine {
       broadcastLimiter.connect(this.micBroadcastDest);
       this.broadcastLimiter = broadcastLimiter;
 
-      this.broadcastMusicGain = this.ctx.createGain();
-      this.broadcastMusicGain.gain.value = this.audienceMusicVol;
-      this.musicGain.connect(this.broadcastMusicGain);
-      this.broadcastMusicGain.connect(broadcastLimiter);
+      this.broadcastTabGain = this.ctx.createGain();
+      this.broadcastTabGain.gain.value = this.backingMusicVolume;
+      this.musicGain.connect(broadcastLimiter);
+      this.broadcastTabGain.connect(broadcastLimiter);
 
       this.micRecordBus = this.ctx.createGain();
       this.micRecordBus.gain.value = 1.0;
@@ -241,26 +243,27 @@ class KaraokeAudioEngine {
       bassDb = 3.5,
       trebleDb = 4.5,
     } = options;
+    const requestId = ++this.micRequestId;
+    let stream: MediaStream | undefined;
     try {
       const ctx = this.ensureContext();
-      if (this.micStream) {
-        this.disableMic();
-      }
       const audioConstraints: MediaTrackConstraints = {
         echoCancellation,
         noiseSuppression: false,
         autoGainControl: false,
         ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
       };
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
-      this.micStream = stream;
-      this.micSource = ctx.createMediaStreamSource(stream);
-
+      stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
       const autoTuneNode = await createRapAutoTuneNode(ctx, this.autoTuneConfig);
-      if (this.micStream !== stream) {
+      if (requestId !== this.micRequestId) {
         autoTuneNode?.disconnect();
+        stream.getTracks().forEach((track) => track.stop());
         return false;
       }
+      const source = ctx.createMediaStreamSource(stream);
+      this.clearMic();
+      this.micStream = stream;
+      this.micSource = source;
 
       // 1. Fixed gentle Preamp Gain before EQ & Compressor
       const preamp = ctx.createGain();
@@ -367,7 +370,7 @@ class KaraokeAudioEngine {
       this.micGain.connect(this.micAnalyser);
 
       const monitorGain = ctx.createGain();
-      monitorGain.gain.value = this.localMonitorEnabled ? 1.0 : 0.0;
+      monitorGain.gain.value = this.isMonitorAudible() ? 1.0 : 0.0;
       monitorGain.connect(this.masterGain!);
       this.localMonitorGain = monitorGain;
 
@@ -399,14 +402,7 @@ class KaraokeAudioEngine {
         this.broadcastLimiter = limiter;
         broadcastInput = limiter;
       }
-      if (!this.micBroadcastDest && this.musicGain) {
-        if (!this.broadcastMusicGain) {
-          this.broadcastMusicGain = ctx.createGain();
-          this.broadcastMusicGain.gain.value = this.audienceMusicVol;
-        }
-        this.musicGain.connect(this.broadcastMusicGain);
-        this.broadcastMusicGain.connect(broadcastInput);
-      }
+      if (!this.micBroadcastDest) this.musicGain?.connect(broadcastInput);
       this.micBroadcastDest = broadcastDest;
       dry.connect(broadcastInput);
       wet.connect(broadcastInput);
@@ -437,11 +433,22 @@ class KaraokeAudioEngine {
       ];
       return true;
     } catch {
+      if (stream && this.micStream === stream) this.clearMic();
+      else stream?.getTracks().forEach((track) => track.stop());
       return false;
     }
   }
 
+  hasLiveMic(): boolean {
+    return this.micStream?.getAudioTracks().some((track) => track.readyState === 'live') ?? false;
+  }
+
   disableMic(): void {
+    this.micRequestId++;
+    this.clearMic();
+  }
+
+  private clearMic(): void {
     if (this.autoTuneNode) {
       this.autoTuneNode.port.onmessage = null;
       this.autoTuneNode = null;
@@ -477,6 +484,15 @@ class KaraokeAudioEngine {
 
   setLocalMonitor(enabled: boolean): void {
     this.localMonitorEnabled = enabled;
+    this.syncLocalMonitor();
+  }
+
+  private isMonitorAudible(): boolean {
+    return this.localMonitorEnabled && !this.broadcastTabSource;
+  }
+
+  private syncLocalMonitor(): void {
+    const enabled = this.isMonitorAudible();
     if (this.localMonitorGain && this.ctx) {
       this.localMonitorGain.gain.setTargetAtTime(enabled ? 1.0 : 0.0, this.ctx.currentTime, 0.02);
     }
@@ -489,6 +505,21 @@ class KaraokeAudioEngine {
 
   isLocalMonitorEnabled(): boolean {
     return this.localMonitorEnabled;
+  }
+
+  setBroadcastTabAudio(stream: MediaStream | null): void {
+    if (stream) {
+      const ctx = this.ensureContext();
+      const source = ctx.createMediaStreamSource(stream);
+      source.connect(this.broadcastTabGain!);
+      this.broadcastTabSource?.disconnect();
+      this.broadcastTabSource = source;
+    } else {
+      if (!this.broadcastTabSource) return;
+      this.broadcastTabSource.disconnect();
+      this.broadcastTabSource = null;
+    }
+    this.syncLocalMonitor();
   }
 
   getBroadcastStream(): MediaStream | null {
@@ -529,7 +560,7 @@ class KaraokeAudioEngine {
     tabGain.connect(recordLimiter);
 
     const recordMicGain = ctx.createGain();
-    recordMicGain.gain.value = this.localMonitorEnabled ? 0.0 : 1.0;
+    recordMicGain.gain.value = this.isMonitorAudible() ? 0.0 : 1.0;
     this.recordMicGain = recordMicGain;
     if (this.micRecordBus) {
       this.micRecordBus.connect(recordMicGain);
@@ -583,18 +614,11 @@ class KaraokeAudioEngine {
     return this.micStream !== null;
   }
 
-  setMusicVolume(v: number): void {
-    if (this.musicGain) this.musicGain.gain.value = Math.max(0, Math.min(1, v));
-  }
-
-  setAudienceMusicVolume(v: number): void {
-    const clamped = Math.max(0, Math.min(1, v));
-    this.audienceMusicVol = clamped;
-    if (this.broadcastMusicGain && this.ctx) {
-      this.broadcastMusicGain.gain.setTargetAtTime(clamped, this.ctx.currentTime, 0.03);
-    } else if (this.broadcastMusicGain) {
-      this.broadcastMusicGain.gain.value = clamped;
-    }
+  setBackingMusicVolume(volume: number): void {
+    this.backingMusicVolume = Math.max(0, Math.min(1, volume));
+    if (!this.ctx) return;
+    this.musicGain?.gain.setTargetAtTime(this.backingMusicVolume, this.ctx.currentTime, 0.03);
+    this.broadcastTabGain?.gain.setTargetAtTime(this.backingMusicVolume, this.ctx.currentTime, 0.03);
   }
 
   setMicVolume(v: number): void {
@@ -726,21 +750,32 @@ class KaraokeAudioEngine {
     };
   }
 
-  loadCustomFile(file: File): string {
+  loadCustomFile(file: File, video?: HTMLVideoElement): string {
     const ctx = this.ensureContext();
-    this.stop();
-    if (this.customObjectUrl) URL.revokeObjectURL(this.customObjectUrl);
+    this.clearCustomFile();
     this.customObjectUrl = URL.createObjectURL(file);
-
-    if (!this.audioEl) {
-      this.audioEl = new Audio();
-      this.audioEl.crossOrigin = 'anonymous';
-      this.mediaSource = ctx.createMediaElementSource(this.audioEl);
-      this.mediaSource.connect(this.musicGain!);
-    }
+    this.audioEl = video ?? new Audio();
     this.audioEl.src = this.customObjectUrl;
+    this.mediaSource = ctx.createMediaElementSource(this.audioEl);
+    this.mediaSource.connect(this.musicGain!);
     this.useCustomFile = true;
     return file.name;
+  }
+
+  clearCustomFile(): void {
+    this.stop();
+    this.mediaSource?.disconnect();
+    this.mediaSource = null;
+    if (this.audioEl) {
+      this.audioEl.removeAttribute('src');
+      this.audioEl.load();
+      this.audioEl = null;
+    }
+    if (this.customObjectUrl) {
+      URL.revokeObjectURL(this.customObjectUrl);
+      this.customObjectUrl = null;
+    }
+    this.useCustomFile = false;
   }
 
   selectBuiltInSong(song: KaraokeSong): void {
@@ -749,26 +784,32 @@ class KaraokeAudioEngine {
     this.currentSong = song;
   }
 
-  play(onEnded?: () => void): void {
-    const ctx = this.ensureContext();
+  play(onEnded?: () => void, onPlayError = onEnded): void {
     if (this.isPlaying) return;
+    if (this.useCustomFile) {
+      if (!this.audioEl) return;
+      this.ensureContext();
+      this.isPlaying = true;
+      const audio = this.audioEl;
+      const finish = (callback: (() => void) | undefined) => {
+        if (audio.onended !== onMediaEnded) return;
+        audio.onended = null;
+        this.isPlaying = false;
+        callback?.();
+      };
+      const onMediaEnded = () => finish(onEnded);
+      audio.onended = onMediaEnded;
+      void audio.play().catch(() => finish(onPlayError));
+      return;
+    }
+
+    const { chords, bpm } = this.currentSong;
+    if (!chords || !bpm) return;
+    const ctx = this.ensureContext();
     this.isPlaying = true;
 
-    if (this.useCustomFile && this.audioEl) {
-      this.audioEl.onended = () => {
-        this.isPlaying = false;
-        onEnded?.();
-      };
-      void this.audioEl.play();
-      return;
-    }
-
-    if (!this.currentSong.chords || !this.currentSong.bpm) {
-      return;
-    }
-
     this.startPerf = performance.now() - this.pausedOffset * 1000;
-    const beatMs = (60 / this.currentSong.bpm) * 1000;
+    const beatMs = (60 / bpm) * 1000;
 
     const triggerBeat = () => {
       if (!this.isPlaying || !this.ctx || !this.musicGain || !this.currentSong.chords) return;
@@ -825,6 +866,7 @@ class KaraokeAudioEngine {
     if (!this.isPlaying) return;
     this.isPlaying = false;
     if (this.useCustomFile && this.audioEl) {
+      this.audioEl.onended = null;
       this.audioEl.pause();
     } else {
       this.pausedOffset = this.getCurrentTime();
@@ -844,6 +886,7 @@ class KaraokeAudioEngine {
       this.seqTimer = null;
     }
     if (this.audioEl) {
+      this.audioEl.onended = null;
       this.audioEl.pause();
       this.audioEl.currentTime = 0;
     }
@@ -887,18 +930,32 @@ class KaraokeAudioEngine {
   }
 
   dispose(): void {
-    this.stop();
+    this.setBroadcastTabAudio(null);
+    this.clearCustomFile();
     this.disableMic();
     if (this.keyPollTimer !== null) {
       clearInterval(this.keyPollTimer);
       this.keyPollTimer = null;
     }
-    if (this.customObjectUrl) {
-      URL.revokeObjectURL(this.customObjectUrl);
-      this.customObjectUrl = null;
-    }
+    this.masterGain?.disconnect();
+    this.masterGain = null;
+    this.musicGain?.disconnect();
+    this.musicGain = null;
+    this.broadcastTabGain?.disconnect();
+    this.broadcastTabGain = null;
+    this.micBroadcastDest?.disconnect();
+    this.micBroadcastDest = null;
+    this.broadcastLimiter?.disconnect();
+    this.broadcastLimiter = null;
+    this.micRecordBus?.disconnect();
+    this.micRecordBus = null;
+    this.musicAnalyser?.disconnect();
+    this.musicAnalyser = null;
+    this.keyAnalyser?.disconnect();
+    this.keyAnalyser = null;
+    this.keyFreqBuf = null;
     if (this.ctx) {
-      void this.ctx.close();
+      void this.ctx.close().catch(() => {});
       this.ctx = null;
     }
   }

@@ -40,3 +40,7 @@ Dự án Website 3D trải nghiệm không gian quán cafe / lounge / quầy bar
 # Mở trình duyệt tại:
 http://localhost:3000
 ```
+
+### TURN cho voice chat và karaoke
+
+Đặt `VITE_VOICE_TURN_CREDENTIAL_URL` thành URL của endpoint GET do máy chủ cấp thông tin TURN tạm thời. Endpoint trả JSON dạng `{ "iceServers": [{ "urls": ["turn:relay.example.com:3478", "turns:relay.example.com:5349"], "username": "...", "credential": "..." }], "expiresAt": 1795651200000 }`, với `expiresAt` là thời điểm hết hạn theo Unix milliseconds. Giữ khóa cấp thông tin TURN ở máy chủ. Sau khi đặt biến môi trường, build lại ứng dụng. Voice chat và karaoke dùng STUN khi chưa cấu hình endpoint hoặc khi endpoint lỗi.

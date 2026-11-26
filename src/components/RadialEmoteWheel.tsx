@@ -1,13 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Mic, Music, Sparkles, X } from 'lucide-react';
 
-export type RadialEmoteId = 'sing' | 'samba' | 'hiphop' | 'swing';
+export type RadialEmoteId = 'sing' | 'samba' | 'hiphop' | 'swing' | 'wavehiphop' | 'twerk';
 
 interface RadialSlice {
   id: RadialEmoteId;
   label: string;
   sublabel: string;
-  angleDeg: number; // Center angle in degrees (-90 = top, 0 = right, 90 = bottom, 180 = left)
+  angleDeg: number; // Center angle in degrees (-90 = top, 0 = right, 90 = bottom, ±180 = left)
   accent: string;
 }
 
@@ -23,22 +23,36 @@ const SLICES: RadialSlice[] = [
     id: 'samba',
     label: 'Nhảy Samba',
     sublabel: 'Samba Dancing',
-    angleDeg: 0,
+    angleDeg: -30,
     accent: '#f59e0b',
   },
   {
     id: 'hiphop',
     label: 'Slide Hip Hop',
     sublabel: 'Hip Hop Dance',
-    angleDeg: 90,
+    angleDeg: 30,
     accent: '#38bdf8',
   },
   {
     id: 'swing',
     label: 'Swing Dance',
     sublabel: 'Swing Dancing',
-    angleDeg: 180,
+    angleDeg: 90,
     accent: '#a855f7',
+  },
+  {
+    id: 'wavehiphop',
+    label: 'Wave Hip Hop',
+    sublabel: 'Wave Hip Hop Dance',
+    angleDeg: 150,
+    accent: '#10b981',
+  },
+  {
+    id: 'twerk',
+    label: 'Dancing Twerk',
+    sublabel: 'Dancing Twerk',
+    angleDeg: -150,
+    accent: '#ec4899',
   },
 ];
 
@@ -53,10 +67,17 @@ function getSliceFromOffset(dx: number, dy: number): RadialEmoteId | null {
   if (dist < 40) return null;
   // Screen atan2: -90 is top, 0 is right, 90 is bottom, ±180 is left
   const deg = (Math.atan2(dy, dx) * 180) / Math.PI;
-  if (deg >= -135 && deg < -45) return 'sing';
-  if (deg >= -45 && deg < 45) return 'samba';
-  if (deg >= 45 && deg < 135) return 'hiphop';
-  return 'swing';
+  let bestId: RadialEmoteId | null = null;
+  let bestDiff = 30;
+  for (const slice of SLICES) {
+    const rawDiff = Math.abs(deg - slice.angleDeg);
+    const wrappedDiff = Math.min(rawDiff, 360 - rawDiff);
+    if (wrappedDiff <= bestDiff) {
+      bestDiff = wrappedDiff;
+      bestId = slice.id;
+    }
+  }
+  return bestId;
 }
 
 function describeAnnularSector(
@@ -152,7 +173,7 @@ export const RadialEmoteWheel: React.FC<RadialEmoteWheelProps> = ({
 
   if (!isOpen || disabled) return null;
 
-  const size = 288;
+  const size = 312;
   const c = size / 2;
 
   const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -179,11 +200,11 @@ export const RadialEmoteWheel: React.FC<RadialEmoteWheelProps> = ({
       <div className="relative flex items-center justify-center" style={{ width: size, height: size }}>
         <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
           {SLICES.map((slice) => {
-            const startDeg = slice.angleDeg - 43;
-            const endDeg = slice.angleDeg + 43;
+            const startDeg = slice.angleDeg - 28;
+            const endDeg = slice.angleDeg + 28;
             const isHovered = hoveredId === slice.id;
             const isCurrent = activeEmote === slice.id;
-            const d = describeAnnularSector(c, c, 46, 134, startDeg, endDeg);
+            const d = describeAnnularSector(c, c, 46, 146, startDeg, endDeg);
             return (
               <path
                 key={slice.id}
@@ -210,7 +231,7 @@ export const RadialEmoteWheel: React.FC<RadialEmoteWheelProps> = ({
         {/* Labels positioned at each slice center */}
         {SLICES.map((slice) => {
           const rad = (slice.angleDeg * Math.PI) / 180;
-          const rLabel = 92;
+          const rLabel = 98;
           const lx = c + rLabel * Math.cos(rad);
           const ly = c + rLabel * Math.sin(rad);
           const isHovered = hoveredId === slice.id;

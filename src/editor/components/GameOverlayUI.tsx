@@ -16,7 +16,7 @@ import {
   type RoomStatusSnapshot,
 } from '../../network/MultiplayerManager';
 import { INTERACTIVE_OBJECTS } from '../../data/sceneData';
-import { loungeAudio } from '../../utils/audio';
+import { soundEffects } from '../../utils/audio';
 import { EditorEngine } from '../../engine/EditorEngine';
 import {
   getSceneDefinition,
@@ -31,6 +31,7 @@ const ENABLE_VOICE_CHAT = false;
 
 export const GameOverlayUI: React.FC = () => {
   const engine = EditorEngine.getInstance();
+  const initialStage = engine.getStageAudioState();
   const [currentSceneId, setCurrentSceneId] = useState(() => engine.getSceneId());
   const [currentSceneName, setCurrentSceneName] = useState(() => engine.getSceneName());
   const [nearbyPrompt, setNearbyPrompt] = useState<NearbyPromptData | null>(null);
@@ -38,24 +39,47 @@ export const GameOverlayUI: React.FC = () => {
   const [isSitting, setIsSitting] = useState(false);
   const [cameraMode, setCameraMode] = useState<'third' | 'first'>('third');
   const [isNightMode, setIsNightMode] = useState(false);
-  const [isAudioPlaying, setIsAudioPlaying] = useState(false);
   const [isStageModalOpen, setIsStageModalOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [stageSourceType, setStageSourceType] = useState<'media' | 'youtube'>('media');
-  const [stageYoutubeId, setStageYoutubeId] = useState<string | null>(null);
-  const [youtubeQuality, setYoutubeQuality] = useState('hd720');
+  const [stageSourceType, setStageSourceType] = useState<'media' | 'youtube'>(
+    () => (initialStage?.sourceType === 'youtube' ? 'youtube' : 'media')
+  );
+  const [stageYoutubeId, setStageYoutubeId] = useState<string | null>(
+    () => initialStage?.youtubeVideoId ?? null
+  );
+  const [youtubeQuality, setYoutubeQuality] = useState(
+    () => initialStage?.youtubeQuality ?? 'hd720'
+  );
   const [renderScale, setRenderScale] = useState(1);
-  const [stageMediaUrl, setStageMediaUrl] = useState('/media/bello-ballo.mp4');
-  const [stageMediaTitle, setStageMediaTitle] = useState('Live Acoustic Session — Bello Ballo');
-  const [isStagePlaying, setIsStagePlaying] = useState(true);
-  const [stageVolume, setStageVolume] = useState(0.8);
-  const [isStageVideoMuted, setIsStageVideoMuted] = useState(false);
-  const [isScreenOn, setIsScreenOn] = useState(true);
+  const [stageMediaUrl, setStageMediaUrl] = useState(
+    () => initialStage?.mediaUrl ?? '/media/bello-ballo.mp4'
+  );
+  const [stageMediaTitle, setStageMediaTitle] = useState(
+    () => initialStage?.title ?? 'Live Acoustic Session — Bello Ballo'
+  );
+  const [isStagePlaying, setIsStagePlaying] = useState(
+    () => initialStage?.isPlaying ?? true
+  );
+  const [stageVolume, setStageVolume] = useState(
+    () => initialStage?.volume ?? 0.8
+  );
+  const [isStageVideoMuted, setIsStageVideoMuted] = useState(
+    () => initialStage?.isMuted ?? false
+  );
+  const [isStageMuteSelected, setIsStageMuteSelected] = useState(
+    () => initialStage?.isMuteSelected ?? false
+  );
+  const [isScreenOn, setIsScreenOn] = useState(
+    () => initialStage?.isScreenOn ?? true
+  );
   const [activeEmote, setActiveEmote] = useState<string | null>(null);
   const [isKaraokeOpen, setIsKaraokeOpen] = useState(false);
   const [roomStatus, setRoomStatus] = useState<RoomStatusSnapshot>(() =>
     MultiplayerManager.getInstance().getRoomStatus()
   );
+  const canPerform = !roomStatus.joiningOrInRoom || roomStatus.karaokeTurn?.singerId === roomStatus.localPlayerId;
+  const isPerforming = isKaraokeOpen && canPerform;
+  const hadKaraokeTurnRef = useRef(false);
   const canOpenSettings = !roomStatus.connected || roomStatus.isHost || roomStatus.localIsAdmin;
   const canOpenSettingsRef = useRef(canOpenSettings);
   canOpenSettingsRef.current = canOpenSettings;
@@ -70,6 +94,16 @@ export const GameOverlayUI: React.FC = () => {
       setIsSettingsOpen(false);
     }
   }, [canOpenSettings]);
+
+  useEffect(() => {
+    const ownsTurn = roomStatus.karaokeTurn?.singerId === roomStatus.localPlayerId;
+    if (isKaraokeOpen && roomStatus.joiningOrInRoom && !ownsTurn &&
+        (hadKaraokeTurnRef.current || roomStatus.karaokeTurn)) {
+      setStageErrorToast(hadKaraokeTurnRef.current ? 'Bạn đã rời lượt karaoke' : 'Sân khấu đang có người hát');
+      window.dispatchEvent(new CustomEvent('cavannghe:karaoke-exit'));
+    }
+    hadKaraokeTurnRef.current = isKaraokeOpen && ownsTurn;
+  }, [isKaraokeOpen, roomStatus.joiningOrInRoom, roomStatus.karaokeTurn, roomStatus.localPlayerId]);
 
   const enterSceneDirect = useCallback((cleanId: string) => {
     setNearbyPrompt(null);
@@ -165,8 +199,11 @@ export const GameOverlayUI: React.FC = () => {
       setIsStagePlaying(detail.isPlaying);
       setStageVolume(detail.volume);
       setIsStageVideoMuted(detail.isMuted);
+      setIsStageMuteSelected(detail.isMuteSelected ?? detail.isMuted);
       setIsScreenOn(detail.isScreenOn);
     };
+
+    const onKaraokeUnavailable = () => setStageErrorToast('Sân khấu chưa sẵn sàng hoặc đang có người hát');
 
     const onStageError = (e: Event) => {
       const msg = (e as CustomEvent<string>).detail;
@@ -176,17 +213,6 @@ export const GameOverlayUI: React.FC = () => {
     const onRoomStatus = (e: Event) => {
       const detail = (e as CustomEvent<RoomStatusSnapshot>).detail;
       if (detail) setRoomStatus(detail);
-    };
-
-    const onRemoteLoungeAudio = (e: Event) => {
-      const detail = (e as CustomEvent<{ playing?: boolean }>).detail;
-      if (!detail || typeof detail.playing !== 'boolean') return;
-      if (detail.playing) {
-        loungeAudio.start();
-      } else {
-        loungeAudio.stop();
-      }
-      setIsAudioPlaying(detail.playing);
     };
 
     const onEmoteCleared = () => {
@@ -199,11 +225,11 @@ export const GameOverlayUI: React.FC = () => {
     window.addEventListener('cavannghe:sit', onSit);
     window.addEventListener('cavannghe:camera-mode', onCamMode);
     window.addEventListener('cavannghe:karaoke', onKaraoke);
+    window.addEventListener('cavannghe:karaoke-unavailable', onKaraokeUnavailable);
     window.addEventListener('cavannghe:emote-cleared', onEmoteCleared);
     window.addEventListener('cavannghe:stage-audio-changed', onStageAudioChanged);
     window.addEventListener('cavannghe:stage-media-error', onStageError);
     window.addEventListener('cavannghe:room-status', onRoomStatus);
-    window.addEventListener('cavannghe:remote-lounge-audio', onRemoteLoungeAudio);
     window.addEventListener('keydown', onKeyDown);
 
     return () => {
@@ -214,11 +240,11 @@ export const GameOverlayUI: React.FC = () => {
       window.removeEventListener('cavannghe:sit', onSit);
       window.removeEventListener('cavannghe:camera-mode', onCamMode);
       window.removeEventListener('cavannghe:karaoke', onKaraoke);
+      window.removeEventListener('cavannghe:karaoke-unavailable', onKaraokeUnavailable);
       window.removeEventListener('cavannghe:emote-cleared', onEmoteCleared);
       window.removeEventListener('cavannghe:stage-audio-changed', onStageAudioChanged);
       window.removeEventListener('cavannghe:stage-media-error', onStageError);
       window.removeEventListener('cavannghe:room-status', onRoomStatus);
-      window.removeEventListener('cavannghe:remote-lounge-audio', onRemoteLoungeAudio);
       window.removeEventListener('keydown', onKeyDown);
     };
   }, [requestSceneTransition]);
@@ -229,12 +255,6 @@ export const GameOverlayUI: React.FC = () => {
       EditorEngine.getInstance().setNightMode(next);
       return next;
     });
-  };
-
-  const handleToggleAudio = () => {
-    const playing = loungeAudio.toggle();
-    setIsAudioPlaying(playing);
-    MultiplayerManager.getInstance().broadcastLoungeAudio(playing);
   };
 
   const handleTriggerInteract = () => {
@@ -264,7 +284,7 @@ export const GameOverlayUI: React.FC = () => {
 
   const handleTriggerEmote = (emoteName: string) => {
     if (emoteName === 'clap') {
-      loungeAudio.playClapSound(0, 0.85);
+      soundEffects.playClapSound(0, 0.85);
       MultiplayerManager.getInstance().broadcastApplause();
     }
     setActiveEmote((prev) => {
@@ -324,11 +344,20 @@ export const GameOverlayUI: React.FC = () => {
         />
 
         <KaraokeOverlay
-          isOpen={isKaraokeOpen}
+          isOpen={isPerforming}
           onExit={() => window.dispatchEvent(new CustomEvent('cavannghe:karaoke-exit'))}
         />
 
-        <KaraokeAudienceSync isSingingLocal={isKaraokeOpen} />
+        {isKaraokeOpen && !canPerform && (
+          <div className="fixed bottom-16 left-1/2 z-[85] flex -translate-x-1/2 items-center gap-3 rounded-lg bg-neutral-950 px-3 py-2 text-sm text-white">
+            <span>Đang nhận lượt hát</span>
+            <button type="button" className="underline" onClick={() => window.dispatchEvent(new CustomEvent('cavannghe:karaoke-exit'))}>
+              Rời sân khấu
+            </button>
+          </div>
+        )}
+
+        <KaraokeAudienceSync isSingingLocal={isPerforming} />
 
         <ChatBox hideOnMobile={isKaraokeOpen} />
 
@@ -341,7 +370,7 @@ export const GameOverlayUI: React.FC = () => {
           }}
         />
 
-        {ENABLE_VOICE_CHAT && <VoiceChatBar isKaraokeOpen={isKaraokeOpen} />}
+        {ENABLE_VOICE_CHAT && <VoiceChatBar isKaraokeOpen={isPerforming} />}
 
         {interactiveItem && (
           <DetailModal
@@ -406,11 +435,8 @@ export const GameOverlayUI: React.FC = () => {
             EditorEngine.getInstance().setStageYouTube(videoId, title);
           }}
           isMuted={isStageVideoMuted}
-          onToggleMute={() => {
-            const next = !isStageVideoMuted;
-            setIsStageVideoMuted(next);
-            EditorEngine.getInstance().setStageMuted(next);
-          }}
+          isMuteSelected={isStageMuteSelected}
+          onToggleMute={() => EditorEngine.getInstance().setStageMuted(!isStageMuteSelected)}
           isScreenOn={isScreenOn}
           onToggleScreen={() => {
             const next = !isScreenOn;
@@ -440,17 +466,29 @@ export const GameOverlayUI: React.FC = () => {
             setIsScreenOn(next);
             EditorEngine.getInstance().setStageScreenOn(next);
           }}
-          isStageVideoMuted={isStageVideoMuted}
-          onToggleStageMute={() => {
-            const next = !isStageVideoMuted;
-            setIsStageVideoMuted(next);
-            EditorEngine.getInstance().setStageMuted(next);
-          }}
+          isStageVideoMuted={isStageMuteSelected}
+          onToggleStageMute={() => EditorEngine.getInstance().setStageMuted(!isStageMuteSelected)}
           onOpenStageScreenModal={() => setIsStageModalOpen(true)}
+          karaokeTurnControl={roomStatus.connected && roomStatus.isHost ? (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-white/10 p-4 text-xs text-white">
+              <span>
+                {roomStatus.karaokeTurn
+                  ? `Đang trên sân khấu: ${roomStatus.players.find((player) => player.id === roomStatus.karaokeTurn?.singerId)?.name ?? 'Người hát'}`
+                  : 'Sân khấu karaoke đang trống'}
+              </span>
+              {roomStatus.karaokeTurn && (
+                <button
+                  type="button"
+                  className="rounded-md border border-rose-400/40 px-3 py-2 text-rose-200 hover:bg-rose-500/20"
+                  onClick={() => MultiplayerManager.getInstance().removeKaraokeSinger()}
+                >
+                  Mời rời sân khấu
+                </button>
+              )}
+            </div>
+          ) : null}
           isNightMode={isNightMode}
           onToggleNightMode={handleToggleNight}
-          isAudioPlaying={isAudioPlaying}
-          onToggleAudio={handleToggleAudio}
           onOpenMenu={undefined}
           onOpenReservation={undefined}
           onResetLayout={undefined}

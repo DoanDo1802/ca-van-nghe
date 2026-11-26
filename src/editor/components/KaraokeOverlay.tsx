@@ -34,11 +34,12 @@ import {
   type MusicalKey,
   type ScaleType,
 } from '../../utils/rapAutoTune';
+import { captureKaraokeTabAudio } from '../../utils/karaokeTabAudio';
 import { karaokeRecorder } from '../../utils/karaokeRecorder';
-import { loungeAudio } from '../../utils/audio';
 import { MultiplayerManager } from '../../network/MultiplayerManager';
 import { KaraokeVoiceManager } from '../../network/KaraokeVoiceManager';
 import { DebugLogger } from '../../utils/debugLogger';
+import { KaraokeLocalVideo } from './KaraokeLocalVideo';
 
 interface KaraokeOverlayProps {
   isOpen: boolean;
@@ -65,10 +66,12 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
 
   const [ytResults, setYtResults] = useState<KaraokeSong[] | null>(null);
   const [isSearching, setIsSearching] = useState(false);
+  const [isDownloadingVideo, setIsDownloadingVideo] = useState(false);
+  const [downloadedVideo, setDownloadedVideo] = useState<HTMLVideoElement | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
 
   const [activeSong, setActiveSong] = useState<KaraokeSong | null>(null);
-  const [queue, setQueue] = useState<KaraokeSong[]>([KARAOKE_SONGS[1], KARAOKE_SONGS[2]]);
+  const [queue, setQueue] = useState<KaraokeSong[]>([]);
   const [youtubeVideoId, setYoutubeVideoId] = useState<string | null>(null);
   const [customFileName, setCustomFileName] = useState<string | null>(null);
   const [isPlayerCompact, setIsPlayerCompact] = useState(true);
@@ -78,6 +81,8 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
   const [isResizingPlayer, setIsResizingPlayer] = useState(false);
 
   const [isFilePlaying, setIsFilePlaying] = useState(false);
+  const isFileSessionActiveRef = useRef(false);
+  const micChangeIdRef = useRef(0);
   const [micEnabled, setMicEnabled] = useState(false);
   const [micError, setMicError] = useState<string | null>(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -130,7 +135,7 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
 
   const clampPlayerWidth = (w: number) => {
     const maxW = Math.max(220, Math.min(720, window.innerWidth - 16));
-    return Math.max(180, Math.min(maxW, Math.round(w)));
+    return Math.max(215, Math.min(maxW, Math.round(w)));
   };
 
   const clampPlayerPos = (x: number, y: number) => {
@@ -160,7 +165,7 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
   useEffect(() => {
     if (!isOpen) return;
     setPlayerPos((prev) => (prev ? clampPlayerPos(prev.x, prev.y) : null));
-  }, [isOpen, isPlayerCompact, playerWidth, youtubeVideoId]);
+  }, [isOpen, isPlayerCompact, playerWidth, youtubeVideoId, downloadedVideo]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -170,11 +175,11 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
           active: true,
           youtubeVideoId,
           title: activeSong?.title ?? 'YouTube Karaoke',
-          isPlaying: lastYtPlayingRef.current ?? true,
+          isPlaying: lastYtPlayingRef.current === true,
           currentTime: ytCurrentTimeRef.current,
           musicVolume: audienceMusicVolume,
         });
-      } else if (customFileName) {
+      } else if (customFileName && isFileSessionActiveRef.current) {
         MultiplayerManager.getInstance().broadcastKaraokeState({
           active: true,
           youtubeVideoId: null,
@@ -290,7 +295,31 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
   const isOpenRef = useRef(isOpen);
   isOpenRef.current = isOpen;
 
+  const tabCaptureRef = useRef<{ stream: MediaStream; cleanup: () => void } | null>(null);
+  const captureRequestRef = useRef(0);
+  const capturePendingRef = useRef(false);
+  const downloadRef = useRef<AbortController | null>(null);
+  const recordRequestRef = useRef(0);
+  const useLocalVideoDownload = import.meta.env.DEV && ['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname);
+
+  const cancelVideoDownload = () => {
+    downloadRef.current?.abort();
+    downloadRef.current = null;
+    setIsDownloadingVideo(false);
+  };
+
+  const stopTabCapture = () => {
+    captureRequestRef.current++;
+    const capture = tabCaptureRef.current;
+    if (!capture) return;
+    tabCaptureRef.current = null;
+    capture.cleanup();
+    karaokeAudio.setBroadcastTabAudio(null);
+    capture.stream.getTracks().forEach((track) => track.stop());
+  };
+
   const enableSingerMic = async (): Promise<boolean> => {
+    const changeId = ++micChangeIdRef.current;
     setMicError(null);
     const ok = await karaokeAudio.enableMic({
       deviceId: selectedDeviceId || undefined,
@@ -300,6 +329,7 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
       bassDb,
       trebleDb,
     });
+    if (changeId !== micChangeIdRef.current) return false;
     if (!isOpenRef.current) {
       if (ok) {
         karaokeAudio.disableMic();
@@ -314,7 +344,7 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
         KaraokeVoiceManager.getInstance().startBroadcasting(stream);
       }
       const list = await karaokeAudio.listInputDevices();
-      if (isOpenRef.current) {
+      if (isOpenRef.current && changeId === micChangeIdRef.current) {
         setInputDevices(list);
         if (!selectedDeviceId && list[0]?.deviceId) {
           setSelectedDeviceId(list[0].deviceId);
@@ -328,8 +358,15 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
   };
 
   useEffect(() => {
-    loungeAudio.setDucked(isOpen);
     if (!isOpen) {
+      stopTabCapture();
+      cancelVideoDownload();
+      recordRequestRef.current++;
+      karaokeAudio.clearCustomFile();
+      setCustomFileName(null);
+      setDownloadedVideo(null);
+      micChangeIdRef.current++;
+      isFileSessionActiveRef.current = false;
       if (karaokeRecorder.getSnapshot().isRecording) {
         void karaokeRecorder.stop();
       }
@@ -346,6 +383,8 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
       setIsRecordingsOpen(false);
       setIsFilePlaying(false);
       setYoutubeVideoId(null);
+      setActiveSong(null);
+      setSearchError(null);
       window.dispatchEvent(new CustomEvent('cavannghe:karaoke-playing', { detail: false }));
       KaraokeVoiceManager.getInstance().stopBroadcasting();
       MultiplayerManager.getInstance().broadcastKaraokeState({
@@ -376,6 +415,7 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
   }, [recState.isRecording, recState.recordingStartedAt]);
 
   const handleToggleRecord = async () => {
+    const request = ++recordRequestRef.current;
     if (recState.isRecording) {
       await karaokeRecorder.stop();
       setIsMenuOpen(false);
@@ -392,8 +432,9 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
       if (!ok) return;
     }
 
+    if (!isOpenRef.current || request !== recordRequestRef.current) return;
     let tabAudioStream: MediaStream | null = null;
-    if (youtubeVideoId && navigator.mediaDevices?.getDisplayMedia) {
+    if (youtubeVideoId && !tabCaptureRef.current && navigator.mediaDevices?.getDisplayMedia) {
       try {
         const displayStream = await navigator.mediaDevices.getDisplayMedia({
           video: true,
@@ -407,6 +448,10 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
           selfBrowserSurface: 'include',
           systemAudio: 'include',
         } as DisplayMediaStreamOptions);
+        if (!isOpenRef.current || request !== recordRequestRef.current) {
+          displayStream.getTracks().forEach((track) => track.stop());
+          return;
+        }
         displayStream.getVideoTracks().forEach((t) => t.stop());
         if (displayStream.getAudioTracks().length > 0) {
           tabAudioStream = displayStream;
@@ -415,6 +460,7 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
           setMicError('Chưa bật "Chia sẻ âm thanh tab" — đang ghi âm chỉ có giọng hát.');
         }
       } catch {
+        if (!isOpenRef.current || request !== recordRequestRef.current) return;
         setMicError('Chưa chia sẻ âm thanh tab — đang ghi âm chỉ có giọng hát.');
       }
     }
@@ -486,6 +532,13 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
       if (presenceVolumeTimerRef.current !== null) {
         window.clearTimeout(presenceVolumeTimerRef.current);
       }
+      stopTabCapture();
+      downloadRef.current?.abort();
+      recordRequestRef.current++;
+      if (karaokeRecorder.getSnapshot().isRecording) {
+        void karaokeRecorder.stop();
+      }
+      karaokeAudio.clearCustomFile();
       KaraokeVoiceManager.getInstance().stopBroadcasting();
       MultiplayerManager.getInstance().broadcastKaraokeState({
         active: false,
@@ -496,7 +549,6 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
       karaokeAudio.disableMic();
       karaokeAudio.stop();
       window.dispatchEvent(new CustomEvent('cavannghe:karaoke-playing', { detail: false }));
-      loungeAudio.setDucked(false);
     };
   }, []);
 
@@ -508,9 +560,8 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
     }
     const onMessage = (e: MessageEvent) => {
       if (
-        typeof e.origin === 'string' &&
-        !e.origin.includes('youtube.com') &&
-        !e.origin.includes('youtube-nocookie.com')
+        !ytIframeRef.current || e.source !== ytIframeRef.current.contentWindow ||
+        e.origin !== 'https://www.youtube.com'
       ) {
         return;
       }
@@ -538,6 +589,7 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
         const now = Date.now();
         if (
           lastYtPlayingRef.current === true &&
+          (parsed.info.playerState === undefined || parsed.info.playerState === 1) &&
           (jumped || now - lastTimeSyncSentRef.current >= 3000)
         ) {
           lastTimeSyncSentRef.current = now;
@@ -566,8 +618,8 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
         playerState = parsed.info;
       }
       if (playerState === undefined) return;
-      const nextPlaying = playerState === 1 ? true : playerState === 2 || playerState === 0 ? false : null;
-      if (nextPlaying === null || lastYtPlayingRef.current === nextPlaying) return;
+      const nextPlaying = playerState === 1;
+      if (![0, 1, 2].includes(playerState) || lastYtPlayingRef.current === nextPlaying) return;
       lastYtPlayingRef.current = nextPlaying;
       lastTimeSyncSentRef.current = Date.now();
       window.dispatchEvent(new CustomEvent('cavannghe:karaoke-playing', { detail: nextPlaying }));
@@ -601,6 +653,8 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
 
   if (!isOpen) return null;
 
+  const isSharingTabAudio = tabCaptureRef.current !== null;
+  const needsTabAudioPermission = !useLocalVideoDownload && MultiplayerManager.getInstance().getRoomStatus().joiningOrInRoom && !isSharingTabAudio;
   const pastedYtId = extractYoutubeId(searchQuery);
 
   const handleSearchYouTube = async (overrideQuery?: string) => {
@@ -648,40 +702,187 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
     }
   };
 
-  const playYouTubeSong = (song: KaraokeSong) => {
+  const stopYouTubeSong = () => {
+    stopTabCapture();
+    ytIframeRef.current?.contentWindow?.postMessage(
+      JSON.stringify({ event: 'command', func: 'pauseVideo', args: [] }),
+      'https://www.youtube.com',
+    );
+    setYoutubeVideoId(null);
+    setActiveSong(null);
+    window.dispatchEvent(new CustomEvent('cavannghe:karaoke-playing', { detail: false }));
+    MultiplayerManager.getInstance().broadcastKaraokeState({
+      active: false,
+      youtubeVideoId: null,
+      title: '',
+      isPlaying: false,
+    });
+  };
+
+  const playYouTubeSong = async (song: KaraokeSong): Promise<boolean> => {
+    const mp = MultiplayerManager.getInstance();
+    if (useLocalVideoDownload) {
+      if (downloadRef.current) return false;
+      const controller = new AbortController();
+      downloadRef.current = controller;
+      setIsDownloadingVideo(true);
+      setSearchError(null);
+      try {
+        const response = await fetch(`/api/dev/karaoke-video?id=${encodeURIComponent(song.youtubeId)}`, {
+          method: 'POST',
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          const result = await response.json().catch(() => null);
+          throw new Error(result?.error ?? 'Không tải được video.');
+        }
+        const blob = await response.blob();
+        if (!isOpenRef.current || controller.signal.aborted) return false;
+        const video = document.createElement('video');
+        video.playsInline = true;
+        video.className = 'block w-full aspect-video bg-black';
+        playLocalFile(new File([blob], song.title, { type: 'video/mp4' }), video);
+        return true;
+      } catch (error) {
+        if (!controller.signal.aborted && isOpenRef.current) {
+          setSearchError(error instanceof Error ? error.message : 'Không tải được video.');
+          setIsPickerOpen(true);
+        }
+        return false;
+      } finally {
+        if (downloadRef.current === controller) {
+          downloadRef.current = null;
+          setIsDownloadingVideo(false);
+        }
+      }
+    }
+    if (mp.getRoomStatus().joiningOrInRoom && !tabCaptureRef.current) {
+      if (capturePendingRef.current) return false;
+      capturePendingRef.current = true;
+      const request = ++captureRequestRef.current;
+      let stream: MediaStream | undefined;
+      try {
+        const capture = await captureKaraokeTabAudio();
+        stream = capture.stream;
+        if (!isOpenRef.current || request !== captureRequestRef.current) {
+          stream.getTracks().forEach((track) => track.stop());
+          return false;
+        }
+
+        // A previously playing file would otherwise enter the live mix on both inputs.
+        karaokeAudio.stop();
+        karaokeAudio.setBroadcastTabAudio(stream);
+        karaokeAudio.setBackingMusicVolume(audienceMusicVolumeRef.current / 100);
+        const broadcastStream = karaokeAudio.getBroadcastStream();
+        if (broadcastStream) KaraokeVoiceManager.getInstance().startBroadcasting(broadcastStream);
+
+        const onEnded = () => {
+          if (tabCaptureRef.current?.stream !== stream) return;
+          stopYouTubeSong();
+          setIsPickerOpen(true);
+          setSearchError('Đã ngừng chia sẻ tiếng tab. Chọn lại bài YouTube hoặc chọn file nhạc.');
+        };
+        const onHandleChange = () => {
+          if (!capture.isKaraokeTab()) onEnded();
+        };
+        const tracks = stream.getTracks();
+        const videoTrack = stream.getVideoTracks()[0];
+        for (const track of tracks) track.addEventListener('ended', onEnded);
+        videoTrack?.addEventListener('capturehandlechange', onHandleChange);
+        tabCaptureRef.current = {
+          stream,
+          cleanup: () => {
+            for (const track of tracks) track.removeEventListener('ended', onEnded);
+            videoTrack?.removeEventListener('capturehandlechange', onHandleChange);
+          },
+        };
+      } catch (error) {
+        stream?.getTracks().forEach((track) => track.stop());
+        if (isOpenRef.current && request === captureRequestRef.current) {
+          karaokeAudio.setBroadcastTabAudio(null);
+          setIsPickerOpen(true);
+          setSearchError(
+            error instanceof Error && !(error instanceof DOMException)
+              ? error.message
+              : 'Chưa chia sẻ tiếng tab. Chọn lại bài YouTube hoặc chọn file nhạc.',
+          );
+        }
+        return false;
+      } finally {
+        capturePendingRef.current = false;
+      }
+    }
+
+    setSearchError(null);
     DebugLogger.log('KaraokeOverlay', `Playing YouTube karaoke: "${song.title}" (${song.youtubeId})`);
+    isFileSessionActiveRef.current = false;
     karaokeAudio.stop();
+    karaokeAudio.clearCustomFile();
     setCustomFileName(null);
+    setDownloadedVideo(null);
     setIsFilePlaying(false);
     setActiveSong(song);
     setYoutubeVideoId(song.youtubeId);
     ytCurrentTimeRef.current = 0;
     lastTimeSyncSentRef.current = Date.now();
-    lastYtPlayingRef.current = true;
+    lastYtPlayingRef.current = null;
     setIsPickerOpen(false);
-    window.dispatchEvent(new CustomEvent('cavannghe:karaoke-playing', { detail: true }));
+    window.dispatchEvent(new CustomEvent('cavannghe:karaoke-playing', { detail: false }));
     MultiplayerManager.getInstance().broadcastKaraokeState({
       active: true,
       youtubeVideoId: song.youtubeId,
       title: song.title,
-      isPlaying: true,
+      isPlaying: false,
       currentTime: 0,
       musicVolume: audienceMusicVolume,
+    });
+    return true;
+  };
+
+  const handleFileEnded = (title: string, temporaryVideo = false) => {
+    if (temporaryVideo) {
+      karaokeAudio.clearCustomFile();
+      setDownloadedVideo(null);
+      setCustomFileName(null);
+    }
+    isFileSessionActiveRef.current = false;
+    setIsFilePlaying(false);
+    window.dispatchEvent(new CustomEvent('cavannghe:karaoke-playing', { detail: false }));
+    MultiplayerManager.getInstance().broadcastKaraokeState({
+      active: false,
+      youtubeVideoId: null,
+      title,
+      isPlaying: false,
     });
   };
 
   const handleUploadFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    cancelVideoDownload();
+    playLocalFile(file);
+    e.target.value = '';
+  };
+
+  const playLocalFile = (file: File, video?: HTMLVideoElement) => {
+    stopTabCapture();
     setYoutubeVideoId(null);
-    const name = karaokeAudio.loadCustomFile(file);
+    const name = karaokeAudio.loadCustomFile(file, video);
+    setDownloadedVideo(video ?? null);
     setCustomFileName(name);
     setActiveSong(null);
-    karaokeAudio.setAudienceMusicVolume(audienceMusicVolume / 100);
-    karaokeAudio.play(() => {
-      setIsFilePlaying(false);
-      window.dispatchEvent(new CustomEvent('cavannghe:karaoke-playing', { detail: false }));
-    });
+    karaokeAudio.setBackingMusicVolume(audienceMusicVolume / 100);
+    isFileSessionActiveRef.current = true;
+    karaokeAudio.play(
+      () => handleFileEnded(name, Boolean(video)),
+      video ? () => {
+        setIsFilePlaying(false);
+        window.dispatchEvent(new CustomEvent('cavannghe:karaoke-playing', { detail: false }));
+        MultiplayerManager.getInstance().broadcastKaraokeState({
+          active: true, youtubeVideoId: null, title: name, isPlaying: false, currentTime: 0,
+        });
+      } : undefined,
+    );
     setIsFilePlaying(true);
     window.dispatchEvent(new CustomEvent('cavannghe:karaoke-playing', { detail: true }));
     setIsPickerOpen(false);
@@ -697,27 +898,63 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
       currentTime: 0,
       musicVolume: audienceMusicVolume,
     });
-    e.target.value = '';
+  };
+
+  const closeLocalFile = () => {
+    const title = customFileName ?? '';
+    karaokeAudio.clearCustomFile();
+    setDownloadedVideo(null);
+    setCustomFileName(null);
+    handleFileEnded(title);
+  };
+
+  const handleExternalFilePause = () => {
+    if (!isFilePlaying) return;
+    const title = customFileName ?? 'Nhạc tải lên';
+    karaokeAudio.pause();
+    setIsFilePlaying(false);
+    window.dispatchEvent(new CustomEvent('cavannghe:karaoke-playing', { detail: false }));
+    MultiplayerManager.getInstance().broadcastKaraokeState({
+      active: true,
+      youtubeVideoId: null,
+      title,
+      isPlaying: false,
+      currentTime: karaokeAudio.getCurrentTime(),
+      musicVolume: audienceMusicVolume,
+    });
   };
 
   const handleToggleFilePlay = () => {
     const next = !isFilePlaying;
+    const title = customFileName ?? 'Nhạc tải lên';
     if (isFilePlaying) {
       karaokeAudio.pause();
       setIsFilePlaying(false);
       window.dispatchEvent(new CustomEvent('cavannghe:karaoke-playing', { detail: false }));
     } else {
-      karaokeAudio.play(() => {
-        setIsFilePlaying(false);
-        window.dispatchEvent(new CustomEvent('cavannghe:karaoke-playing', { detail: false }));
-      });
+      isFileSessionActiveRef.current = true;
+      karaokeAudio.play(
+        () => handleFileEnded(title, Boolean(downloadedVideo)),
+        () => {
+          setIsFilePlaying(false);
+          window.dispatchEvent(new CustomEvent('cavannghe:karaoke-playing', { detail: false }));
+          MultiplayerManager.getInstance().broadcastKaraokeState({
+            active: true,
+            youtubeVideoId: null,
+            title,
+            isPlaying: false,
+            currentTime: karaokeAudio.getCurrentTime(),
+            musicVolume: audienceMusicVolume,
+          });
+        }
+      );
       setIsFilePlaying(true);
       window.dispatchEvent(new CustomEvent('cavannghe:karaoke-playing', { detail: true }));
     }
     MultiplayerManager.getInstance().broadcastKaraokeState({
       active: true,
       youtubeVideoId: null,
-      title: customFileName ?? 'Nhạc tải lên',
+      title,
       isPlaying: next,
       currentTime: karaokeAudio.getCurrentTime(),
       musicVolume: audienceMusicVolume,
@@ -727,7 +964,7 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
   const handleToggleMic = async () => {
     setMicError(null);
     if (micEnabled) {
-      KaraokeVoiceManager.getInstance().stopBroadcasting();
+      micChangeIdRef.current++;
       karaokeAudio.disableMic();
       setMicEnabled(false);
       return;
@@ -739,21 +976,29 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
     deviceId?: string;
     echoCancellation?: boolean;
   }) => {
-    if (!micEnabled) return;
+    const deviceId = overrides.deviceId ?? selectedDeviceId;
+    const nextEchoCancellation = overrides.echoCancellation ?? echoCancellation;
+    if (!micEnabled) {
+      setSelectedDeviceId(deviceId);
+      setEchoCancellation(nextEchoCancellation);
+      return;
+    }
+    const changeId = ++micChangeIdRef.current;
+    setMicError(null);
     const ok = await karaokeAudio.enableMic({
-      deviceId: (overrides.deviceId ?? selectedDeviceId) || undefined,
-      echoCancellation: overrides.echoCancellation ?? echoCancellation,
+      deviceId: deviceId || undefined,
+      echoCancellation: nextEchoCancellation,
       echoAmount,
       micSensitivity: micPercentToGain(micPercent),
       bassDb,
       trebleDb,
     });
+    if (changeId !== micChangeIdRef.current || !isOpenRef.current) return;
     if (ok) {
-      const stream = karaokeAudio.getBroadcastStream();
-      if (stream) {
-        KaraokeVoiceManager.getInstance().startBroadcasting(stream);
-      }
+      setSelectedDeviceId(deviceId);
+      setEchoCancellation(nextEchoCancellation);
     } else {
+      setMicEnabled(karaokeAudio.hasLiveMic());
       setMicError('Không thể chuyển sang thiết bị micro này');
     }
   };
@@ -813,19 +1058,19 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
     setQueue((prev) => (prev.some((s) => s.youtubeId === song.youtubeId) ? prev : [...prev, song]));
   };
 
-  const handleNextInQueue = () => {
-    if (queue.length === 0) return;
-    const [next, ...rest] = queue;
-    setQueue(rest);
-    playYouTubeSong(next);
+  const handleNextInQueue = async () => {
+    const [next] = queue;
+    if (next && await playYouTubeSong(next)) {
+      setQueue((previous) => previous.filter((song) => song.youtubeId !== next.youtubeId));
+    }
   };
 
   return (
     <div className="fixed inset-0 pointer-events-none flex flex-col justify-between p-2.5 sm:p-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-[max(0.75rem,env(safe-area-inset-top))] z-30">
       {/* Top Bar: Draggable Compact Player + Single-Row Controls */}
       <div className="flex flex-col sm:flex-row items-start justify-between gap-2 sm:gap-3">
-        {/* Live YouTube Karaoke Video Player */}
-        {youtubeVideoId ? (
+        {/* Karaoke video player */}
+        {youtubeVideoId || downloadedVideo ? (
           <div
             ref={playerBoxRef}
             style={{
@@ -853,7 +1098,7 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
               <span className="inline-flex items-center gap-1 font-medium truncate min-w-0">
                 <GripHorizontal className="w-3.5 h-3.5 text-neutral-500 shrink-0" />
                 <Youtube className="w-3.5 h-3.5 text-red-500 shrink-0" />
-                <span className="truncate">{activeSong?.title ?? 'YouTube Karaoke'}</span>
+                <span className="truncate">{downloadedVideo ? customFileName : activeSong?.title ?? 'YouTube Karaoke'}</span>
               </span>
               <div className="flex items-center gap-0.5 shrink-0">
                 {queue.length > 0 && (
@@ -876,16 +1121,8 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
                   {isPlayerCompact ? <Maximize2 className="w-3 h-3" /> : <Minimize2 className="w-3 h-3" />}
                 </button>
                 <button
-                  onClick={() => {
-                    setYoutubeVideoId(null);
-                    setActiveSong(null);
-                    MultiplayerManager.getInstance().broadcastKaraokeState({
-                      active: false,
-                      youtubeVideoId: null,
-                      title: '',
-                      isPlaying: false,
-                    });
-                  }}
+                  onClick={downloadedVideo ? closeLocalFile : stopYouTubeSong}
+                  aria-label="Đóng video karaoke"
                   className="p-1 text-neutral-400 hover:text-white"
                 >
                   <X className="w-3 h-3" />
@@ -893,34 +1130,43 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
               </div>
             </div>
             <div className="relative">
-              <iframe
-                ref={ytIframeRef}
-                key={youtubeVideoId}
-                className={`w-full aspect-video block ${isDraggingPlayer || isResizingPlayer ? 'pointer-events-none' : ''}`}
-                src={`https://www.youtube.com/embed/${youtubeVideoId}?autoplay=1&rel=0&modestbranding=1&enablejsapi=1&origin=${encodeURIComponent(window.location.origin)}`}
-                title="YouTube Karaoke Player"
-                allow="autoplay; encrypted-media; picture-in-picture"
-                allowFullScreen
-                onLoad={() => {
-                  const sendListening = () => {
-                    const win = ytIframeRef.current?.contentWindow;
-                    win?.postMessage(
-                      JSON.stringify({ event: 'listening', id: 1, channel: 'widget' }),
-                      '*'
-                    );
-                  };
-                  sendListening();
-                  window.setTimeout(sendListening, 500);
-                  window.setTimeout(sendListening, 1400);
-                }}
-              />
+              {downloadedVideo ? (
+                <KaraokeLocalVideo
+                  video={downloadedVideo}
+                  isPlaying={isFilePlaying}
+                  onTogglePlay={handleToggleFilePlay}
+                  onExternalPause={handleExternalFilePause}
+                />
+              ) : (
+                <iframe
+                  ref={ytIframeRef}
+                  key={youtubeVideoId}
+                  className={`w-full aspect-video block ${isDraggingPlayer || isResizingPlayer ? 'pointer-events-none' : ''}`}
+                  src={`https://www.youtube.com/embed/${youtubeVideoId}?autoplay=1&rel=0&modestbranding=1&enablejsapi=1&origin=${encodeURIComponent(window.location.origin)}`}
+                  title="YouTube Karaoke Player"
+                  allow="autoplay; encrypted-media; picture-in-picture"
+                  allowFullScreen
+                  onLoad={() => {
+                    const sendListening = () => {
+                      const win = ytIframeRef.current?.contentWindow;
+                      win?.postMessage(
+                        JSON.stringify({ event: 'listening', id: 1, channel: 'widget' }),
+                        '*'
+                      );
+                    };
+                    sendListening();
+                    window.setTimeout(sendListening, 500);
+                    window.setTimeout(sendListening, 1400);
+                  }}
+                />
+              )}
               {/* Bottom-right resize handle */}
               <div
                 onPointerDown={handleResizePointerDown}
                 onPointerMove={handleResizePointerMove}
                 onPointerUp={handleResizePointerEnd}
                 onPointerCancel={handleResizePointerEnd}
-                title="Kéo góc để co dãn khung YouTube"
+                title="Kéo góc để đổi kích thước video"
                 className="absolute bottom-0 right-0 w-5 h-5 cursor-nwse-resize touch-none flex items-end justify-end p-1 bg-gradient-to-tl from-black/70 via-black/25 to-transparent hover:from-white/30 transition select-none z-10"
               >
                 <span className="w-2.5 h-2.5 border-r-2 border-b-2 border-white/75 rounded-br-[2px]" />
@@ -937,17 +1183,8 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
             </button>
             <span className="truncate max-w-[200px] font-medium">{customFileName}</span>
             <button
-              onClick={() => {
-                karaokeAudio.stop();
-                setCustomFileName(null);
-                setIsFilePlaying(false);
-                MultiplayerManager.getInstance().broadcastKaraokeState({
-                  active: false,
-                  youtubeVideoId: null,
-                  title: '',
-                  isPlaying: false,
-                });
-              }}
+              onClick={closeLocalFile}
+              aria-label="Đóng file karaoke"
               className="text-neutral-400 hover:text-white"
             >
               <X className="w-3.5 h-3.5" />
@@ -1344,7 +1581,6 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
                   value={selectedDeviceId}
                   onChange={(e) => {
                     const id = e.target.value;
-                    setSelectedDeviceId(id);
                     void restartMicWith({ deviceId: id });
                   }}
                   className="w-full bg-[#1e1e1e] border border-white/15 rounded-lg px-2.5 py-1.5 text-xs text-white outline-none focus:border-amber-400"
@@ -1365,7 +1601,6 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
               <div className="flex items-center gap-1.5">
                 <button
                   onClick={() => {
-                    setEchoCancellation(false);
                     void restartMicWith({ echoCancellation: false });
                   }}
                   className={`flex-1 py-1.5 rounded-lg text-[11px] font-medium border transition ${
@@ -1378,7 +1613,6 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
                 </button>
                 <button
                   onClick={() => {
-                    setEchoCancellation(true);
                     void restartMicWith({ echoCancellation: true });
                   }}
                   className={`flex-1 py-1.5 rounded-lg text-[11px] font-medium border transition ${
@@ -1391,23 +1625,32 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
                 </button>
               </div>
 
-              {/* Local Self-Monitoring Toggle */}
-              <button
-                type="button"
-                onClick={() => {
-                  const next = !localMonitor;
-                  setLocalMonitor(next);
-                  karaokeAudio.setLocalMonitor(next);
-                }}
-                className={`w-full py-1.5 px-2.5 rounded-lg text-[11px] font-medium border flex items-center justify-between transition ${
-                  localMonitor
-                    ? 'bg-white/10 text-white border-white/20'
-                    : 'bg-white/5 text-neutral-400 border-white/10 hover:bg-white/10'
-                }`}
-              >
-                <span>Tự nghe giọng mình (Monitor)</span>
-                <span className="font-mono">{localMonitor ? 'BẬT' : 'TẮT'}</span>
-              </button>
+              <div className="space-y-1">
+                <button
+                  type="button"
+                  disabled={isSharingTabAudio}
+                  aria-pressed={localMonitor && !isSharingTabAudio}
+                  aria-describedby={isSharingTabAudio ? 'karaoke-monitor-sharing-note' : undefined}
+                  onClick={() => {
+                    const next = !localMonitor;
+                    setLocalMonitor(next);
+                    karaokeAudio.setLocalMonitor(next);
+                  }}
+                  className={`w-full py-1.5 px-2.5 rounded-lg text-[11px] font-medium border flex items-center justify-between transition disabled:opacity-60 disabled:cursor-not-allowed ${
+                    localMonitor && !isSharingTabAudio
+                      ? 'bg-white/10 text-white border-white/20'
+                      : 'bg-white/5 text-neutral-400 border-white/10 enabled:hover:bg-white/10'
+                  }`}
+                >
+                  <span>Tự nghe giọng mình (Monitor)</span>
+                  <span className="font-mono">{isSharingTabAudio ? 'TẠM TẮT' : localMonitor ? 'BẬT' : 'TẮT'}</span>
+                </button>
+                {isSharingTabAudio && (
+                  <p id="karaoke-monitor-sharing-note" className="text-[10px] text-neutral-400">
+                    Tạm tắt khi thu tiếng YouTube để khán giả không nghe giọng bị lặp. Mic vẫn được gửi.
+                  </p>
+                )}
+              </div>
 
               {/* 4 Quick Presets */}
               <div className="grid grid-cols-2 gap-1.5">
@@ -1599,7 +1842,9 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
               <div className="space-y-2.5 pt-2 border-t border-white/10 text-[11px]">
                 <div className="space-y-1">
                   <label className="flex items-center justify-between gap-2">
-                    <span className="text-sky-300 font-medium">Nhạc nền (cho người nghe)</span>
+                    <span className="text-sky-300 font-medium">
+                      {youtubeVideoId ? 'Nhạc nền gửi khán giả' : 'Âm lượng nhạc đang phát'}
+                    </span>
                     <span className="w-10 text-right font-mono text-sky-200">{audienceMusicVolume}%</span>
                   </label>
                   <input
@@ -1611,13 +1856,15 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
                     onChange={(e) => {
                       const v = parseFloat(e.target.value);
                       setAudienceMusicVolume(v);
-                      karaokeAudio.setAudienceMusicVolume(v / 100);
+                      karaokeAudio.setBackingMusicVolume(v / 100);
                       scheduleAudienceMusicVolumeSync(v);
                     }}
                     className="w-full accent-sky-400"
                   />
                   <p className="text-[10px] text-neutral-400 leading-snug">
-                    Chỉ chỉnh độ to nhạc phía người nghe. Nhạc của bạn tự chỉnh trên khung YouTube.
+                    {youtubeVideoId
+                      ? 'Âm lượng bạn nghe chỉnh trên trình phát YouTube.'
+                      : 'Chỉnh nhạc bạn nghe và nhạc trong bản trộn gửi khán giả.'}
                   </p>
                 </div>
 
@@ -1822,6 +2069,16 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
             </button>
           </div>
 
+          {isDownloadingVideo && (
+            <p role="status" className="mx-3.5 mt-3 text-[11px] text-amber-200">Đang tải video karaoke…</p>
+          )}
+
+          {needsTabAudioPermission && (
+            <p className="mx-3.5 mt-3 text-[11px] text-neutral-400">
+              Khi chọn bài YouTube, hãy cho phép chia sẻ tiếng tab hiện tại. Khán giả chỉ nhận âm thanh đã trộn.
+            </p>
+          )}
+
           {searchError && (
             <div className="mx-3.5 mt-2.5 px-3 py-1.5 rounded-lg bg-amber-500/15 border border-amber-400/30 text-[11px] text-amber-200">
               {searchError}
@@ -1930,9 +2187,10 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
               queue.map((song, idx) => (
                 <div
                   key={`${song.id}-${idx}`}
-                  onClick={() => {
-                    setQueue((prev) => prev.filter((_, i) => i !== idx));
-                    playYouTubeSong(song);
+                  onClick={async () => {
+                    if (await playYouTubeSong(song)) {
+                      setQueue((previous) => previous.filter((item) => item.youtubeId !== song.youtubeId));
+                    }
                   }}
                   className="flex items-center gap-3 p-2 rounded-xl hover:bg-white/8 cursor-pointer transition"
                 >

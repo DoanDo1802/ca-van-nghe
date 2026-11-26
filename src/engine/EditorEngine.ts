@@ -267,7 +267,7 @@ export class EditorEngine {
       keyboard: new pc.Keyboard(window),
       graphicsDeviceOptions: {
         antialias: true,
-        alpha: false,
+        alpha: true,
         powerPreference: 'high-performance',
       },
     });
@@ -363,7 +363,8 @@ export class EditorEngine {
         if (this.sceneRoot) {
           KaraokeVoiceManager.getInstance().updateSpatialAudio(
             this.findGameCamera(this.sceneRoot),
-            MultiplayerManager.getInstance().getRemotePlayers()
+            MultiplayerManager.getInstance().getRemotePlayers(),
+            (playerId) => this.remotePlayerPool?.getRenderedPosition(playerId)
           );
         }
       }

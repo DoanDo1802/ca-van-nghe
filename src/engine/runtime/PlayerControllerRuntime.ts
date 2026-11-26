@@ -203,6 +203,10 @@ export class PlayerControllerRuntime {
   update(dt: number): void {
     if (this.destroyed || !this.playerEntity || !this.cameraEntity) return;
     const clampedDt = Math.min(dt, 0.05);
+    if (this.isSitting && this.currentSeatId &&
+        MultiplayerManager.getInstance().hasLostChairClaim(this.currentSeatId)) {
+      this.onStandUp();
+    }
 
     if (this.karaoke.isActive()) {
       this.karaoke.update(clampedDt);
@@ -260,6 +264,7 @@ export class PlayerControllerRuntime {
   destroy(): void {
     this.destroyed = true;
     pc.Application.getApplication()?.systems.off('postUpdate', this.onPostUpdate);
+    if (this.karaoke.isActive()) MultiplayerManager.getInstance().releaseKaraokeTurn();
     this.karaoke.destroy();
     window.removeEventListener('keydown', this.onKeyDown);
     window.removeEventListener('keyup', this.onKeyUp);
@@ -628,7 +633,11 @@ export class PlayerControllerRuntime {
           } else if (target === 'Singing' && baseLayer.states.includes('Idle_Talking_Loop')) {
             target = 'Idle_Talking_Loop';
           } else if (
-            (target === 'Samba_Dancing' || target === 'Slide_Hip_Hop_Dance' || target === 'Swing_Dancing') &&
+            (target === 'Samba_Dancing' ||
+              target === 'Slide_Hip_Hop_Dance' ||
+              target === 'Swing_Dancing' ||
+              target === 'Wave_Hip_Hop_Dance' ||
+              target === 'Dancing_Twerk') &&
             baseLayer.states.includes('Dance_Loop')
           ) {
             target = 'Dance_Loop';
@@ -1037,6 +1046,10 @@ export class PlayerControllerRuntime {
 
   private enterKaraoke(): void {
     if (!this.playerEntity) return;
+    if (!MultiplayerManager.getInstance().requestKaraokeTurn()) {
+      window.dispatchEvent(new CustomEvent('cavannghe:karaoke-unavailable'));
+      return;
+    }
     if (this.activeEmoteAnim !== null) {
       this.activeEmoteAnim = null;
       this.activeEmoteId = null;
@@ -1055,10 +1068,12 @@ export class PlayerControllerRuntime {
   }
 
   private exitKaraoke(): void {
+    if (!this.karaoke.isActive()) return;
     DebugLogger.log('KaraokeStage', 'Local player exited Acoustic Karaoke Stage');
     this.targetCamYaw = null;
     this.targetCamPitch = null;
     this.karaoke.exit();
+    MultiplayerManager.getInstance().releaseKaraokeTurn();
     this.playAnim('Idle_Loop');
     this.syncNetPositionImmediate();
   }
@@ -1117,6 +1132,8 @@ export class PlayerControllerRuntime {
       samba: 'Samba_Dancing',
       hiphop: 'Slide_Hip_Hop_Dance',
       swing: 'Swing_Dancing',
+      wavehiphop: 'Wave_Hip_Hop_Dance',
+      twerk: 'Dancing_Twerk',
       talk: 'Idle_Talking_Loop',
       interact: 'Interact',
       crouch: 'Crouch_Idle_Loop',

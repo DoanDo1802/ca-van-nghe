@@ -11,7 +11,8 @@ export interface StageMediaState {
   isPlaying: boolean;
   isScreenOn: boolean;
   volume: number; // 0..1 (local client volume)
-  isMuted: boolean; // local client mute
+  isMuted: boolean; // effective mute at this client
+  isMuteSelected?: boolean; // room mute for controllers, personal mute for guests
   currentTime?: number;
   timeUpdatedAt?: number;
 }
@@ -115,7 +116,7 @@ function isAudioOnlyUrl(url: string): boolean {
  *
  * Designed for online readiness:
  * - `mediaUrl`, `isPlaying`, `isScreenOn` represent syncable Stage State.
- * - `volume`, `isMuted` and HRTF 3D panning stay local per client.
+ * - Controllers sync room mute. Personal mute, volume and HRTF panning stay local.
  */
 export class StageAudioManager {
   private readonly app: pc.Application;
@@ -146,6 +147,8 @@ export class StageAudioManager {
   private pannerLeft: PannerNode | null = null;
   private pannerRight: PannerNode | null = null;
 
+  private personalMuted = false;
+
   private state: StageMediaState = {
     sourceType: 'media',
     mediaUrl: '/media/bello-ballo.mp4',
@@ -160,6 +163,7 @@ export class StageAudioManager {
   };
 
   private destroyed = false;
+  private lastCanControlStage = false;
   private pendingGestureResume = false;
   private pendingSeekSec: number | null = null;
   private lastYtTime = 0;
@@ -225,12 +229,14 @@ export class StageAudioManager {
     this.holeScreenMat.cull = pc.CULLFACE_NONE;
     this.holeScreenMat.update();
 
+    this.lastCanControlStage = this.canControlStage();
     this.initMediaPipeline();
     window.addEventListener('pointerdown', this.onUserGesture, { passive: true });
     window.addEventListener('keydown', this.onUserGesture, { passive: true });
     window.addEventListener('focus', this.onUserGesture, { passive: true });
     document.addEventListener('visibilitychange', this.onUserGesture);
     window.addEventListener('cavannghe:youtube-time-update', this.onYoutubeTimeUpdate);
+    window.addEventListener('cavannghe:room-status', this.onRoomStatus);
 
     const mp = MultiplayerManager.getInstance();
     const isGuestInRoom = mp.isConnected() && !mp.isHost() && !mp.isLocalAdmin();
@@ -250,6 +256,7 @@ export class StageAudioManager {
       this.applyRemoteLiveSync();
     });
 
+    mp.setOnStageSnapshotRequested(() => this.broadcastIfHost(false));
     mp.requestStageResync();
 
     this.stageSyncTimer = window.setInterval(() => {
@@ -261,7 +268,15 @@ export class StageAudioManager {
   }
 
   getState(): StageMediaState {
-    return { ...this.state };
+    return {
+      ...this.state,
+      isMuted: this.isEffectivelyMuted(),
+      isMuteSelected: this.canControlStage() ? this.state.isMuted : this.personalMuted,
+    };
+  }
+
+  private isEffectivelyMuted(): boolean {
+    return this.state.isMuted || (!this.canControlStage() && this.personalMuted);
   }
 
   private canControlStage(): boolean {
@@ -327,7 +342,6 @@ export class StageAudioManager {
     if (!this.canControlStage()) return;
     this.state.isPlaying = playing;
     if (this.state.sourceType === 'media') {
-      this.ensureAudioGraph();
       if (this.videoEl) {
         if (playing) {
           void this.tryPlayVideo();
@@ -343,22 +357,18 @@ export class StageAudioManager {
 
   setVolume(volume: number): void {
     this.state.volume = Math.max(0, Math.min(1, volume));
-    if (this.state.volume > 0 && this.state.isMuted) {
-      this.state.isMuted = false;
-    }
-    this.ensureAudioGraph();
+    if (this.state.volume > 0) this.personalMuted = false;
     this.syncGain();
     this.emitStateChanged();
   }
 
   setMuted(muted: boolean): void {
-    this.state.isMuted = muted;
-    this.ensureAudioGraph();
+    const controlsRoom = this.canControlStage();
+    if (controlsRoom) this.state.isMuted = muted;
+    else this.personalMuted = muted;
     this.syncGain();
     this.emitStateChanged();
-    if (this.canControlStage()) {
-      this.broadcastIfHost();
-    }
+    if (controlsRoom) this.broadcastIfHost();
   }
 
   setScreenOn(on: boolean): void {
@@ -408,12 +418,8 @@ export class StageAudioManager {
       remote.youtubeVideoId !== this.state.youtubeVideoId;
 
     const expectedSec =
-      typeof remote.currentTime === 'number' && !remote.isLive
-        ? Math.max(
-            0,
-            remote.currentTime +
-              (remote.isPlaying ? Math.max(0, (Date.now() - remote.updatedAt) / 1000) : 0)
-          )
+      typeof remote.currentTime === 'number' && Number.isFinite(remote.currentTime) && !remote.isLive
+        ? Math.max(0, remote.currentTime)
         : null;
 
     this.state.sourceType = remote.sourceType;
@@ -562,6 +568,7 @@ export class StageAudioManager {
     if (this.destroyed) return;
     this.destroyed = true;
     MultiplayerManager.getInstance().setOnRemoteStage(null);
+    MultiplayerManager.getInstance().setOnStageSnapshotRequested(null);
     MultiplayerManager.getInstance().setOnRemoteStageLiveSync(null);
     if (this.stageSyncTimer !== null) {
       window.clearInterval(this.stageSyncTimer);
@@ -573,6 +580,7 @@ export class StageAudioManager {
     window.removeEventListener('focus', this.onUserGesture);
     document.removeEventListener('visibilitychange', this.onUserGesture);
     window.removeEventListener('cavannghe:youtube-time-update', this.onYoutubeTimeUpdate);
+    window.removeEventListener('cavannghe:room-status', this.onRoomStatus);
 
     if (this.screenEntity?.render && this.originalScreenMat) {
       for (const mi of this.screenEntity.render.meshInstances) {
@@ -729,6 +737,8 @@ export class StageAudioManager {
     pannerL.connect(ctx.destination);
     pannerR.connect(ctx.destination);
 
+    this.videoEl.muted = false;
+    this.videoEl.volume = 1;
     this.audioCtx = ctx;
     this.mediaSource = source;
     this.masterGain = masterGain;
@@ -833,8 +843,9 @@ export class StageAudioManager {
   };
 
   private async tryPlayVideo(): Promise<void> {
-    if (!this.videoEl || this.destroyed) return;
+    if (!this.videoEl || this.destroyed || this.state.sourceType !== 'media' || this.state.domVideoFallback) return;
     try {
+      this.syncGain();
       if (this.audioCtx && this.audioCtx.state === 'suspended') {
         await this.audioCtx.resume();
       }
@@ -846,7 +857,7 @@ export class StageAudioManager {
   }
 
   private onUserGesture = (): void => {
-    if (this.destroyed) return;
+    if (this.destroyed || this.state.sourceType !== 'media' || this.state.domVideoFallback) return;
     this.ensureAudioGraph();
     if (this.audioCtx && this.audioCtx.state === 'suspended') {
       void this.audioCtx.resume().catch(() => {});
@@ -914,7 +925,7 @@ export class StageAudioManager {
   }
 
   private computeYouTubeSpatialVolume(cam: pc.Entity | null): number {
-    if (!this.state.isPlaying || !this.state.isScreenOn || this.state.isMuted) {
+    if (!this.state.isPlaying || !this.state.isScreenOn || this.isEffectivelyMuted()) {
       return 0;
     }
     if (!cam) {
@@ -946,13 +957,19 @@ export class StageAudioManager {
   }
 
   private syncGain(): void {
-    if (!this.masterGain || !this.audioCtx) return;
     const active =
       this.state.sourceType === 'media' &&
       !this.state.domVideoFallback &&
       this.state.isPlaying &&
       this.state.isScreenOn &&
-      !this.state.isMuted;
+      !this.isEffectivelyMuted();
+    if (!this.masterGain || !this.audioCtx) {
+      if (this.videoEl) {
+        this.videoEl.muted = !active;
+        this.videoEl.volume = this.state.volume;
+      }
+      return;
+    }
     // Scale by 0.72 because two PannerNodes sum at the listener
     const target = active ? this.state.volume * 0.72 : 0;
     this.masterGain.gain.setTargetAtTime(target, this.audioCtx.currentTime, 0.04);
@@ -1030,6 +1047,14 @@ export class StageAudioManager {
     };
     return walk(this.sceneRoot);
   }
+
+  private onRoomStatus = (): void => {
+    const next = this.canControlStage();
+    if (next === this.lastCanControlStage) return;
+    this.lastCanControlStage = next;
+    this.syncGain();
+    this.emitStateChanged();
+  };
 
   private emitStateChanged(): void {
     window.dispatchEvent(

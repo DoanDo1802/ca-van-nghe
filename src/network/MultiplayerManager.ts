@@ -13,6 +13,7 @@ import { DebugLogger } from '../utils/debugLogger';
 export const PUBLIC_LOBBY_ROOM_ID = 'public-lobby';
 
 export interface NetworkStageState {
+  senderId?: string;
   sourceType: 'media' | 'youtube';
   mediaUrl: string;
   youtubeVideoId: string | null;
@@ -25,7 +26,13 @@ export interface NetworkStageState {
   updatedAt: number;
 }
 
+export interface KaraokeTurn {
+  id: string;
+  singerId: string;
+}
+
 export interface NetworkKaraokeState {
+  turnId?: string;
   active: boolean;
   singerId: string;
   singerName: string;
@@ -40,6 +47,8 @@ export interface NetworkKaraokeState {
 export interface RtcSignalMessage {
   fromId: string;
   targetId: string;
+  turnId?: string;
+  negotiationId?: string;
   kind: 'offer' | 'answer' | 'ice' | 'ready' | 'bye';
   sdp?: RTCSessionDescriptionInit;
   candidate?: RTCIceCandidateInit;
@@ -86,10 +95,12 @@ export interface RemotePlayerState {
   avatarModel?: string;
   joinedAt: number;
   seq: number;
+  chairStateSeq?: number;
 }
 
 export interface RoomStatusSnapshot {
   connected: boolean;
+  joiningOrInRoom: boolean;
   roomId: string;
   localPlayerId: string;
   localPlayerName: string;
@@ -97,6 +108,7 @@ export interface RoomStatusSnapshot {
   isHost: boolean;
   hostId: string | null;
   hostName: string | null;
+  karaokeTurn: KaraokeTurn | null;
   playerCount: number;
   players: Array<{ id: string; name: string; isHost: boolean; isLocal: boolean; isAdmin: boolean }>;
 }
@@ -109,10 +121,12 @@ interface PresencePayload {
   avatarModel?: string;
   joinedAt: number;
   chairId: string | null;
+  playerStateSeq?: number;
   stageState?: NetworkStageState;
   karaokeState?: NetworkKaraokeState;
+  karaokeTurn?: KaraokeTurn | null;
+  karaokeRequestId?: string;
   voicePolicy?: RoomVoicePolicy;
-  loungeAudioPlaying?: boolean;
 }
 
 const BROADCAST_INTERVAL_MS = 50; // 20 Hz when moving for smooth curves
@@ -153,9 +167,14 @@ export class MultiplayerManager {
   private joinedAt = Date.now();
   private localChairId: string | null = null;
   private hostStageState: NetworkStageState | null = null;
+  private lastStageUpdateBySender = new Map<string, number>();
   private remoteKaraokeState: NetworkKaraokeState | null = null;
+  private karaokeTurn: KaraokeTurn | null = null;
+  private localKaraokeRequestId: string | null = null;
+  private dismissedKaraokeRequests = new Set<string>();
+  private karaokeRecovery: { turnId: string; deadline: number; timer: number } | null = null;
+  private lastRemoteKaraokeTimestamp = -1;
   private localKaraokeState: NetworkKaraokeState | null = null;
-  private hostLoungeAudioPlaying: boolean | null = null;
   private hostId: string | null = null;
   private hostName: string | null = null;
 
@@ -171,6 +190,7 @@ export class MultiplayerManager {
   private localSeq = 0;
 
   private onRemoteStageCallback: ((state: NetworkStageState) => void) | null = null;
+  private onStageSnapshotRequested: (() => void) | null = null;
   private onRemoteStageLiveSyncCallback: (() => void) | null = null;
   private onRemoteKaraokeCallback: ((state: NetworkKaraokeState) => void) | null = null;
   private onRtcSignalCallback: ((msg: RtcSignalMessage) => void) | null = null;
@@ -402,6 +422,7 @@ export class MultiplayerManager {
     if (!ok && this.roomSessionId === sessionId) {
       this.desiredRoomActive = false;
       this.stopRoomHeartbeat();
+      this.emitRoomStatus();
     }
     return ok;
   }
@@ -449,11 +470,11 @@ export class MultiplayerManager {
 
     channel.on('broadcast', { event: 'stage:sync' }, ({ payload }) => {
       if (this.channel !== channel) return;
-      const stage = payload as NetworkStageState;
-      if (stage) {
-        this.hostStageState = stage;
-        this.onRemoteStageCallback?.(stage);
-      }
+      this.acceptStageState(payload as NetworkStageState);
+    });
+
+    channel.on('broadcast', { event: 'stage:request' }, () => {
+      if (this.channel === channel && this.isHost()) this.onStageSnapshotRequested?.();
     });
 
     channel.on('broadcast', { event: 'stage:sync-live' }, () => {
@@ -461,22 +482,13 @@ export class MultiplayerManager {
       this.onRemoteStageLiveSyncCallback?.();
     });
 
-    channel.on('broadcast', { event: 'lounge:audio' }, ({ payload }) => {
-      if (this.channel !== channel) return;
-      const data = payload as { playing?: boolean } | undefined;
-      if (typeof data?.playing === 'boolean') {
-        window.dispatchEvent(
-          new CustomEvent<{ playing: boolean }>('cavannghe:remote-lounge-audio', {
-            detail: { playing: data.playing },
-          })
-        );
-      }
-    });
-
     channel.on('broadcast', { event: 'karaoke:sync' }, ({ payload }) => {
       if (this.channel !== channel) return;
       const k = payload as NetworkKaraokeState;
-      if (!k || k.singerId === this.localPlayerId) return;
+      if (!k || k.singerId === this.localPlayerId ||
+          k.singerId !== this.karaokeTurn?.singerId || k.turnId !== this.karaokeTurn.id) return;
+      if (!Number.isFinite(k.updatedAt) || k.updatedAt < this.lastRemoteKaraokeTimestamp) return;
+      this.lastRemoteKaraokeTimestamp = k.updatedAt;
       this.touchRemoteBroadcast(k.singerId);
       this.remoteKaraokeState = k.active ? k : null;
       this.onRemoteKaraokeCallback?.(k);
@@ -484,11 +496,13 @@ export class MultiplayerManager {
 
     channel.on('broadcast', { event: 'karaoke:volume' }, ({ payload }) => {
       if (this.channel !== channel) return;
-      const data = payload as { singerId?: string; musicVolume?: number } | undefined;
+      const data = payload as { singerId?: string; turnId?: string; musicVolume?: number } | undefined;
       if (
         !data ||
         !data.singerId ||
         data.singerId === this.localPlayerId ||
+        data.singerId !== this.karaokeTurn?.singerId ||
+        data.turnId !== this.karaokeTurn.id ||
         typeof data.musicVolume !== 'number'
       ) {
         return;
@@ -514,6 +528,13 @@ export class MultiplayerManager {
       const msg = payload as RtcSignalMessage;
       if (!msg || msg.fromId === this.localPlayerId) return;
       if (msg.targetId !== '*' && msg.targetId !== this.localPlayerId) return;
+      const turn = this.karaokeTurn;
+      if (!turn || msg.turnId !== turn.id) return;
+      if (msg.kind === 'offer' || msg.kind === 'bye') {
+        if (msg.fromId !== turn.singerId) return;
+      } else if (msg.kind === 'ready' || msg.kind === 'answer') {
+        if (this.localPlayerId !== turn.singerId) return;
+      } else if (msg.fromId !== turn.singerId && this.localPlayerId !== turn.singerId) return;
       this.touchRemoteBroadcast(msg.fromId);
       this.onRtcSignalCallback?.(msg);
     });
@@ -681,6 +702,7 @@ export class MultiplayerManager {
             });
           }
           this.emitRoomStatus();
+          this.requestStageResync();
           window.dispatchEvent(new CustomEvent('cavannghe:channel-subscribed'));
           finish(true);
         } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
@@ -726,14 +748,16 @@ export class MultiplayerManager {
 
   async leaveRoom(options?: { preserveRoomMembership?: boolean }): Promise<void> {
     const preserveRoomMembership = Boolean(options?.preserveRoomMembership);
+    const wasRoomActive = this.desiredRoomActive;
+    const wasHost = this.isHost();
     this.roomSessionId += 1;
     this.desiredRoomActive = false;
     this.clearReconnectTimer();
     this.stopRoomHeartbeat();
+    this.clearKaraokeRecovery();
 
     const ch = this.channel;
     const hadRemoteKaraoke = this.remoteKaraokeState;
-    const wasHost = this.isHost();
     const otherPresence = this.presenceList.filter((p) => p.playerId !== this.localPlayerId);
     const nextPresenceHost = otherPresence[0] ?? null;
     const prevBaseRoomId = this.baseRoomId;
@@ -741,7 +765,7 @@ export class MultiplayerManager {
     const prevScene = this.sceneScopeId;
     const prevRoomPassword = this.roomPassword;
 
-    if (ch || this.connected) {
+    if (ch || this.connected || wasRoomActive) {
       this.channel = null;
       this.connected = false;
       this.remotePlayers.clear();
@@ -754,9 +778,13 @@ export class MultiplayerManager {
       this.hostId = null;
       this.hostName = null;
       this.hostStageState = null;
+      this.lastStageUpdateBySender.clear();
       this.remoteKaraokeState = null;
       this.localKaraokeState = null;
-      this.hostLoungeAudioPlaying = null;
+      this.karaokeTurn = null;
+      this.localKaraokeRequestId = null;
+      this.dismissedKaraokeRequests.clear();
+      this.lastRemoteKaraokeTimestamp = -1;
       this.speakingPeers.clear();
       this.voicePolicy = { mode: 'free', updatedBy: '', updatedAt: 0 };
 
@@ -870,6 +898,12 @@ export class MultiplayerManager {
     return false;
   }
 
+  hasLostChairClaim(chairId: string): boolean {
+    return this.connected && [...this.remotePlayers.values()].some((player) =>
+      player.chairId === chairId && player.id < this.localPlayerId
+    );
+  }
+
   getRoomStatus(): RoomStatusSnapshot {
     const players = this.presenceList.map((p) => ({
       id: p.playerId,
@@ -907,6 +941,7 @@ export class MultiplayerManager {
 
     return {
       connected: this.connected,
+      joiningOrInRoom: this.desiredRoomActive,
       roomId: this.roomId,
       localPlayerId: this.localPlayerId,
       localPlayerName: this.localPlayerName,
@@ -914,6 +949,7 @@ export class MultiplayerManager {
       isHost: this.isHost(),
       hostId: this.hostId,
       hostName: this.hostName,
+      karaokeTurn: this.karaokeTurn,
       playerCount: Math.max(1, players.length),
       players,
     };
@@ -936,13 +972,10 @@ export class MultiplayerManager {
   ): void {
     if (!this.connected || !this.channel) return;
 
-    if (state.chairId !== this.localChairId) {
-      this.localChairId = state.chairId;
-      void this.trackLocalPresence();
-    }
-
+    const chairChanged = state.chairId !== this.localChairId;
+    const force = options?.force || chairChanged;
     const now = performance.now();
-    if (!options?.force && now - this.lastBroadcastTime < BROADCAST_INTERVAL_MS) {
+    if (!force && now - this.lastBroadcastTime < BROADCAST_INTERVAL_MS) {
       return;
     }
 
@@ -950,13 +983,17 @@ export class MultiplayerManager {
     const vzVal = state.vz ?? 0;
     const sig = `${state.x.toFixed(2)},${state.y.toFixed(2)},${state.z.toFixed(2)},${vxVal.toFixed(1)},${vzVal.toFixed(1)},${state.yaw.toFixed(1)},${state.anim},${state.emote ?? ''},${state.isSitting ? 1 : 0},${state.chairId ?? ''},${this.localAvatarColor},${this.localAvatarModel}`;
 
-    if (!options?.force && sig === this.lastSentSig && now - this.lastBroadcastTime < 1500) {
+    if (!force && sig === this.lastSentSig && now - this.lastBroadcastTime < 1500) {
       return;
     }
 
     this.lastBroadcastTime = now;
     this.lastSentSig = sig;
     this.localSeq += 1;
+    if (chairChanged) {
+      this.localChairId = state.chairId;
+      void this.trackLocalPresence();
+    }
 
     const payload: RemotePlayerState = {
       id: this.localPlayerId,
@@ -984,7 +1021,28 @@ export class MultiplayerManager {
     });
   }
 
+  setOnStageSnapshotRequested(callback: (() => void) | null): void {
+    this.onStageSnapshotRequested = callback;
+  }
+
+  private acceptStageState(stage: NetworkStageState): void {
+    if (!stage || !Number.isFinite(stage.updatedAt)) return;
+    if (stage.senderId && this.hostId && stage.senderId !== this.hostId &&
+        !this.presenceList.some((player) => player.playerId === stage.senderId && player.isAdmin)) return;
+    const previousTime = stage.senderId
+      ? this.lastStageUpdateBySender.get(stage.senderId)
+      : this.hostStageState?.updatedAt;
+    if (previousTime !== undefined && previousTime >= stage.updatedAt) return;
+    if (stage.senderId) this.lastStageUpdateBySender.set(stage.senderId, stage.updatedAt);
+    this.hostStageState = stage;
+    this.onRemoteStageCallback?.(stage);
+  }
+
   broadcastStageState(stage: NetworkStageState, options?: { updatePresence?: boolean }): void {
+    if (this.connected && !this.isHost() && !this.localIsAdmin) return;
+    const previousTime = this.lastStageUpdateBySender.get(this.localPlayerId) ?? 0;
+    stage = { ...stage, senderId: this.localPlayerId, updatedAt: Math.max(stage.updatedAt, previousTime + 1) };
+    this.lastStageUpdateBySender.set(this.localPlayerId, stage.updatedAt);
     this.hostStageState = stage;
     if (!this.connected || !this.channel || (!this.isHost() && !this.localIsAdmin)) return;
 
@@ -999,8 +1057,10 @@ export class MultiplayerManager {
   }
 
   requestStageResync(): void {
-    if (this.hostStageState && !this.isHost()) {
-      this.onRemoteStageCallback?.(this.hostStageState);
+    if (this.isHost()) return;
+    if (this.hostStageState) this.onRemoteStageCallback?.(this.hostStageState);
+    if (this.connected && this.channel) {
+      void this.channel.send({ type: 'broadcast', event: 'stage:request', payload: {} });
     }
   }
 
@@ -1013,19 +1073,96 @@ export class MultiplayerManager {
     });
   }
 
-  broadcastLoungeAudio(playing: boolean): void {
-    this.hostLoungeAudioPlaying = playing;
-    if (!this.connected || !this.channel || (!this.isHost() && !this.localIsAdmin)) return;
-    void this.channel.send({
-      type: 'broadcast',
-      event: 'lounge:audio',
-      payload: { playing, updatedAt: Date.now() },
-    });
+  getLocalPlayerName(): string {
+    return this.localPlayerName;
+  }
+
+  requestKaraokeTurn(): boolean {
+    if (!this.desiredRoomActive) return true;
+    if (!this.connected || (this.karaokeTurn && this.karaokeTurn.singerId !== this.localPlayerId)) {
+      return false;
+    }
+    if (this.localKaraokeRequestId) return true;
+
+    this.localKaraokeRequestId = crypto.randomUUID();
+    if (this.reconcileKaraokeTurn()) this.emitRoomStatus();
+    void this.trackLocalPresence();
+    return true;
+  }
+
+  releaseKaraokeTurn(): void {
+    if (!this.localKaraokeRequestId) return;
+    this.localKaraokeRequestId = null;
+    if (this.reconcileKaraokeTurn()) this.emitRoomStatus();
     void this.trackLocalPresence();
   }
 
-  getLocalPlayerName(): string {
-    return this.localPlayerName;
+  removeKaraokeSinger(): void {
+    if (!this.connected || !this.isHost() || !this.karaokeTurn) return;
+    this.dismissedKaraokeRequests.add(this.karaokeTurn.id);
+    if (this.reconcileKaraokeTurn()) this.emitRoomStatus();
+    void this.trackLocalPresence();
+  }
+
+  private clearKaraokeRecovery(): void {
+    if (this.karaokeRecovery) window.clearTimeout(this.karaokeRecovery.timer);
+    this.karaokeRecovery = null;
+  }
+
+  private waitForSinger(turn: KaraokeTurn): boolean {
+    if (turn.singerId === this.localPlayerId || this.dismissedKaraokeRequests.has(turn.id) ||
+        this.presenceList.some((player) => player.playerId === turn.singerId)) return false;
+
+    if (this.karaokeRecovery?.turnId !== turn.id) {
+      this.clearKaraokeRecovery();
+      const graceMs = 12000;
+      const deadline = performance.now() + graceMs;
+      const timer = window.setTimeout(() => {
+        if (this.reconcileKaraokeTurn()) {
+          this.emitRoomStatus();
+          void this.trackLocalPresence();
+        }
+      }, graceMs);
+      this.karaokeRecovery = { turnId: turn.id, deadline, timer };
+    }
+    return performance.now() < this.karaokeRecovery.deadline;
+  }
+
+  private reconcileKaraokeTurn(): boolean {
+    if (!this.connected || !this.isHost()) return false;
+
+    const requests = this.presenceList.flatMap(({ playerId, karaokeRequestId }) =>
+      playerId !== this.localPlayerId && karaokeRequestId ? [{ id: karaokeRequestId, singerId: playerId }] : []
+    );
+    if (this.localKaraokeRequestId) {
+      requests.push({ id: this.localKaraokeRequestId, singerId: this.localPlayerId });
+    }
+    if (this.karaokeTurn && this.waitForSinger(this.karaokeTurn)) return false;
+    this.clearKaraokeRecovery();
+
+    for (const id of this.dismissedKaraokeRequests) {
+      if (!requests.some((request) => request.id === id)) this.dismissedKaraokeRequests.delete(id);
+    }
+
+    const eligible = requests.filter((request) => !this.dismissedKaraokeRequests.has(request.id));
+    const winner = eligible.find((request) =>
+      request.id === this.karaokeTurn?.id && request.singerId === this.karaokeTurn.singerId
+    ) ?? eligible[0] ?? null;
+    if (winner?.id === this.karaokeTurn?.id) return false;
+
+    this.applyKaraokeTurn(winner);
+    return true;
+  }
+
+  private applyKaraokeTurn(turn: KaraokeTurn | null): void {
+    if (turn?.id === this.karaokeTurn?.id) return;
+    this.clearKaraokeRecovery();
+    this.karaokeTurn = turn;
+    this.lastRemoteKaraokeTimestamp = -1;
+    this.localKaraokeState = null;
+    const previous = this.remoteKaraokeState;
+    this.remoteKaraokeState = null;
+    if (previous) this.onRemoteKaraokeCallback?.({ ...previous, active: false, isPlaying: false });
   }
 
   getRemoteKaraokeState(): NetworkKaraokeState | null {
@@ -1033,11 +1170,13 @@ export class MultiplayerManager {
   }
 
   broadcastKaraokeState(
-    partial: Omit<NetworkKaraokeState, 'singerId' | 'singerName' | 'updatedAt'>,
+    partial: Omit<NetworkKaraokeState, 'singerId' | 'singerName' | 'updatedAt' | 'turnId'>,
     options?: { updatePresence?: boolean }
   ): void {
+    if (this.desiredRoomActive && this.karaokeTurn?.singerId !== this.localPlayerId) return;
     const state: NetworkKaraokeState = {
       ...partial,
+      turnId: this.karaokeTurn?.id,
       singerId: this.localPlayerId,
       singerName: this.localPlayerName,
       updatedAt: Date.now(),
@@ -1056,6 +1195,7 @@ export class MultiplayerManager {
   }
 
   broadcastKaraokeVolume(musicVolume: number, options?: { updatePresence?: boolean }): void {
+    if (this.karaokeTurn?.singerId !== this.localPlayerId) return;
     const clamped = Math.max(0, Math.min(100, Math.round(musicVolume)));
     if (this.localKaraokeState) {
       this.localKaraokeState = {
@@ -1070,6 +1210,7 @@ export class MultiplayerManager {
       event: 'karaoke:volume',
       payload: {
         singerId: this.localPlayerId,
+        turnId: this.karaokeTurn.id,
         musicVolume: clamped,
       },
     });
@@ -1079,9 +1220,10 @@ export class MultiplayerManager {
   }
 
   sendRtcSignal(msg: Omit<RtcSignalMessage, 'fromId'>): void {
-    if (!this.connected || !this.channel) return;
+    if (!this.connected || !this.channel || !this.karaokeTurn) return;
     const payload: RtcSignalMessage = {
       ...msg,
+      turnId: this.karaokeTurn.id,
       fromId: this.localPlayerId,
     };
     void this.channel.send({
@@ -1206,11 +1348,11 @@ export class MultiplayerManager {
       avatarModel: this.localAvatarModel,
       joinedAt: this.joinedAt,
       chairId: this.localChairId,
+      playerStateSeq: this.localSeq,
       ...(this.isHost() && this.hostStageState ? { stageState: this.hostStageState } : {}),
       ...(this.isHost() && this.voicePolicy.updatedAt > 0 ? { voicePolicy: this.voicePolicy } : {}),
-      ...(this.isHost() && this.hostLoungeAudioPlaying !== null
-        ? { loungeAudioPlaying: this.hostLoungeAudioPlaying }
-        : {}),
+      ...(this.isHost() ? { karaokeTurn: this.karaokeTurn } : {}),
+      ...(this.localKaraokeRequestId ? { karaokeRequestId: this.localKaraokeRequestId } : {}),
       ...(this.localKaraokeState ? { karaokeState: this.localKaraokeState } : {}),
     };
     try {
@@ -1310,9 +1452,24 @@ export class MultiplayerManager {
       this.hostName = this.localPlayerName;
     }
 
-    // If local player just became Host, publish stageState/voicePolicy in presence and immediately update DB
+    if (host && host.playerId !== this.localPlayerId) {
+      this.applyKaraokeTurn(host.karaokeTurn ?? null);
+    }
+    if (this.reconcileKaraokeTurn()) void this.trackLocalPresence();
+
+    // If local player just became Host, restamp & publish stageState/voicePolicy in presence and immediately update DB
     if (prevHostId !== this.hostId && this.hostId === this.localPlayerId) {
-      if (this.hostStageState || this.voicePolicy.updatedAt > 0) {
+      if (this.hostStageState) {
+        const previousTime = this.lastStageUpdateBySender.get(this.localPlayerId) ?? 0;
+        const nextUpdatedAt = Math.max(this.hostStageState.updatedAt, previousTime + 1);
+        this.hostStageState = {
+          ...this.hostStageState,
+          senderId: this.localPlayerId,
+          updatedAt: nextUpdatedAt,
+        };
+        this.lastStageUpdateBySender.set(this.localPlayerId, nextUpdatedAt);
+      }
+      if (this.hostStageState || this.voicePolicy.updatedAt > 0 || this.karaokeTurn) {
         void this.trackLocalPresence();
       }
       if (prevHostId && this.baseRoomId) {
@@ -1322,28 +1479,11 @@ export class MultiplayerManager {
 
     // If guest, sync stageState & voicePolicy from Host's presence when joining or when host changes
     if (host && host.playerId !== this.localPlayerId) {
-      if (host.stageState) {
-        const prevTs = this.hostStageState?.updatedAt ?? 0;
-        if (host.stageState.updatedAt > prevTs) {
-          this.hostStageState = host.stageState;
-          this.onRemoteStageCallback?.(host.stageState);
-        }
-      }
+      if (host.stageState) this.acceptStageState(host.stageState);
       if (host.voicePolicy && host.voicePolicy.updatedAt > this.voicePolicy.updatedAt) {
         this.voicePolicy = host.voicePolicy;
         window.dispatchEvent(
           new CustomEvent<RoomVoicePolicy>('cavannghe:voice-policy', { detail: host.voicePolicy })
-        );
-      }
-      if (
-        typeof host.loungeAudioPlaying === 'boolean' &&
-        host.loungeAudioPlaying !== this.hostLoungeAudioPlaying
-      ) {
-        this.hostLoungeAudioPlaying = host.loungeAudioPlaying;
-        window.dispatchEvent(
-          new CustomEvent<{ playing: boolean }>('cavannghe:remote-lounge-audio', {
-            detail: { playing: host.loungeAudioPlaying },
-          })
         );
       }
     }
@@ -1364,14 +1504,12 @@ export class MultiplayerManager {
 
     // Sync active Karaoke singer state from presence for late joiners, or clear if singer truly left
     const activeSinger = list.find(
-      (p) => p.playerId !== this.localPlayerId && p.karaokeState?.active
+      (p) => p.playerId !== this.localPlayerId && p.playerId === this.karaokeTurn?.singerId &&
+        p.karaokeState?.active && p.karaokeState.turnId === this.karaokeTurn.id
     );
     if (activeSinger?.karaokeState) {
-      const prevTs = this.remoteKaraokeState?.updatedAt ?? 0;
-      if (
-        activeSinger.karaokeState.updatedAt > prevTs ||
-        this.remoteKaraokeState?.singerId !== activeSinger.karaokeState.singerId
-      ) {
+      if (activeSinger.karaokeState.updatedAt > this.lastRemoteKaraokeTimestamp) {
+        this.lastRemoteKaraokeTimestamp = activeSinger.karaokeState.updatedAt;
         this.remoteKaraokeState = activeSinger.karaokeState;
         this.onRemoteKaraokeCallback?.(activeSinger.karaokeState);
       }
@@ -1395,7 +1533,11 @@ export class MultiplayerManager {
       const existing = this.remotePlayers.get(p.playerId);
       if (existing) {
         existing.name = p.name;
-        existing.chairId = p.chairId;
+        const chairSeq = p.playerStateSeq ?? 0;
+        if (p.joinedAt === existing.joinedAt && chairSeq >= (existing.chairStateSeq ?? existing.seq)) {
+          existing.chairId = p.chairId;
+          existing.chairStateSeq = chairSeq;
+        }
         existing.isAdmin = Boolean(p.isAdmin);
         if (p.avatarColor) existing.avatarColor = p.avatarColor;
         if (p.avatarModel) existing.avatarModel = p.avatarModel;
@@ -1418,6 +1560,7 @@ export class MultiplayerManager {
           avatarModel: p.avatarModel,
           joinedAt: p.joinedAt,
           seq: 0,
+          chairStateSeq: p.playerStateSeq,
         });
       }
     }
@@ -1485,9 +1628,16 @@ export class MultiplayerManager {
 
   private handleRemotePlayerState(payload: RemotePlayerState): void {
     if (!payload || payload.id === this.localPlayerId) return;
-    this.touchRemoteBroadcast(payload.id);
     const existing = this.remotePlayers.get(payload.id);
     if (existing) {
+      const sameSession = payload.joinedAt === undefined || payload.joinedAt === existing.joinedAt;
+      if ((payload.joinedAt !== undefined && payload.joinedAt < existing.joinedAt) ||
+          (sameSession && typeof payload.seq === 'number' && payload.seq <= existing.seq)) return;
+    }
+    this.touchRemoteBroadcast(payload.id);
+    if (existing) {
+      const sessionChanged = payload.joinedAt !== undefined && payload.joinedAt !== existing.joinedAt;
+      existing.joinedAt = payload.joinedAt ?? existing.joinedAt;
       existing.name = payload.name || existing.name;
       existing.x = payload.x;
       existing.y = payload.y;
@@ -1498,10 +1648,14 @@ export class MultiplayerManager {
       existing.anim = payload.anim;
       existing.emote = payload.emote;
       existing.isSitting = payload.isSitting;
-      existing.chairId = payload.chairId;
+      const incomingSeq = payload.seq ?? existing.seq + 1;
+      if (sessionChanged || incomingSeq >= (existing.chairStateSeq ?? existing.seq)) {
+        existing.chairId = payload.chairId;
+        existing.chairStateSeq = incomingSeq;
+      }
       if (payload.avatarColor) existing.avatarColor = payload.avatarColor;
       if (payload.avatarModel) existing.avatarModel = payload.avatarModel;
-      existing.seq = payload.seq ?? existing.seq + 1;
+      existing.seq = incomingSeq;
     } else {
       this.remotePlayers.set(payload.id, { ...payload });
     }

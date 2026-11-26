@@ -21,9 +21,7 @@ import {
   UtensilsCrossed,
   Sparkles,
   Sun,
-  Moon,
-  Volume2,
-  VolumeX
+  Moon
 } from 'lucide-react';
 import { DECO_CATALOG } from '../data/decoCatalog';
 
@@ -58,9 +56,7 @@ export default function DecoToolbar({
   onResetLayout = () => {},
   itemCount = 0,
   isNightMode = false,
-  onToggleNightMode = () => {},
-  isAudioPlaying = false,
-  onToggleAudio = () => {}
+  onToggleNightMode = () => {}
 }) {
   const [activeCategory, setActiveCategory] = useState('furniture');
   const [isCatalogOpen, setIsCatalogOpen] = useState(true);
@@ -195,14 +191,6 @@ export default function DecoToolbar({
             className="p-1.5 rounded-lg bg-neutral-950/70 backdrop-blur-xl border border-white/10 text-neutral-400 hover:text-white transition"
           >
             {isNightMode ? <Moon className="w-3.5 h-3.5 text-amber-300" /> : <Sun className="w-3.5 h-3.5" />}
-          </button>
-
-          <button
-            onClick={onToggleAudio}
-            title={isAudioPlaying ? "Tắt nhạc nền" : "Bật nhạc nền Lounge"}
-            className="p-1.5 rounded-lg bg-neutral-950/70 backdrop-blur-xl border border-white/10 text-neutral-400 hover:text-white transition"
-          >
-            {isAudioPlaying ? <Volume2 className="w-3.5 h-3.5 text-amber-300" /> : <VolumeX className="w-3.5 h-3.5" />}
           </button>
 
           <button

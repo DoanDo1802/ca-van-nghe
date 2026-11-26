@@ -86,6 +86,7 @@ const SPATIAL_MEDIA_PRESETS = [
  *   onChangeMedia?: (url: string, title?: string) => void;
  *   onChangeYouTube?: (videoId: string, title?: string) => void;
  *   isMuted: boolean;
+ *   isMuteSelected?: boolean;
  *   onToggleMute: () => void;
  *   isScreenOn: boolean;
  *   onToggleScreen: () => void;
@@ -114,6 +115,7 @@ export default function StageScreenModal({
   onChangeMedia,
   onChangeYouTube,
   isMuted,
+  isMuteSelected = isMuted,
   onToggleMute,
   isScreenOn,
   onToggleScreen,
@@ -300,14 +302,19 @@ export default function StageScreenModal({
               <button
                 onClick={onToggleMute}
                 className={`px-3 py-1.5 rounded-lg text-xs font-medium flex items-center space-x-1.5 transition ${
-                  !isMuted
+                  !isMuteSelected
                     ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30 hover:bg-amber-500/30'
                     : 'bg-white/5 text-neutral-400 border border-white/10 hover:text-white'
                 }`}
               >
-                {isMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
-                <span>{isMuted ? 'Loa: TẮT (Mute)' : 'Loa: BẬT'}</span>
+                {isMuteSelected ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
+                <span>
+                  {spatialMode && !isHost
+                    ? (isMuteSelected ? 'Cá nhân: TẮT TIẾNG' : 'Cá nhân: BẬT TIẾNG')
+                    : (isMuteSelected ? 'Loa phòng: TẮT' : 'Loa phòng: BẬT')}
+                </span>
               </button>
+              {isMuted && !isMuteSelected && <span className="text-xs text-neutral-400">Loa phòng đang tắt</span>}
 
               {spatialMode && onSyncLiveEdge && isHost && (
                 <button
