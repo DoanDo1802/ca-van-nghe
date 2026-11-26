@@ -75,6 +75,7 @@ export interface AutoTuneConfig {
   key: MusicalKey;
   scale: ScaleType;
   retuneSpeedMs: number;
+  humanize: number;
   formantPreserve: boolean;
   mix: number;
 }
@@ -85,9 +86,40 @@ export const DEFAULT_AUTOTUNE_CONFIG: AutoTuneConfig = {
   key: 'C',
   scale: 'minor',
   retuneSpeedMs: 0,
+  humanize: 0,
   formantPreserve: true,
   mix: 1.0,
 };
+
+export type AutoTunePresetId = 'hard_tune' | 'melodic_rap' | 'natural';
+
+export interface AutoTunePreset {
+  id: AutoTunePresetId;
+  label: string;
+  subtitle: string;
+  config: Pick<AutoTuneConfig, 'retuneSpeedMs' | 'humanize' | 'formantPreserve' | 'mix'>;
+}
+
+export const AUTOTUNE_PRESETS: readonly AutoTunePreset[] = [
+  {
+    id: 'hard_tune',
+    label: 'Hard-Tune',
+    subtitle: 'Yeat / T-Pain',
+    config: { retuneSpeedMs: 0, humanize: 0, formantPreserve: true, mix: 1.0 },
+  },
+  {
+    id: 'melodic_rap',
+    label: 'Melodic Rap',
+    subtitle: 'Juice WRLD',
+    config: { retuneSpeedMs: 18, humanize: 0.35, formantPreserve: true, mix: 1.0 },
+  },
+  {
+    id: 'natural',
+    label: 'Tự nhiên',
+    subtitle: 'Pop / Smooth',
+    config: { retuneSpeedMs: 45, humanize: 0.65, formantPreserve: true, mix: 1.0 },
+  },
+];
 
 export interface AutoTuneTelemetry {
   voiced: boolean;
@@ -200,6 +232,7 @@ export function postAutoTuneConfig(node: AudioWorkletNode, config: AutoTuneConfi
     rootKey: getRootKeyIndex(config.key),
     scaleIntervals: [...def.intervals],
     retuneSpeedMs: Math.max(0, Math.min(100, config.retuneSpeedMs)),
+    humanize: Math.max(0, Math.min(1, config.humanize ?? 0)),
     formantPreserve: config.formantPreserve,
     mix: Math.max(0, Math.min(1, config.mix)),
   });
@@ -272,18 +305,10 @@ export class KeyToneMatcher {
     return this.locked;
   }
 
-  feedFreq(freqHz: number, weight = 1): void {
-    if (!Number.isFinite(freqHz) || freqHz < 65 || freqHz > 1400) return;
-    const midiFloat = freqToMidi(freqHz);
-    const rounded = Math.round(midiFloat);
-    const pc = ((rounded % 12) + 12) % 12;
-    const closeness = Math.max(0.25, 1 - Math.abs(midiFloat - rounded));
-
-    for (let i = 0; i < 12; i++) {
-      this.chroma[i] *= 0.985;
-    }
-    this.chroma[pc] += weight * closeness;
-    this.sampleCount += 1;
+  // Tone detection relies exclusively on backing music spectrum (`feedSpectrum`)
+  // so off-pitch vocal singing from the microphone never corrupts the detected key/scale.
+  feedFreq(_freqHz: number, _weight = 0): void {
+    return;
   }
 
   feedSpectrum(freqData: Uint8Array, sampleRate: number, fftSize: number): boolean {
