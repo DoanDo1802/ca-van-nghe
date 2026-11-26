@@ -31,6 +31,7 @@ import {
   saveAvatarModel,
   type AvatarModelId,
 } from '../utils/avatarColor';
+import { matchesRoomSearch, supportsWebkitTextSecurity } from '../utils/roomInputHelpers';
 
 export interface EntryLobbyFlowModalProps {
   isOpen: boolean;
@@ -89,11 +90,23 @@ export const EntryLobbyFlowModal: React.FC<EntryLobbyFlowModalProps> = ({
   const [roomError, setRoomError] = useState('');
   const [joiningRoomId, setJoiningRoomId] = useState<string | null>(null);
   const [closingRoomId, setClosingRoomId] = useState<string | null>(null);
+  const useMaskedTextPasscode = supportsWebkitTextSecurity();
 
   useEffect(() => {
     if (!isOpen || !initialStep) return;
     setStep(initialStep);
   }, [isOpen, initialStep]);
+
+  useEffect(() => {
+    if (!isOpen || step === 'room') {
+      setRoomSearchQuery('');
+      setJoinPasswordRoomId(null);
+      setJoinPassword('');
+      setNewRoomName('');
+      setNewRoomPassword('');
+      setRoomError('');
+    }
+  }, [isOpen, step]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -135,6 +148,7 @@ export const EntryLobbyFlowModal: React.FC<EntryLobbyFlowModalProps> = ({
       return;
     }
     setLoadingRooms(true);
+    await MultiplayerManager.getInstance().waitForPendingCleanup();
     const list = await AdminService.fetchActiveRooms();
     setRooms(list);
     setLoadingRooms(false);
@@ -152,13 +166,8 @@ export const EntryLobbyFlowModal: React.FC<EntryLobbyFlowModalProps> = ({
     ? account.display_name || account.username
     : guestName.trim() || 'Khách Lounge';
 
-  const normalizedRoomQuery = roomSearchQuery.trim().toLowerCase();
-  const filteredRooms = normalizedRoomQuery
-    ? rooms.filter(
-        (r) =>
-          r.room_id.toLowerCase().includes(normalizedRoomQuery) ||
-          (r.host_name || '').toLowerCase().includes(normalizedRoomQuery)
-      )
+  const filteredRooms = roomSearchQuery.trim()
+    ? rooms.filter((r) => matchesRoomSearch(r, roomSearchQuery))
     : rooms;
 
   const handleSelectColor = (hex: string) => {
@@ -388,7 +397,7 @@ export const EntryLobbyFlowModal: React.FC<EntryLobbyFlowModalProps> = ({
         {/* Body */}
         <div className="flex-1 overflow-y-auto p-5 space-y-5">
           {step === 'identity' ? (
-            <div className="space-y-5">
+            <div key="step-identity" className="space-y-5">
               {/* Identity Mode Switcher */}
               <div className="grid grid-cols-3 gap-1.5 p-1 rounded-xl bg-[#181818] border border-white/10">
                 {[
@@ -431,11 +440,13 @@ export const EntryLobbyFlowModal: React.FC<EntryLobbyFlowModalProps> = ({
                     <label className="block text-xs text-neutral-400">Tên hiển thị của bạn</label>
                     <input
                       type="text"
+                      name="guest-display-name"
+                      autoComplete="off"
                       maxLength={24}
                       value={guestName}
                       onChange={(e) => setGuestName(e.target.value)}
                       placeholder="Nhập tên hiển thị..."
-                      className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-white/10 text-base sm:text-sm text-white placeholder:text-neutral-500 focus:outline-none focus:border-white/30"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-white/10 text-base sm:text-sm text-white placeholder:text-neutral-500 focus:outline-none focus:border-white/30 select-text"
                     />
                   </div>
 
@@ -517,19 +528,21 @@ export const EntryLobbyFlowModal: React.FC<EntryLobbyFlowModalProps> = ({
                   </button>
                 </form>
               ) : (
-                <form onSubmit={(e) => void handleAuthSubmit(e)} className="space-y-4">
+                <form key={identityMode} onSubmit={(e) => void handleAuthSubmit(e)} className="space-y-4">
                   <div className="space-y-3">
                     <div className="space-y-1">
                       <label className="text-xs text-neutral-400">Tên đăng nhập (a-z, 0-9, _)</label>
                       <input
                         type="text"
+                        name="account-username"
+                        autoComplete="username"
                         required
                         minLength={3}
                         maxLength={24}
                         value={username}
                         onChange={(e) => setUsername(e.target.value)}
                         placeholder="vd: minh_tuan"
-                        className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-white/10 text-base sm:text-sm text-white placeholder:text-neutral-500 focus:outline-none focus:border-white/30"
+                        className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-white/10 text-base sm:text-sm text-white placeholder:text-neutral-500 focus:outline-none focus:border-white/30 select-text"
                       />
                     </div>
 
@@ -538,11 +551,13 @@ export const EntryLobbyFlowModal: React.FC<EntryLobbyFlowModalProps> = ({
                         <label className="text-xs text-neutral-400">Tên hiển thị trong game</label>
                         <input
                           type="text"
+                          name="account-display-name"
+                          autoComplete="name"
                           maxLength={24}
                           value={displayName}
                           onChange={(e) => setDisplayName(e.target.value)}
                           placeholder="vd: Minh Tuấn"
-                          className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-white/10 text-base sm:text-sm text-white placeholder:text-neutral-500 focus:outline-none focus:border-white/30"
+                          className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-white/10 text-base sm:text-sm text-white placeholder:text-neutral-500 focus:outline-none focus:border-white/30 select-text"
                         />
                       </div>
                     )}
@@ -551,12 +566,14 @@ export const EntryLobbyFlowModal: React.FC<EntryLobbyFlowModalProps> = ({
                       <label className="text-xs text-neutral-400">Mật khẩu</label>
                       <input
                         type="password"
+                        name="account-password"
+                        autoComplete={identityMode === 'register' ? 'new-password' : 'current-password'}
                         required
                         minLength={4}
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
                         placeholder="Tối thiểu 4 ký tự..."
-                        className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-white/10 text-base sm:text-sm text-white placeholder:text-neutral-500 focus:outline-none focus:border-white/30"
+                        className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-white/10 text-base sm:text-sm text-white placeholder:text-neutral-500 focus:outline-none focus:border-white/30 select-text"
                       />
                     </div>
                   </div>
@@ -586,7 +603,7 @@ export const EntryLobbyFlowModal: React.FC<EntryLobbyFlowModalProps> = ({
             </div>
           ) : (
             /* Step 2: Choose or Create Lobby Room */
-            <div className="space-y-5">
+            <div key="step-room" className="space-y-5">
               {/* Current Player Identity Strip */}
               <div className="flex items-center justify-between gap-3 px-3.5 py-2.5 rounded-xl bg-[#181818] border border-white/10">
                 <div className="flex items-center gap-2.5 min-w-0">
@@ -655,11 +672,20 @@ export const EntryLobbyFlowModal: React.FC<EntryLobbyFlowModalProps> = ({
                     <div className="relative">
                       <Search className="w-3.5 h-3.5 text-neutral-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                       <input
-                        type="text"
+                        type="search"
+                        name="lobby-room-search"
+                        autoComplete="off"
+                        autoCorrect="off"
+                        autoCapitalize="off"
+                        spellCheck={false}
+                        data-lpignore="true"
+                        data-1p-ignore="true"
+                        data-bwignore="true"
+                        data-form-type="other"
                         value={roomSearchQuery}
                         onChange={(e) => setRoomSearchQuery(e.target.value)}
                         placeholder="Tìm kiếm mã phòng hoặc tên chủ phòng..."
-                        className="w-full pl-9 pr-8 py-2 rounded-xl bg-neutral-950 border border-white/10 text-base sm:text-xs text-white placeholder:text-neutral-500 focus:outline-none focus:border-white/30"
+                        className="w-full pl-9 pr-8 py-2 rounded-xl bg-neutral-950 border border-white/10 text-base sm:text-xs text-white placeholder:text-neutral-500 focus:outline-none focus:border-white/30 select-text [&::-webkit-search-cancel-button]:hidden"
                       />
                       {roomSearchQuery && (
                         <button
@@ -782,11 +808,28 @@ export const EntryLobbyFlowModal: React.FC<EntryLobbyFlowModalProps> = ({
                               {needsPasswordPrompt && (
                                 <div className="flex items-center gap-2 pt-1 border-t border-white/10">
                                   <input
-                                    type="password"
+                                    type={useMaskedTextPasscode ? 'text' : joinPassword.length > 0 ? 'password' : 'text'}
+                                    name="join-room-passcode"
+                                    autoComplete={useMaskedTextPasscode ? 'off' : 'new-password'}
+                                    autoCorrect="off"
+                                    autoCapitalize="off"
+                                    spellCheck={false}
+                                    data-lpignore="true"
+                                    data-1p-ignore="true"
+                                    data-bwignore="true"
+                                    data-form-type="other"
                                     value={joinPassword}
                                     onChange={(e) => setJoinPassword(e.target.value)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter' && !busy) {
+                                        e.preventDefault();
+                                        void handleJoinExistingRoom(room, joinPassword);
+                                      }
+                                    }}
                                     placeholder="Nhập mật khẩu phòng..."
-                                    className="flex-1 px-3 py-1.5 rounded-lg bg-neutral-950 border border-white/15 text-base sm:text-xs text-white focus:outline-none focus:border-white/35"
+                                    className={`flex-1 px-3 py-1.5 rounded-lg bg-neutral-950 border border-white/15 text-base sm:text-xs text-white focus:outline-none focus:border-white/35 select-text ${
+                                      useMaskedTextPasscode ? 'room-passcode-mask' : ''
+                                    }`}
                                   />
                                   <button
                                     type="button"
@@ -807,6 +850,7 @@ export const EntryLobbyFlowModal: React.FC<EntryLobbyFlowModalProps> = ({
 
                   {/* Create New Lobby Room */}
                   <form
+                    autoComplete="off"
                     onSubmit={(e) => void handleCreateRoom(e)}
                     className="rounded-xl bg-[#181818] border border-white/10 p-4 space-y-3"
                   >
@@ -818,19 +862,39 @@ export const EntryLobbyFlowModal: React.FC<EntryLobbyFlowModalProps> = ({
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                       <input
                         type="text"
+                        name="create-room-code"
+                        autoComplete="off"
+                        autoCorrect="off"
+                        autoCapitalize="off"
+                        spellCheck={false}
+                        data-lpignore="true"
+                        data-1p-ignore="true"
+                        data-bwignore="true"
+                        data-form-type="other"
                         maxLength={24}
                         value={newRoomName}
                         onChange={(e) => setNewRoomName(e.target.value)}
                         placeholder="Tên phòng (vd: phong-cua-toi)"
-                        className="px-3 py-2 rounded-lg bg-neutral-950 border border-white/10 text-base sm:text-xs text-white placeholder:text-neutral-500 focus:outline-none focus:border-white/30"
+                        className="px-3 py-2 rounded-lg bg-neutral-950 border border-white/10 text-base sm:text-xs text-white placeholder:text-neutral-500 focus:outline-none focus:border-white/30 select-text"
                       />
                       <input
-                        type="password"
+                        type={useMaskedTextPasscode ? 'text' : newRoomPassword.length > 0 ? 'password' : 'text'}
+                        name="create-room-passcode"
+                        autoComplete={useMaskedTextPasscode ? 'off' : 'new-password'}
+                        autoCorrect="off"
+                        autoCapitalize="off"
+                        spellCheck={false}
+                        data-lpignore="true"
+                        data-1p-ignore="true"
+                        data-bwignore="true"
+                        data-form-type="other"
                         maxLength={32}
                         value={newRoomPassword}
                         onChange={(e) => setNewRoomPassword(e.target.value)}
                         placeholder="Mật khẩu phòng (tùy chọn)"
-                        className="px-3 py-2 rounded-lg bg-neutral-950 border border-white/10 text-base sm:text-xs text-white placeholder:text-neutral-500 focus:outline-none focus:border-white/30"
+                        className={`px-3 py-2 rounded-lg bg-neutral-950 border border-white/10 text-base sm:text-xs text-white placeholder:text-neutral-500 focus:outline-none focus:border-white/30 select-text ${
+                          useMaskedTextPasscode ? 'room-passcode-mask' : ''
+                        }`}
                       />
                     </div>
 

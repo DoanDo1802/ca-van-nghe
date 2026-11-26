@@ -28,6 +28,7 @@ import {
   saveAvatarModel,
   type AvatarModelId,
 } from '../utils/avatarColor';
+import { matchesRoomSearch, supportsWebkitTextSecurity } from '../utils/roomInputHelpers';
 
 export type LobbyHubTab = 'lobby' | 'avatar';
 
@@ -72,10 +73,20 @@ export const LobbyHubModal: React.FC<LobbyHubModalProps> = ({
   const [avatarModel, setAvatarModel] = useState<AvatarModelId>(() => getSavedAvatarModel());
 
   const supabaseReady = isSupabaseConfigured();
+  const useMaskedTextPasscode = supportsWebkitTextSecurity();
 
   useEffect(() => {
     setActiveTab(initialTab);
   }, [initialTab, isOpen]);
+
+  useEffect(() => {
+    if (!isOpen || activeTab === 'lobby') {
+      setRoomSearchQuery('');
+      setJoinPasswordRoomId(null);
+      setJoinPassword('');
+      setRoomError('');
+    }
+  }, [isOpen, activeTab]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -104,6 +115,7 @@ export const LobbyHubModal: React.FC<LobbyHubModalProps> = ({
       return;
     }
     setLoadingRooms(true);
+    await MultiplayerManager.getInstance().waitForPendingCleanup();
     const list = await AdminService.fetchActiveRooms();
     setRooms(list);
     setLoadingRooms(false);
@@ -239,13 +251,8 @@ export const LobbyHubModal: React.FC<LobbyHubModalProps> = ({
     await loadRooms();
   };
 
-  const normalizedRoomQuery = roomSearchQuery.trim().toLowerCase();
-  const filteredRooms = normalizedRoomQuery
-    ? rooms.filter(
-        (r) =>
-          r.room_id.toLowerCase().includes(normalizedRoomQuery) ||
-          (r.host_name || '').toLowerCase().includes(normalizedRoomQuery)
-      )
+  const filteredRooms = roomSearchQuery.trim()
+    ? rooms.filter((r) => matchesRoomSearch(r, roomSearchQuery))
     : rooms;
 
   return (
@@ -451,11 +458,13 @@ export const LobbyHubModal: React.FC<LobbyHubModalProps> = ({
                     <div className="flex gap-2">
                       <input
                         type="text"
+                        name="hub-guest-display-name"
+                        autoComplete="off"
                         maxLength={24}
                         value={guestNameDraft}
                         onChange={(e) => setGuestNameDraft(e.target.value)}
                         placeholder="Nhập tên hiển thị..."
-                        className="flex-1 px-3 py-2 rounded-lg bg-neutral-950 border border-white/10 text-base sm:text-xs text-white focus:outline-none focus:border-white/30"
+                        className="flex-1 px-3 py-2 rounded-lg bg-neutral-950 border border-white/10 text-base sm:text-xs text-white focus:outline-none focus:border-white/30 select-text"
                       />
                       <button
                         type="submit"
@@ -468,6 +477,7 @@ export const LobbyHubModal: React.FC<LobbyHubModalProps> = ({
 
                   {supabaseReady && (
                     <form
+                      key={authMode}
                       onSubmit={(e) => void handleAuthSubmit(e)}
                       className="rounded-xl bg-[#181818] border border-white/10 p-4 space-y-3"
                     >
@@ -508,33 +518,39 @@ export const LobbyHubModal: React.FC<LobbyHubModalProps> = ({
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                         <input
                           type="text"
+                          name="hub-account-username"
+                          autoComplete="username"
                           required
                           minLength={3}
                           maxLength={24}
                           value={username}
                           onChange={(e) => setUsername(e.target.value)}
                           placeholder="Tên đăng nhập"
-                          className="px-3 py-2 rounded-lg bg-neutral-950 border border-white/10 text-base sm:text-xs text-white"
+                          className="px-3 py-2 rounded-lg bg-neutral-950 border border-white/10 text-base sm:text-xs text-white select-text"
                         />
                         <input
                           type="password"
+                          name="hub-account-password"
+                          autoComplete={authMode === 'register' ? 'new-password' : 'current-password'}
                           required
                           minLength={4}
                           value={password}
                           onChange={(e) => setPassword(e.target.value)}
                           placeholder="Mật khẩu"
-                          className="px-3 py-2 rounded-lg bg-neutral-950 border border-white/10 text-base sm:text-xs text-white"
+                          className="px-3 py-2 rounded-lg bg-neutral-950 border border-white/10 text-base sm:text-xs text-white select-text"
                         />
                       </div>
 
                       {authMode === 'register' && (
                         <input
                           type="text"
+                          name="hub-account-display-name"
+                          autoComplete="name"
                           maxLength={24}
                           value={displayName}
                           onChange={(e) => setDisplayName(e.target.value)}
                           placeholder="Tên hiển thị trong game (tùy chọn)"
-                          className="w-full px-3 py-2 rounded-lg bg-neutral-950 border border-white/10 text-base sm:text-xs text-white"
+                          className="w-full px-3 py-2 rounded-lg bg-neutral-950 border border-white/10 text-base sm:text-xs text-white select-text"
                         />
                       )}
 
@@ -584,11 +600,20 @@ export const LobbyHubModal: React.FC<LobbyHubModalProps> = ({
                 <div className="relative">
                   <Search className="w-3.5 h-3.5 text-neutral-500 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                   <input
-                    type="text"
+                    type="search"
+                    name="hub-room-search"
+                    autoComplete="off"
+                    autoCorrect="off"
+                    autoCapitalize="off"
+                    spellCheck={false}
+                    data-lpignore="true"
+                    data-1p-ignore="true"
+                    data-bwignore="true"
+                    data-form-type="other"
                     value={roomSearchQuery}
                     onChange={(e) => setRoomSearchQuery(e.target.value)}
                     placeholder="Tìm kiếm mã phòng hoặc tên chủ phòng..."
-                    className="w-full pl-9 pr-8 py-2 rounded-xl bg-neutral-950 border border-white/10 text-base sm:text-xs text-white placeholder:text-neutral-500 focus:outline-none focus:border-white/30"
+                    className="w-full pl-9 pr-8 py-2 rounded-xl bg-neutral-950 border border-white/10 text-base sm:text-xs text-white placeholder:text-neutral-500 focus:outline-none focus:border-white/30 select-text [&::-webkit-search-cancel-button]:hidden"
                   />
                   {roomSearchQuery && (
                     <button
@@ -719,11 +744,28 @@ export const LobbyHubModal: React.FC<LobbyHubModalProps> = ({
                           {needsPasswordPrompt && (
                             <div className="flex items-center gap-2 pt-1 border-t border-white/10">
                               <input
-                                type="password"
+                                type={useMaskedTextPasscode ? 'text' : joinPassword.length > 0 ? 'password' : 'text'}
+                                name="hub-join-room-passcode"
+                                autoComplete={useMaskedTextPasscode ? 'off' : 'new-password'}
+                                autoCorrect="off"
+                                autoCapitalize="off"
+                                spellCheck={false}
+                                data-lpignore="true"
+                                data-1p-ignore="true"
+                                data-bwignore="true"
+                                data-form-type="other"
                                 value={joinPassword}
                                 onChange={(e) => setJoinPassword(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter' && !busy) {
+                                    e.preventDefault();
+                                    void handleJoinExistingRoom(room, joinPassword);
+                                  }
+                                }}
                                 placeholder="Nhập mật khẩu phòng..."
-                                className="flex-1 px-3 py-1.5 rounded-lg bg-neutral-950 border border-white/15 text-base sm:text-xs text-white focus:outline-none focus:border-white/35"
+                                className={`flex-1 px-3 py-1.5 rounded-lg bg-neutral-950 border border-white/15 text-base sm:text-xs text-white focus:outline-none focus:border-white/35 select-text ${
+                                  useMaskedTextPasscode ? 'room-passcode-mask' : ''
+                                }`}
                               />
                               <button
                                 type="button"
