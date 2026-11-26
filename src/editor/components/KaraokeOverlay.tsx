@@ -300,7 +300,16 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
   const capturePendingRef = useRef(false);
   const downloadRef = useRef<AbortController | null>(null);
   const recordRequestRef = useRef(0);
-  const useLocalVideoDownload = import.meta.env.DEV && ['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname);
+  const serverKaraokeUrl = import.meta.env.VITE_KARAOKE_VIDEO_API_URL?.trim();
+  const useDevKaraokeApi =
+    import.meta.env.DEV && ['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname);
+  const useLocalVideoDownload =
+    useDevKaraokeApi ||
+    import.meta.env.VITE_ENABLE_SERVER_KARAOKE_DOWNLOAD === 'true' ||
+    Boolean(serverKaraokeUrl);
+  const karaokeDownloadEndpoint = useDevKaraokeApi
+    ? '/api/dev/karaoke-video'
+    : serverKaraokeUrl || '/api/karaoke-video';
 
   const cancelVideoDownload = () => {
     downloadRef.current?.abort();
@@ -728,7 +737,7 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
       setIsDownloadingVideo(true);
       setSearchError(null);
       try {
-        const response = await fetch(`/api/dev/karaoke-video?id=${encodeURIComponent(song.youtubeId)}`, {
+        const response = await fetch(`${karaokeDownloadEndpoint}?id=${encodeURIComponent(song.youtubeId)}`, {
           method: 'POST',
           signal: controller.signal,
         });
