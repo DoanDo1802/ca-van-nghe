@@ -58,7 +58,7 @@ function extractYoutubeId(input: string): string | null {
 }
 
 export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }) => {
-  const [isPickerOpen, setIsPickerOpen] = useState(true);
+  const [isPickerOpen, setIsPickerOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'search' | 'queue'>('search');
   const [searchQuery, setSearchQuery] = useState('');
   const [category, setCategory] = useState<CategoryFilter>('Tất cả');
@@ -346,6 +346,7 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
       setIsRecordingsOpen(false);
       setIsFilePlaying(false);
       setYoutubeVideoId(null);
+      window.dispatchEvent(new CustomEvent('cavannghe:karaoke-playing', { detail: false }));
       KaraokeVoiceManager.getInstance().stopBroadcasting();
       MultiplayerManager.getInstance().broadcastKaraokeState({
         active: false,
@@ -355,7 +356,7 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
       });
       return;
     }
-    setIsPickerOpen(true);
+    setIsPickerOpen(false);
     void enableSingerMic();
   }, [isOpen]);
 
@@ -494,6 +495,7 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
       });
       karaokeAudio.disableMic();
       karaokeAudio.stop();
+      window.dispatchEvent(new CustomEvent('cavannghe:karaoke-playing', { detail: false }));
       loungeAudio.setDucked(false);
     };
   }, []);
@@ -568,6 +570,7 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
       if (nextPlaying === null || lastYtPlayingRef.current === nextPlaying) return;
       lastYtPlayingRef.current = nextPlaying;
       lastTimeSyncSentRef.current = Date.now();
+      window.dispatchEvent(new CustomEvent('cavannghe:karaoke-playing', { detail: nextPlaying }));
       MultiplayerManager.getInstance().broadcastKaraokeState({
         active: true,
         youtubeVideoId,
@@ -628,8 +631,7 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
     setSearchError(null);
     setActiveTab('search');
     try {
-      const queryWithKaraoke = /karaoke|beat/i.test(raw) ? raw : `${raw} karaoke`;
-      const res = await fetch(`/api/yt-search?q=${encodeURIComponent(queryWithKaraoke)}`);
+      const res = await fetch(`/api/yt-search?q=${encodeURIComponent(raw)}`);
       if (!res.ok) throw new Error('Search request failed');
       const data = (await res.json()) as { items?: KaraokeSong[] };
       if (Array.isArray(data.items) && data.items.length > 0) {
@@ -657,6 +659,7 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
     lastTimeSyncSentRef.current = Date.now();
     lastYtPlayingRef.current = true;
     setIsPickerOpen(false);
+    window.dispatchEvent(new CustomEvent('cavannghe:karaoke-playing', { detail: true }));
     MultiplayerManager.getInstance().broadcastKaraokeState({
       active: true,
       youtubeVideoId: song.youtubeId,
@@ -675,8 +678,12 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
     setCustomFileName(name);
     setActiveSong(null);
     karaokeAudio.setAudienceMusicVolume(audienceMusicVolume / 100);
-    karaokeAudio.play(() => setIsFilePlaying(false));
+    karaokeAudio.play(() => {
+      setIsFilePlaying(false);
+      window.dispatchEvent(new CustomEvent('cavannghe:karaoke-playing', { detail: false }));
+    });
     setIsFilePlaying(true);
+    window.dispatchEvent(new CustomEvent('cavannghe:karaoke-playing', { detail: true }));
     setIsPickerOpen(false);
     const stream = karaokeAudio.getBroadcastStream();
     if (stream) {
@@ -698,9 +705,14 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
     if (isFilePlaying) {
       karaokeAudio.pause();
       setIsFilePlaying(false);
+      window.dispatchEvent(new CustomEvent('cavannghe:karaoke-playing', { detail: false }));
     } else {
-      karaokeAudio.play(() => setIsFilePlaying(false));
+      karaokeAudio.play(() => {
+        setIsFilePlaying(false);
+        window.dispatchEvent(new CustomEvent('cavannghe:karaoke-playing', { detail: false }));
+      });
       setIsFilePlaying(true);
+      window.dispatchEvent(new CustomEvent('cavannghe:karaoke-playing', { detail: true }));
     }
     MultiplayerManager.getInstance().broadcastKaraokeState({
       active: true,
@@ -946,7 +958,7 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
         )}
 
         <div className="pointer-events-auto fixed top-[max(0.75rem,env(safe-area-inset-top))] right-3 z-40">
-          <div className="flex items-center gap-2">
+          <div className="flex items-start gap-2">
             {autoTune.enabled && (
               <button
                 type="button"
@@ -971,29 +983,6 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
               </button>
             )}
 
-            <button
-              type="button"
-              onClick={() => void handleToggleRecord()}
-              title={recState.isRecording ? 'Dừng ghi âm & nghe lại' : 'Ghi âm giọng hát'}
-              className={`h-10 px-3 rounded-xl border backdrop-blur-xl shadow-xl flex items-center gap-2 text-xs font-semibold transition ${
-                recState.isRecording
-                  ? 'bg-rose-600/90 hover:bg-rose-500 border-rose-300/40 text-white'
-                  : 'bg-[#121212]/90 hover:bg-[#1e1e1e] border-white/15 text-neutral-100'
-              }`}
-            >
-              {recState.isRecording ? (
-                <>
-                  <Square className="w-3.5 h-3.5 fill-current animate-pulse" />
-                  <span className="font-mono">{formatDurationSec(recordingElapsedSec)}</span>
-                </>
-              ) : (
-                <>
-                  <Circle className="w-3.5 h-3.5 text-rose-400 fill-rose-400" />
-                  <span className="hidden sm:inline">Ghi âm</span>
-                </>
-              )}
-            </button>
-
             {recState.recordings.length > 0 && !recState.isRecording && (
               <button
                 type="button"
@@ -1016,29 +1005,78 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
               </button>
             )}
 
-            <button
-              type="button"
-              onClick={() => {
-                if (isMixerOpen || isRecordingsOpen) {
-                  setIsMixerOpen(false);
-                  setIsRecordingsOpen(false);
-                  setIsMenuOpen(true);
-                } else {
-                  setIsMenuOpen((o) => !o);
-                }
-              }}
-              aria-label="Mở menu Karaoke"
-              className="relative w-10 h-10 rounded-xl bg-[#121212]/90 hover:bg-[#1e1e1e] border border-white/15 text-white backdrop-blur-xl shadow-xl flex items-center justify-center transition"
-            >
-              {isMenuOpen || isMixerOpen || isRecordingsOpen ? (
-                <X className="w-4 h-4" />
-              ) : (
-                <Menu className="w-4 h-4" />
-              )}
-              {micEnabled && (
-                <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-              )}
-            </button>
+            <div className="flex flex-col items-stretch gap-2">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void handleToggleRecord()}
+                  title={recState.isRecording ? 'Dừng ghi âm & nghe lại' : 'Ghi âm giọng hát'}
+                  className={`h-10 px-3 rounded-xl border backdrop-blur-xl shadow-xl flex items-center gap-2 text-xs font-semibold transition ${
+                    recState.isRecording
+                      ? 'bg-rose-600/90 hover:bg-rose-500 border-rose-300/40 text-white'
+                      : 'bg-[#121212]/90 hover:bg-[#1e1e1e] border-white/15 text-neutral-100'
+                  }`}
+                >
+                  {recState.isRecording ? (
+                    <>
+                      <Square className="w-3.5 h-3.5 fill-current animate-pulse" />
+                      <span className="font-mono">{formatDurationSec(recordingElapsedSec)}</span>
+                    </>
+                  ) : (
+                    <>
+                      <Circle className="w-3.5 h-3.5 text-rose-400 fill-rose-400" />
+                      <span className="hidden sm:inline">Ghi âm</span>
+                    </>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (isMixerOpen || isRecordingsOpen) {
+                      setIsMixerOpen(false);
+                      setIsRecordingsOpen(false);
+                      setIsMenuOpen(true);
+                    } else {
+                      setIsMenuOpen((o) => !o);
+                    }
+                  }}
+                  aria-label="Mở menu Karaoke"
+                  className="relative w-10 h-10 rounded-xl bg-[#121212]/90 hover:bg-[#1e1e1e] border border-white/15 text-white backdrop-blur-xl shadow-xl flex items-center justify-center transition"
+                >
+                  {isMenuOpen || isMixerOpen || isRecordingsOpen ? (
+                    <X className="w-4 h-4" />
+                  ) : (
+                    <Menu className="w-4 h-4" />
+                  )}
+                  {micEnabled && (
+                    <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                  )}
+                </button>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setIsPickerOpen((p) => !p);
+                  setIsMenuOpen(false);
+                }}
+                title="Tìm và chọn bài hát trên YouTube hoặc tải file nhạc"
+                className={`w-full h-9 px-3 rounded-xl border shadow-xl flex items-center justify-center gap-1.5 text-xs font-semibold transition ${
+                  isPickerOpen
+                    ? 'bg-red-600/90 hover:bg-red-500 border-red-300/40 text-white'
+                    : 'bg-[#121212]/90 hover:bg-[#1e1e1e] border-white/15 text-neutral-100'
+                }`}
+              >
+                <Search className="w-3.5 h-3.5 shrink-0" />
+                <span>Chọn bài</span>
+                {queue.length > 0 && (
+                  <span className="px-1.5 py-0.5 rounded-full bg-white/15 text-[10px] font-mono leading-none">
+                    {queue.length}
+                  </span>
+                )}
+              </button>
+            </div>
           </div>
 
           {isMenuOpen && (

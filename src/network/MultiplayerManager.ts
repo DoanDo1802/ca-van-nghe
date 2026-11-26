@@ -1,7 +1,13 @@
 import type { RealtimeChannel } from '@supabase/supabase-js';
 import { getSupabaseClient, getSupabaseRestConfig } from './supabaseClient';
 import { AdminService } from './AdminService';
-import { getSavedAvatarColor, saveAvatarColor } from '../utils/avatarColor';
+import {
+  getSavedAvatarColor,
+  getSavedAvatarModel,
+  saveAvatarColor,
+  saveAvatarModel,
+  type AvatarModelId,
+} from '../utils/avatarColor';
 import { DebugLogger } from '../utils/debugLogger';
 
 export const PUBLIC_LOBBY_ROOM_ID = 'public-lobby';
@@ -77,6 +83,7 @@ export interface RemotePlayerState {
   chairId: string | null;
   isAdmin?: boolean;
   avatarColor?: string;
+  avatarModel?: string;
   joinedAt: number;
   seq: number;
 }
@@ -99,6 +106,7 @@ interface PresencePayload {
   name: string;
   isAdmin?: boolean;
   avatarColor?: string;
+  avatarModel?: string;
   joinedAt: number;
   chairId: string | null;
   stageState?: NetworkStageState;
@@ -137,6 +145,7 @@ export class MultiplayerManager {
   private readonly localDeviceId = AdminService.getOrCreateDeviceId();
   private localPlayerName = 'Khách';
   private localAvatarColor = getSavedAvatarColor();
+  private localAvatarModel: AvatarModelId = getSavedAvatarModel();
   private localIsAdmin = false;
   private roomPassword = '';
   private lastJoinError = '';
@@ -307,6 +316,18 @@ export class MultiplayerManager {
 
   setLocalAvatarColor(hexColor: string): void {
     this.localAvatarColor = saveAvatarColor(hexColor);
+    this.lastSentSig = '';
+    if (this.connected) {
+      void this.trackLocalPresence();
+    }
+  }
+
+  getLocalAvatarModel(): AvatarModelId {
+    return this.localAvatarModel;
+  }
+
+  setLocalAvatarModel(modelId: string): void {
+    this.localAvatarModel = saveAvatarModel(modelId);
     this.lastSentSig = '';
     if (this.connected) {
       void this.trackLocalPresence();
@@ -927,7 +948,7 @@ export class MultiplayerManager {
 
     const vxVal = state.vx ?? 0;
     const vzVal = state.vz ?? 0;
-    const sig = `${state.x.toFixed(2)},${state.y.toFixed(2)},${state.z.toFixed(2)},${vxVal.toFixed(1)},${vzVal.toFixed(1)},${state.yaw.toFixed(1)},${state.anim},${state.emote ?? ''},${state.isSitting ? 1 : 0},${state.chairId ?? ''},${this.localAvatarColor}`;
+    const sig = `${state.x.toFixed(2)},${state.y.toFixed(2)},${state.z.toFixed(2)},${vxVal.toFixed(1)},${vzVal.toFixed(1)},${state.yaw.toFixed(1)},${state.anim},${state.emote ?? ''},${state.isSitting ? 1 : 0},${state.chairId ?? ''},${this.localAvatarColor},${this.localAvatarModel}`;
 
     if (!options?.force && sig === this.lastSentSig && now - this.lastBroadcastTime < 1500) {
       return;
@@ -951,6 +972,7 @@ export class MultiplayerManager {
       isSitting: state.isSitting,
       chairId: state.chairId,
       avatarColor: this.localAvatarColor,
+      avatarModel: this.localAvatarModel,
       joinedAt: this.joinedAt,
       seq: this.localSeq,
     };
@@ -1181,6 +1203,7 @@ export class MultiplayerManager {
       name: this.localPlayerName,
       isAdmin: this.localIsAdmin,
       avatarColor: this.localAvatarColor,
+      avatarModel: this.localAvatarModel,
       joinedAt: this.joinedAt,
       chairId: this.localChairId,
       ...(this.isHost() && this.hostStageState ? { stageState: this.hostStageState } : {}),
@@ -1375,6 +1398,7 @@ export class MultiplayerManager {
         existing.chairId = p.chairId;
         existing.isAdmin = Boolean(p.isAdmin);
         if (p.avatarColor) existing.avatarColor = p.avatarColor;
+        if (p.avatarModel) existing.avatarModel = p.avatarModel;
       } else {
         this.remotePlayers.set(p.playerId, {
           id: p.playerId,
@@ -1391,6 +1415,7 @@ export class MultiplayerManager {
           chairId: p.chairId,
           isAdmin: Boolean(p.isAdmin),
           avatarColor: p.avatarColor,
+          avatarModel: p.avatarModel,
           joinedAt: p.joinedAt,
           seq: 0,
         });
@@ -1475,6 +1500,7 @@ export class MultiplayerManager {
       existing.isSitting = payload.isSitting;
       existing.chairId = payload.chairId;
       if (payload.avatarColor) existing.avatarColor = payload.avatarColor;
+      if (payload.avatarModel) existing.avatarModel = payload.avatarModel;
       existing.seq = payload.seq ?? existing.seq + 1;
     } else {
       this.remotePlayers.set(payload.id, { ...payload });

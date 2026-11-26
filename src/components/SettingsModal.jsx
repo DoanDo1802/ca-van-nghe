@@ -216,6 +216,9 @@ export default function SettingsModal({
                     { id: 'dance', key: '3', label: 'Nhún nhảy', icon: Sparkles },
                     { id: 'crouch', key: '4', label: 'Khuỵu gối', icon: ChevronDown },
                     { id: 'walkFormal', key: '5', label: 'Đi quý phái', icon: Footprints },
+                    { id: 'samba', key: '6', label: 'Nhảy Samba', icon: Sparkles },
+                    { id: 'hiphop', key: '7', label: 'Slide Hip Hop', icon: Sparkles },
+                    { id: 'swing', key: '8', label: 'Swing Dance', icon: Sparkles },
                   ].map((em) => {
                     const IconComp = em.icon;
                     const isActive = activeEmote === em.id;

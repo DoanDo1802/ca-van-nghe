@@ -10,6 +10,7 @@ import { RemoteNameplates } from '../../components/RemoteNameplates';
 import { ChatBox } from '../../components/ChatBox';
 import { VoiceChatBar } from '../../components/VoiceChatBar';
 import { LobbyHubModal, type LobbyHubTab } from '../../components/LobbyHubModal';
+import { RadialEmoteWheel } from '../../components/RadialEmoteWheel';
 import {
   MultiplayerManager,
   type RoomStatusSnapshot,
@@ -188,12 +189,17 @@ export const GameOverlayUI: React.FC = () => {
       setIsAudioPlaying(detail.playing);
     };
 
+    const onEmoteCleared = () => {
+      setActiveEmote(null);
+    };
+
     window.addEventListener('cavannghe:proximity', onProximity);
     window.addEventListener('cavannghe:interact', onInteract);
     window.addEventListener('cavannghe:load-scene', onLoadSceneEvent);
     window.addEventListener('cavannghe:sit', onSit);
     window.addEventListener('cavannghe:camera-mode', onCamMode);
     window.addEventListener('cavannghe:karaoke', onKaraoke);
+    window.addEventListener('cavannghe:emote-cleared', onEmoteCleared);
     window.addEventListener('cavannghe:stage-audio-changed', onStageAudioChanged);
     window.addEventListener('cavannghe:stage-media-error', onStageError);
     window.addEventListener('cavannghe:room-status', onRoomStatus);
@@ -208,6 +214,7 @@ export const GameOverlayUI: React.FC = () => {
       window.removeEventListener('cavannghe:sit', onSit);
       window.removeEventListener('cavannghe:camera-mode', onCamMode);
       window.removeEventListener('cavannghe:karaoke', onKaraoke);
+      window.removeEventListener('cavannghe:emote-cleared', onEmoteCleared);
       window.removeEventListener('cavannghe:stage-audio-changed', onStageAudioChanged);
       window.removeEventListener('cavannghe:stage-media-error', onStageError);
       window.removeEventListener('cavannghe:room-status', onRoomStatus);
@@ -324,6 +331,15 @@ export const GameOverlayUI: React.FC = () => {
         <KaraokeAudienceSync isSingingLocal={isKaraokeOpen} />
 
         <ChatBox hideOnMobile={isKaraokeOpen} />
+
+        <RadialEmoteWheel
+          activeEmote={activeEmote}
+          disabled={isHubModalOpen || isSettingsOpen || isStageModalOpen}
+          onSelectEmote={(emoteId) => {
+            setActiveEmote(emoteId);
+            window.dispatchEvent(new CustomEvent('cavannghe:emote', { detail: emoteId }));
+          }}
+        />
 
         {ENABLE_VOICE_CHAT && <VoiceChatBar isKaraokeOpen={isKaraokeOpen} />}
 

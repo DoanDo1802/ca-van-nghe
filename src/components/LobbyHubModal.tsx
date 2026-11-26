@@ -21,8 +21,12 @@ import { isSupabaseConfigured } from '../network/supabaseClient';
 import { LOBBY_SCENE_ID } from '../engine/serialization/SceneRegistry';
 import {
   AVATAR_COLOR_PRESETS,
+  AVATAR_MODEL_PRESETS,
   getSavedAvatarColor,
+  getSavedAvatarModel,
   saveAvatarColor,
+  saveAvatarModel,
+  type AvatarModelId,
 } from '../utils/avatarColor';
 
 export type LobbyHubTab = 'lobby' | 'avatar';
@@ -65,6 +69,7 @@ export const LobbyHubModal: React.FC<LobbyHubModalProps> = ({
   const [closingRoomId, setClosingRoomId] = useState<string | null>(null);
 
   const [avatarColor, setAvatarColor] = useState<string>(() => getSavedAvatarColor());
+  const [avatarModel, setAvatarModel] = useState<AvatarModelId>(() => getSavedAvatarModel());
 
   const supabaseReady = isSupabaseConfigured();
 
@@ -194,6 +199,13 @@ export const LobbyHubModal: React.FC<LobbyHubModalProps> = ({
     if (account?.id) {
       void AdminService.updatePlayerAvatarColor(account.id, clean);
     }
+  };
+
+  const handleSelectModel = (modelId: AvatarModelId) => {
+    const clean = saveAvatarModel(modelId);
+    setAvatarModel(clean);
+    MultiplayerManager.getInstance().setLocalAvatarModel(clean);
+    window.dispatchEvent(new CustomEvent('cavannghe:avatar-model', { detail: clean }));
   };
 
   const handleJoinExistingRoom = async (room: ActiveRoomInfo, pwd = '') => {
@@ -333,13 +345,56 @@ export const LobbyHubModal: React.FC<LobbyHubModalProps> = ({
         <div className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-5">
           {activeTab === 'avatar' ? (
             <div className="space-y-5">
+              {/* Character Model Selector */}
+              <div className="space-y-2.5">
+                <div>
+                  <h3 className="text-sm font-semibold text-white">Chọn nhân vật</h3>
+                  <p className="text-xs text-neutral-400 mt-0.5">
+                    Đổi nhân vật hiển thị ngay lập tức cho bạn và mọi người trong phòng.
+                  </p>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  {AVATAR_MODEL_PRESETS.map((model) => {
+                    const selected = avatarModel === model.id;
+                    return (
+                      <button
+                        key={model.id}
+                        type="button"
+                        onClick={() => handleSelectModel(model.id)}
+                        className={`p-3 rounded-xl border text-left transition flex items-center justify-between gap-3 ${
+                          selected
+                            ? 'bg-white/10 border-white text-white'
+                            : 'bg-[#181818] border-white/10 hover:border-white/25 text-neutral-300'
+                        }`}
+                      >
+                        <div className="min-w-0">
+                          <div className="text-xs font-semibold truncate">{model.label}</div>
+                          <div className="text-[11px] text-neutral-400 truncate mt-0.5">
+                            {model.subtitle}
+                          </div>
+                        </div>
+                        <span
+                          className={`px-2 py-0.5 rounded text-[10px] font-semibold shrink-0 ${
+                            selected ? 'bg-white text-black' : 'bg-white/5 text-neutral-400'
+                          }`}
+                        >
+                          {selected ? 'Đang dùng' : 'Chọn'}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
               {/* Avatar Color */}
-              <div className="space-y-4">
+              <div className={`space-y-4 ${avatarModel !== 'default' ? 'opacity-60' : ''}`}>
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <h3 className="text-sm font-semibold text-white">Chọn màu trang phục nhân vật</h3>
                     <p className="text-xs text-neutral-400 mt-0.5">
-                      Thay đổi hiển thị ngay lập tức cho bạn và mọi người trong phòng.
+                      {avatarModel === 'default'
+                        ? 'Thay đổi hiển thị ngay lập tức cho bạn và mọi người trong phòng.'
+                        : 'Chỉ áp dụng cho Nhân vật Mặc định (Tyler giữ trang phục gốc).'}
                     </p>
                   </div>
                   <div

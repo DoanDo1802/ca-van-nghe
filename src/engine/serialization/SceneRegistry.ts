@@ -53,7 +53,6 @@ export const SCENE_DEFINITIONS: SceneDefinition[] = [
     description: 'Không gian Phòng Trà tách riêng với Acoustic_Stage (Ban nhạc Live, LED Board, Karaoke).',
     modelUrls: [
       '/models/every_other_gig_ever.glb',
-      '/models/MicStand.glb',
       '/models/Microphone.glb',
       '/models/fresnel-led.glb',
       '/models/Character.glb',

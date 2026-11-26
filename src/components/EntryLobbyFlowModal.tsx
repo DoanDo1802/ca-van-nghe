@@ -24,8 +24,12 @@ import { isSupabaseConfigured } from '../network/supabaseClient';
 import { LOBBY_SCENE_ID } from '../engine/serialization/SceneRegistry';
 import {
   AVATAR_COLOR_PRESETS,
+  AVATAR_MODEL_PRESETS,
   getSavedAvatarColor,
+  getSavedAvatarModel,
   saveAvatarColor,
+  saveAvatarModel,
+  type AvatarModelId,
 } from '../utils/avatarColor';
 
 export interface EntryLobbyFlowModalProps {
@@ -67,6 +71,7 @@ export const EntryLobbyFlowModal: React.FC<EntryLobbyFlowModalProps> = ({
   const [identityMode, setIdentityMode] = useState<IdentityMode>('guest');
   const [guestName, setGuestName] = useState<string>(() => getDefaultGuestName());
   const [avatarColor, setAvatarColor] = useState<string>(() => getSavedAvatarColor());
+  const [avatarModel, setAvatarModel] = useState<AvatarModelId>(() => getSavedAvatarModel());
 
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -164,6 +169,13 @@ export const EntryLobbyFlowModal: React.FC<EntryLobbyFlowModalProps> = ({
     if (account?.id) {
       void AdminService.updatePlayerAvatarColor(account.id, clean);
     }
+  };
+
+  const handleSelectModel = (modelId: AvatarModelId) => {
+    const clean = saveAvatarModel(modelId);
+    setAvatarModel(clean);
+    MultiplayerManager.getInstance().setLocalAvatarModel(clean);
+    window.dispatchEvent(new CustomEvent('cavannghe:avatar-model', { detail: clean }));
   };
 
   const applyAccountSession = (acc: AdminAccount) => {
@@ -427,8 +439,44 @@ export const EntryLobbyFlowModal: React.FC<EntryLobbyFlowModalProps> = ({
                     />
                   </div>
 
-                  {/* Avatar Color Picker */}
+                  {/* Character Model Selector */}
                   <div className="space-y-2">
+                    <label className="block text-xs text-neutral-400">Chọn nhân vật</label>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {AVATAR_MODEL_PRESETS.map((model) => {
+                        const selected = avatarModel === model.id;
+                        return (
+                          <button
+                            key={model.id}
+                            type="button"
+                            onClick={() => handleSelectModel(model.id)}
+                            className={`p-2.5 rounded-xl border text-left transition flex items-center justify-between gap-2 ${
+                              selected
+                                ? 'bg-white/10 border-white text-white'
+                                : 'bg-[#181818] border-white/10 hover:border-white/25 text-neutral-300'
+                            }`}
+                          >
+                            <div className="min-w-0">
+                              <div className="text-xs font-semibold truncate">{model.label}</div>
+                              <div className="text-[10px] text-neutral-400 truncate">
+                                {model.subtitle}
+                              </div>
+                            </div>
+                            <span
+                              className={`px-1.5 py-0.5 rounded text-[10px] font-semibold shrink-0 ${
+                                selected ? 'bg-white text-black' : 'bg-white/5 text-neutral-400'
+                              }`}
+                            >
+                              {selected ? 'Đang chọn' : 'Chọn'}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Avatar Color Picker */}
+                  <div className={`space-y-2 ${avatarModel !== 'default' ? 'opacity-60' : ''}`}>
                     <div className="flex items-center justify-between">
                       <label className="text-xs text-neutral-400">Màu trang phục nhân vật</label>
                       <input

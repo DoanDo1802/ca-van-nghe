@@ -89,7 +89,7 @@ export default function NavigationHUD({
       {!isDecoMode && !hideHeader && (
         <div className="fixed top-[max(0.75rem,env(safe-area-inset-top))] right-3 z-40 pointer-events-auto select-none flex items-center gap-2">
           {showFps && (
-            <div className="px-2.5 py-2 rounded-xl bg-[#121212]/90 backdrop-blur-md text-neutral-300 border border-white/10 font-mono text-xs shadow-lg">
+            <div className="px-2.5 py-2 rounded-xl bg-[#121212]/90 text-neutral-300 border border-white/10 font-mono text-xs shadow-lg">
               {fps} FPS
             </div>
           )}
@@ -99,7 +99,7 @@ export default function NavigationHUD({
               type="button"
               onClick={() => setIsMenuOpen((prev) => !prev)}
               aria-label="Mở menu phòng"
-              className="relative w-10 h-10 rounded-xl bg-[#121212]/90 hover:bg-[#1e1e1e] border border-white/15 text-white backdrop-blur-xl shadow-xl flex items-center justify-center transition"
+              className="relative w-10 h-10 rounded-xl bg-[#121212]/90 hover:bg-[#1e1e1e] border border-white/15 text-white shadow-xl flex items-center justify-center transition"
             >
               {isMenuOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
               {roomStatus?.connected && (
@@ -108,7 +108,7 @@ export default function NavigationHUD({
             </button>
 
             {isMenuOpen && (
-              <div className="absolute right-0 top-full mt-2 w-64 rounded-2xl bg-[#121212]/95 backdrop-blur-2xl border border-white/15 shadow-2xl p-2 space-y-1.5 text-xs text-neutral-200">
+              <div className="absolute right-0 top-full mt-2 w-64 rounded-2xl bg-[#121212]/95 border border-white/15 shadow-2xl p-2 space-y-1.5 text-xs text-neutral-200">
                 {/* Current Area */}
                 <div className="px-3 py-2 rounded-xl bg-white/[0.04] border border-white/[0.06] space-y-1.5">
                   <div className="flex items-center gap-2 text-white font-medium">
@@ -239,7 +239,7 @@ export default function NavigationHUD({
         <div className="fixed bottom-32 sm:bottom-8 left-1/2 -translate-x-1/2 z-40 pointer-events-auto max-w-[calc(100vw-2rem)]">
           <button
             onClick={onTriggerInteract}
-            className="bg-[#121212]/95 backdrop-blur-md px-4 py-2.5 rounded-xl flex items-center space-x-2.5 text-neutral-200 shadow-2xl border border-white/10 hover:border-white/25 hover:text-white transition"
+            className="bg-[#121212]/95 px-4 py-2.5 rounded-xl flex items-center space-x-2.5 text-neutral-200 shadow-2xl border border-white/10 hover:border-white/25 hover:text-white transition"
           >
             <kbd className="w-5 h-5 rounded bg-white/10 border border-white/15 text-white font-mono text-[11px] font-semibold flex items-center justify-center shrink-0">
               E

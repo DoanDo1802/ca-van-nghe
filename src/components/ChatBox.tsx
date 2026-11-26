@@ -128,7 +128,7 @@ export const ChatBox: React.FC<{ hideOnMobile?: boolean }> = ({ hideOnMobile = f
         <button
           type="button"
           onClick={handleOpen}
-          className="inline-flex items-center gap-1.5 sm:gap-2 px-3 sm:px-3.5 py-2 rounded-xl bg-black/45 hover:bg-black/60 backdrop-blur-md border border-white/15 text-xs font-medium text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)] shadow-lg transition"
+          className="inline-flex items-center gap-1.5 sm:gap-2 px-3 sm:px-3.5 py-2 rounded-xl bg-black/65 hover:bg-black/75 border border-white/15 text-xs font-medium text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)] shadow-lg transition"
         >
           <MessageSquare className="w-3.5 h-3.5 text-cyan-300" />
           <span>Chat</span>
@@ -147,7 +147,7 @@ export const ChatBox: React.FC<{ hideOnMobile?: boolean }> = ({ hideOnMobile = f
 
   return (
     <div
-      className={`fixed left-3 z-30 pointer-events-auto bottom-36 sm:bottom-3 w-[calc(100vw-1.5rem)] max-w-80 rounded-2xl bg-black/45 sm:bg-black/30 backdrop-blur-md border border-white/15 shadow-2xl overflow-hidden flex-col ${
+      className={`fixed left-3 z-30 pointer-events-auto bottom-36 sm:bottom-3 w-[calc(100vw-1.5rem)] max-w-80 rounded-2xl bg-black/70 sm:bg-black/60 border border-white/15 shadow-2xl overflow-hidden flex-col ${
         hideOnMobile ? 'hidden sm:flex' : 'flex'
       }`}
     >

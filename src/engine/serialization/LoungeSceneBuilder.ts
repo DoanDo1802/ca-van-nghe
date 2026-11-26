@@ -1524,9 +1524,8 @@ export async function buildTeaRoomGalaTheatreDeco(
 
   const cache = matCache ?? new Map<string, Map<pc.Material, pc.StandardMaterial>>();
 
-  const [fresnelBuf, micStandBuf] = await Promise.all([
+  const [fresnelBuf] = await Promise.all([
     fetchBuffer('/models/fresnel-led.glb'),
-    fetchBuffer('/models/MicStand.glb'),
   ]);
 
   const spawnGlb = async (
@@ -1554,18 +1553,7 @@ export async function buildTeaRoomGalaTheatreDeco(
     return entity;
   };
 
-  // 1. Front-center MicStand right in front of singer position (15.65, 0.36, 3.0)
-  const micStand = await spawnGlb(
-    '/models/MicStand.glb',
-    micStandBuf,
-    'Acoustic_Front_MicStand',
-    [15.18, 0.36, 3.0],
-    [0, -90, 0],
-    [1, 1, 1]
-  );
-  root.addChild(micStand);
-
-  // 2. Slim matte-black overhead front lighting pipe & 5x real Fresnel LED spotlights
+  // 1. Slim matte-black overhead front lighting pipe & 5x real Fresnel LED spotlights
   root.addChild(createBox('Acoustic Front Pipe', [12.6, 6.22, 3.0], [0.1, 0.1, 10.2], mats.trussMetal));
   for (const rz of [-1.8, 7.8]) {
     root.addChild(createBox(`Acoustic Pipe Hanger ${rz}`, [12.6, 6.61, rz], [0.05, 0.78, 0.05], mats.trussMetal));

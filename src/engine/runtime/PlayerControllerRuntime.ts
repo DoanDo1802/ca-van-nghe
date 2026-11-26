@@ -1,7 +1,13 @@
 import * as pc from 'playcanvas';
 import { MultiplayerManager } from '../../network/MultiplayerManager';
-import { applyAvatarColor } from '../../utils/avatarColor';
+import {
+  applyAvatarColor,
+  getAvatarModelPreset,
+  getSavedAvatarColor,
+  getSavedAvatarModel,
+} from '../../utils/avatarColor';
 import { DebugLogger } from '../../utils/debugLogger';
+import { loadGlbFromArrayBuffer } from '../animation/GlbAnimExtractor';
 import { getEntityMeta } from '../serialization/EntityComponentHelper';
 import { KaraokeStageController } from './KaraokeStageController';
 
@@ -90,6 +96,8 @@ export class PlayerControllerRuntime {
   private yaw = 180; // facing -Z toward Main Stage
   private playerYaw = 180;
   private pitch = -12;
+  private targetCamYaw: number | null = null;
+  private targetCamPitch: number | null = null;
   private cameraMode: 'third' | 'first' = 'third';
   private velocityY = 0;
   private grounded = true;
@@ -98,6 +106,8 @@ export class PlayerControllerRuntime {
   private activeSeatChair: NearbyPromptData['chair'] | null = null;
   private lastPromptChair: NearbyPromptData['chair'] | null = null;
   private currentAnimState = '';
+  private activeEmoteAnim: string | null = null;
+  private activeEmoteId: string | null = null;
 
   private dynamicChairs: pc.Entity[] = [];
   private lastNetPos = new pc.Vec3(0, 0, 7);
@@ -181,8 +191,10 @@ export class PlayerControllerRuntime {
     window.addEventListener('cavannghe:emote', this.onEmote as EventListener);
     window.addEventListener('cavannghe:karaoke-exit', this.onKaraokeExit);
     window.addEventListener('cavannghe:karaoke-style', this.onKaraokeStyle as EventListener);
+    window.addEventListener('cavannghe:karaoke-playing', this.onKaraokePlaying as EventListener);
     window.addEventListener('cavannghe:avatar-color', this.onAvatarColor as EventListener);
-    pc.Application.getApplication()?.on('postUpdate', this.onPostUpdate);
+    window.addEventListener('cavannghe:avatar-model', this.onAvatarModel as EventListener);
+    pc.Application.getApplication()?.systems.on('postUpdate', this.onPostUpdate);
 
     this.updateCameraTransform(1);
     return true;
@@ -193,10 +205,29 @@ export class PlayerControllerRuntime {
     const clampedDt = Math.min(dt, 0.05);
 
     if (this.karaoke.isActive()) {
-      const animName = this.karaoke.update(clampedDt);
-      this.playAnim(animName);
+      this.karaoke.update(clampedDt);
+      this.playAnim(this.activeEmoteAnim ?? 'Idle_Loop');
     } else if (!this.isSitting) {
       this.updateMovement(clampedDt);
+    }
+
+    if (this.targetCamYaw !== null) {
+      const diff = ((this.targetCamYaw - this.yaw + 540) % 360) - 180;
+      if (Math.abs(diff) < 0.15) {
+        this.yaw = this.targetCamYaw;
+        this.targetCamYaw = null;
+      } else {
+        this.yaw += diff * (1 - Math.exp(-5.5 * clampedDt));
+      }
+    }
+    if (this.targetCamPitch !== null) {
+      const pitchDiff = this.targetCamPitch - this.pitch;
+      if (Math.abs(pitchDiff) < 0.15) {
+        this.pitch = this.targetCamPitch;
+        this.targetCamPitch = null;
+      } else {
+        this.pitch += pitchDiff * (1 - Math.exp(-5.5 * clampedDt));
+      }
     }
 
     this.updateCameraTransform(1 - Math.exp(-12 * clampedDt));
@@ -220,7 +251,7 @@ export class PlayerControllerRuntime {
       vz,
       yaw: this.playerYaw,
       anim: this.currentAnimState || 'Idle_Loop',
-      emote: null,
+      emote: this.activeEmoteId,
       isSitting: this.isSitting,
       chairId: this.isSitting ? this.currentSeatId : null,
     });
@@ -228,7 +259,7 @@ export class PlayerControllerRuntime {
 
   destroy(): void {
     this.destroyed = true;
-    pc.Application.getApplication()?.off('postUpdate', this.onPostUpdate);
+    pc.Application.getApplication()?.systems.off('postUpdate', this.onPostUpdate);
     this.karaoke.destroy();
     window.removeEventListener('keydown', this.onKeyDown);
     window.removeEventListener('keyup', this.onKeyUp);
@@ -251,7 +282,9 @@ export class PlayerControllerRuntime {
     window.removeEventListener('cavannghe:emote', this.onEmote as EventListener);
     window.removeEventListener('cavannghe:karaoke-exit', this.onKaraokeExit);
     window.removeEventListener('cavannghe:karaoke-style', this.onKaraokeStyle as EventListener);
+    window.removeEventListener('cavannghe:karaoke-playing', this.onKaraokePlaying as EventListener);
     window.removeEventListener('cavannghe:avatar-color', this.onAvatarColor as EventListener);
+    window.removeEventListener('cavannghe:avatar-model', this.onAvatarModel as EventListener);
     this.keys.clear();
     this.emitProximity(null);
   }
@@ -285,6 +318,11 @@ export class PlayerControllerRuntime {
     const len = Math.hypot(forwardInput, rightInput);
     const isMoving = len > 0.05;
     if (isMoving) {
+      if (this.activeEmoteAnim !== null) {
+        this.activeEmoteAnim = null;
+        this.activeEmoteId = null;
+        window.dispatchEvent(new CustomEvent('cavannghe:emote-cleared'));
+      }
       const nf = forwardInput / Math.max(1, len);
       const nr = rightInput / Math.max(1, len);
       const isRunning = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
@@ -339,12 +377,21 @@ export class PlayerControllerRuntime {
         this.playAnim(isRunning ? 'Running' : 'Walk_Loop');
       }
     } else if (this.grounded) {
-      this.playAnim('Idle_Loop');
+      if (this.activeEmoteAnim) {
+        this.playAnim(this.activeEmoteAnim);
+      } else {
+        this.playAnim('Idle_Loop');
+      }
     }
 
     // Gravity & step-up
     const floorY = this.groundAt(x, z);
     if (this.grounded && this.keys.has('Space')) {
+      if (this.activeEmoteAnim !== null) {
+        this.activeEmoteAnim = null;
+        this.activeEmoteId = null;
+        window.dispatchEvent(new CustomEvent('cavannghe:emote-cleared'));
+      }
       this.velocityY = jumpVelocity;
       this.grounded = false;
       const isRunning = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
@@ -573,11 +620,35 @@ export class PlayerControllerRuntime {
     try {
       anim.playing = true;
       const baseLayer = anim.baseLayer;
-      if (baseLayer && baseLayer.states?.includes(name)) {
+      if (baseLayer && baseLayer.states && baseLayer.states.length > 0) {
+        let target = name;
+        if (!baseLayer.states.includes(target)) {
+          if (target === 'Dance_Loop' && baseLayer.states.includes('Samba_Dancing')) {
+            target = 'Samba_Dancing';
+          } else if (target === 'Singing' && baseLayer.states.includes('Idle_Talking_Loop')) {
+            target = 'Idle_Talking_Loop';
+          } else if (
+            (target === 'Samba_Dancing' || target === 'Slide_Hip_Hop_Dance' || target === 'Swing_Dancing') &&
+            baseLayer.states.includes('Dance_Loop')
+          ) {
+            target = 'Dance_Loop';
+          } else if (
+            (target === 'Jump_Loop' || target === 'Jump_Start' || target === 'JumpWhileRun') &&
+            baseLayer.states.includes('Jumping')
+          ) {
+            target = 'Jumping';
+          } else if (baseLayer.states.includes('Idle_Loop')) {
+            target = 'Idle_Loop';
+          } else if (baseLayer.states.includes('mixamo.com')) {
+            target = 'mixamo.com';
+          } else {
+            target = baseLayer.states[0];
+          }
+        }
         if (!prev) {
-          baseLayer.play(name);
+          baseLayer.play(target);
         } else {
-          baseLayer.transition(name, 0.18);
+          baseLayer.transition(target, 0.18);
         }
       }
     } catch {
@@ -624,6 +695,9 @@ export class PlayerControllerRuntime {
             return;
           }
           this.isSitting = true;
+          this.activeEmoteAnim = null;
+          this.activeEmoteId = null;
+          window.dispatchEvent(new CustomEvent('cavannghe:emote-cleared'));
           this.currentSeatId = ch.id;
           this.activeSeatChair = ch;
           this.playerEntity.setLocalPosition(
@@ -685,6 +759,8 @@ export class PlayerControllerRuntime {
       const dy = e.clientY - this.lastPointerY;
       this.lastPointerX = e.clientX;
       this.lastPointerY = e.clientY;
+      this.targetCamYaw = null;
+      this.targetCamPitch = null;
       this.yaw -= dx * 0.25 * this.cameraSensitivity;
       this.pitch = pc.math.clamp(this.pitch - dy * 0.2 * this.cameraSensitivity, -60, 45);
       return;
@@ -714,6 +790,10 @@ export class PlayerControllerRuntime {
       this.lastPointerY = e.clientY;
     }
 
+    if (dx !== 0 || dy !== 0) {
+      this.targetCamYaw = null;
+      this.targetCamPitch = null;
+    }
     this.yaw -= dx * 0.22 * this.cameraSensitivity;
     this.pitch = pc.math.clamp(this.pitch - dy * 0.18 * this.cameraSensitivity, -60, 45);
   };
@@ -742,6 +822,8 @@ export class PlayerControllerRuntime {
     const dy = activeTouch.clientY - this.lastTouchY;
     this.lastTouchX = activeTouch.clientX;
     this.lastTouchY = activeTouch.clientY;
+    this.targetCamYaw = null;
+    this.targetCamPitch = null;
     this.yaw -= dx * 0.28 * this.cameraSensitivity;
     this.pitch = pc.math.clamp(this.pitch - dy * 0.22 * this.cameraSensitivity, -60, 45);
   };
@@ -764,9 +846,71 @@ export class PlayerControllerRuntime {
 
   private onAvatarColor = (e: CustomEvent<string>): void => {
     if (typeof e.detail === 'string' && this.playerEntity) {
-      applyAvatarColor(this.playerEntity, e.detail);
+      applyAvatarColor(this.playerEntity, e.detail, getSavedAvatarModel());
     }
   };
+
+  private onAvatarModel = (e: CustomEvent<string>): void => {
+    if (typeof e.detail !== 'string') return;
+    void this.swapPlayerModel(e.detail);
+  };
+
+  private async swapPlayerModel(modelId: string): Promise<void> {
+    const app = pc.Application.getApplication() as pc.Application | undefined;
+    if (!app || !this.playerEntity || this.destroyed) return;
+
+    const preset = getAvatarModelPreset(modelId);
+    try {
+      const res = await fetch(preset.url);
+      if (!res.ok || this.destroyed || !this.playerEntity) return;
+      const buf = await res.arrayBuffer();
+      if (this.destroyed || !this.playerEntity) return;
+
+      const loaded = await loadGlbFromArrayBuffer(app, buf, preset.filename, preset.url);
+      if (this.destroyed || !this.playerEntity) {
+        loaded.entity.destroy();
+        loaded.destroyResources();
+        return;
+      }
+
+      const oldEntity = this.playerEntity;
+      const pos = oldEntity.getLocalPosition().clone();
+      const euler = oldEntity.getLocalEulerAngles().clone();
+      const prevMeta = getEntityMeta(oldEntity);
+
+      const newEntity = loaded.entity;
+      newEntity.name = 'Player';
+      newEntity.tags.add('player');
+      newEntity.setLocalPosition(pos);
+      newEntity.setLocalEulerAngles(euler);
+      newEntity.setLocalScale(preset.scale, preset.scale, preset.scale);
+      if (prevMeta.script) {
+        getEntityMeta(newEntity).script = prevMeta.script;
+      }
+
+      applyAvatarColor(newEntity, getSavedAvatarColor(), preset.id);
+      this.disablePlayerFrustumCulling(newEntity);
+
+      if (newEntity.anim) {
+        newEntity.anim.activate = true;
+        newEntity.anim.enabled = true;
+        newEntity.anim.playing = true;
+      }
+
+      this.sceneRoot.addChild(newEntity);
+      this.playerEntity = newEntity;
+      if (this.karaoke.isActive()) {
+        this.karaoke.setPlayerEntity(newEntity);
+      }
+      this.currentAnimState = '';
+      this.playAnim(this.activeEmoteAnim ?? 'Idle_Loop');
+
+      oldEntity.destroy();
+      this.syncNetPositionImmediate();
+    } catch {
+      // ignore transient model swap failures
+    }
+  }
 
   private onMobileMove = (e: CustomEvent<{ x: number; y: number } | null>): void => {
     this.mobileMove = e.detail;
@@ -888,25 +1032,32 @@ export class PlayerControllerRuntime {
   }
 
   private onPostUpdate = (): void => {
-    this.karaoke.applyArmPose();
+    this.karaoke.applyArmPose(this.playerEntity, this.activeEmoteAnim);
   };
 
   private enterKaraoke(): void {
     if (!this.playerEntity) return;
+    if (this.activeEmoteAnim !== null) {
+      this.activeEmoteAnim = null;
+      this.activeEmoteId = null;
+      window.dispatchEvent(new CustomEvent('cavannghe:emote-cleared'));
+    }
     if (document.pointerLockElement === this.canvas) {
       document.exitPointerLock?.();
     }
     DebugLogger.log('KaraokeStage', 'Local player entered Acoustic Karaoke Stage');
     const view = this.karaoke.enter(this.playerEntity);
     this.playerYaw = view.playerYaw;
-    this.yaw = view.camYaw;
-    this.pitch = view.camPitch;
-    this.playAnim('Idle_Talking_Loop');
+    this.targetCamYaw = view.camYaw;
+    this.targetCamPitch = view.camPitch;
+    this.playAnim('Idle_Loop');
     this.syncNetPositionImmediate();
   }
 
   private exitKaraoke(): void {
     DebugLogger.log('KaraokeStage', 'Local player exited Acoustic Karaoke Stage');
+    this.targetCamYaw = null;
+    this.targetCamPitch = null;
     this.karaoke.exit();
     this.playAnim('Idle_Loop');
     this.syncNetPositionImmediate();
@@ -926,7 +1077,7 @@ export class PlayerControllerRuntime {
         vz: 0,
         yaw: this.playerYaw,
         anim: this.currentAnimState || 'Idle_Loop',
-        emote: null,
+        emote: this.activeEmoteId,
         isSitting: this.isSitting,
         chairId: this.isSitting ? this.currentSeatId : null,
       },
@@ -944,19 +1095,37 @@ export class PlayerControllerRuntime {
     }
   };
 
+  private onKaraokePlaying = (e: CustomEvent<boolean>): void => {
+    this.karaoke.setMusicPlaying(Boolean(e.detail));
+  };
+
   private onEmote = (e: CustomEvent<string | null>): void => {
     const emote = e.detail;
     if (!emote) {
-      this.playAnim('Idle_Loop');
+      this.activeEmoteAnim = null;
+      this.activeEmoteId = null;
+      if (!this.isSitting) {
+        this.playAnim('Idle_Loop');
+        this.syncNetPositionImmediate();
+      }
       return;
     }
+    if (this.isSitting) return;
     const map: Record<string, string> = {
+      sing: 'Singing',
       dance: 'Dance_Loop',
+      samba: 'Samba_Dancing',
+      hiphop: 'Slide_Hip_Hop_Dance',
+      swing: 'Swing_Dancing',
       talk: 'Idle_Talking_Loop',
       interact: 'Interact',
       crouch: 'Crouch_Idle_Loop',
     };
-    this.playAnim(map[emote] ?? 'Dance_Loop');
+    const animName = map[emote] ?? 'Dance_Loop';
+    this.activeEmoteAnim = animName;
+    this.activeEmoteId = emote;
+    this.playAnim(animName);
+    this.syncNetPositionImmediate();
   };
 
   private collectDynamicTargets(): void {

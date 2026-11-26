@@ -1,6 +1,11 @@
 import * as pc from 'playcanvas';
 import { AssetRepository } from '../../storage';
-import { applyAvatarColor, getSavedAvatarColor } from '../../utils/avatarColor';
+import {
+  applyAvatarColor,
+  getAvatarModelPreset,
+  getSavedAvatarColor,
+  getSavedAvatarModel,
+} from '../../utils/avatarColor';
 import { useAssetStore } from '../../store/useAssetStore';
 import type { PrefabData, ScriptAttributeValue } from '../../types';
 import type { EditorEngine } from '../EditorEngine';
@@ -169,24 +174,43 @@ async function spawnPlayerAndCamera(options: {
   mainCam.lookAt(camLookAt[0], camLookAt[1], camLookAt[2]);
   sceneRoot.addChild(mainCam);
 
-  const charUrl = '/models/Character.glb';
-  const charBuf = bufferCache.get(charUrl);
+  const avatarPreset = getAvatarModelPreset(getSavedAvatarModel());
+  const charUrl = avatarPreset.url;
+  let charBuf = bufferCache.get(charUrl);
+  if (!charBuf) {
+    try {
+      const res = await fetch(charUrl);
+      if (res.ok) {
+        charBuf = await res.arrayBuffer();
+        bufferCache.set(charUrl, charBuf);
+      }
+    } catch {
+      // fallback to Character.glb below if custom model fetch fails
+    }
+  }
+  const resolvedUrl = charBuf ? charUrl : '/models/Character.glb';
+  const resolvedFilename = charBuf ? avatarPreset.filename : 'Character.glb';
+  const resolvedScale = charBuf ? avatarPreset.scale : 0.62;
+  const resolvedModelId = charBuf ? avatarPreset.id : 'default';
+  if (!charBuf) {
+    charBuf = bufferCache.get('/models/Character.glb');
+  }
   if (charBuf) {
-    const charAssetId = assetIdByUrl.get(charUrl);
+    const charAssetId = assetIdByUrl.get(resolvedUrl);
     const charLoaded = await loadGlbFromArrayBuffer(
       app,
       charBuf,
-      'Character.glb',
-      charAssetId ?? charUrl
+      resolvedFilename,
+      charAssetId ?? resolvedUrl
     );
     engine.registerExternalResources(charLoaded.destroyResources);
     const playerEntity = charLoaded.entity;
     playerEntity.name = 'Player';
     playerEntity.setLocalPosition(playerPos[0], playerPos[1], playerPos[2]);
     playerEntity.setLocalEulerAngles(0, playerRotY, 0);
-    playerEntity.setLocalScale(0.62, 0.62, 0.62);
+    playerEntity.setLocalScale(resolvedScale, resolvedScale, resolvedScale);
     playerEntity.tags.add('player');
-    applyAvatarColor(playerEntity, getSavedAvatarColor());
+    applyAvatarColor(playerEntity, getSavedAvatarColor(), resolvedModelId);
     if (charLoaded.animTracks.length > 0) {
       const meta = getEntityMeta(playerEntity);
       meta.anim = {

@@ -105,7 +105,7 @@ export const RemoteNameplates: React.FC = () => {
 
             {!np.isLocal && (
               <div
-                className={`px-2 py-0.5 rounded-full bg-black/70 border text-[11px] font-medium text-white whitespace-nowrap flex items-center gap-1 shadow-md backdrop-blur-sm transition-colors ${
+                className={`px-2 py-0.5 rounded-full bg-black/80 border text-[11px] font-medium text-white whitespace-nowrap flex items-center gap-1 shadow-md transition-colors ${
                   isSpeaking ? 'border-emerald-400/70' : 'border-white/15'
                 }`}
               >

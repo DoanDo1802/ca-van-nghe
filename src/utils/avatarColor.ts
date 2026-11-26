@@ -1,6 +1,69 @@
 import * as pc from 'playcanvas';
 
 export const DEFAULT_AVATAR_COLOR = '#e8a246';
+export const DEFAULT_AVATAR_MODEL = 'default';
+
+export type AvatarModelId = 'default' | 'tyler';
+
+export interface AvatarModelPreset {
+  id: AvatarModelId;
+  label: string;
+  subtitle: string;
+  url: string;
+  filename: string;
+  scale: number;
+  tintable: boolean;
+}
+
+export const AVATAR_MODEL_PRESETS: AvatarModelPreset[] = [
+  {
+    id: 'default',
+    label: 'Nhân vật Mặc định',
+    subtitle: 'Đổi màu trang phục tự do',
+    url: '/models/Character.glb',
+    filename: 'Character.glb',
+    scale: 0.62,
+    tintable: true,
+  },
+  {
+    id: 'tyler',
+    label: 'Tyler Baudelaire',
+    subtitle: 'Trang phục gốc • Mixamo Dance',
+    url: '/models/Tyler.glb',
+    filename: 'Tyler.glb',
+    scale: 0.4,
+    tintable: false,
+  },
+];
+
+const AVATAR_MODEL_STORAGE_KEY = 'cavannghe:avatar-model';
+
+export function normalizeAvatarModelId(raw?: string | null): AvatarModelId {
+  return raw === 'tyler' ? 'tyler' : 'default';
+}
+
+export function getSavedAvatarModel(): AvatarModelId {
+  try {
+    return normalizeAvatarModelId(localStorage.getItem(AVATAR_MODEL_STORAGE_KEY));
+  } catch {
+    return DEFAULT_AVATAR_MODEL;
+  }
+}
+
+export function saveAvatarModel(modelId: string): AvatarModelId {
+  const clean = normalizeAvatarModelId(modelId);
+  try {
+    localStorage.setItem(AVATAR_MODEL_STORAGE_KEY, clean);
+  } catch {
+    // ignore storage failures
+  }
+  return clean;
+}
+
+export function getAvatarModelPreset(modelId?: string | null): AvatarModelPreset {
+  const clean = normalizeAvatarModelId(modelId);
+  return AVATAR_MODEL_PRESETS.find((p) => p.id === clean) ?? AVATAR_MODEL_PRESETS[0];
+}
 
 export interface AvatarColorPreset {
   id: string;
@@ -52,8 +115,13 @@ export function saveAvatarColor(hex: string): string {
  * Tints an avatar entity's body material safely using per-entity cloned StandardMaterials
  * so multiple players can wear different colors without mutating shared GLB materials.
  */
-export function applyAvatarColor(entity: pc.Entity | null | undefined, hexColor?: string | null): void {
+export function applyAvatarColor(
+  entity: pc.Entity | null | undefined,
+  hexColor?: string | null,
+  modelId?: string | null
+): void {
   if (!entity) return;
+  if (modelId && !getAvatarModelPreset(modelId).tintable) return;
   const hex = hexColor && /^#[0-9a-fA-F]{6}$/.test(hexColor.trim()) ? hexColor.trim() : DEFAULT_AVATAR_COLOR;
   const target = new pc.Color().fromString(hex);
   const defaultRef = new pc.Color().fromString(DEFAULT_AVATAR_COLOR);

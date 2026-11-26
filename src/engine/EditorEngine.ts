@@ -267,7 +267,7 @@ export class EditorEngine {
       keyboard: new pc.Keyboard(window),
       graphicsDeviceOptions: {
         antialias: true,
-        alpha: true,
+        alpha: false,
         powerPreference: 'high-performance',
       },
     });
@@ -278,7 +278,7 @@ export class EditorEngine {
 
     app.graphicsDevice.maxPixelRatio = Math.min(
       window.devicePixelRatio || 1,
-      isMobileBrowser() ? 1.5 : 2
+      isMobileBrowser() ? 1.25 : 1.5
     );
     app.setCanvasFillMode(pc.FILLMODE_NONE);
     app.setCanvasResolution(pc.RESOLUTION_AUTO);
