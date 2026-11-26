@@ -1,14 +1,32 @@
 import { execFile } from 'node:child_process';
-import { createReadStream } from 'node:fs';
+import { createReadStream, existsSync } from 'node:fs';
 import { mkdtemp, rm, stat } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { promisify } from 'node:util';
 
 const run = promisify(execFile);
+const require = createRequire(import.meta.url);
 const MAX_BYTES = 80 * 1024 * 1024;
 const FORMAT = 'bv*[height<=480][ext=mp4]+ba[ext=m4a]/b[height<=480][ext=mp4]';
+
+function resolveYtdlpBin() {
+  if (process.env.YTDLP_BIN) return process.env.YTDLP_BIN;
+  const localBin = resolve('.bin/yt-dlp');
+  return existsSync(localBin) ? localBin : 'yt-dlp';
+}
+
+function resolveFfmpegLocation() {
+  if (process.env.FFMPEG_BIN) return process.env.FFMPEG_BIN;
+  try {
+    const bin = require('ffmpeg-static');
+    return typeof bin === 'string' && bin ? bin : null;
+  } catch {
+    return null;
+  }
+}
 
 export function createKaraokeDownloadHandler({ localhostOnly = true } = {}) {
   let busy = false;
@@ -48,13 +66,18 @@ export function createKaraokeDownloadHandler({ localhostOnly = true } = {}) {
 
     let folder;
     try {
+      const ytdlpBin = resolveYtdlpBin();
+      const ffmpegLoc = resolveFfmpegLocation();
       const url = `https://www.youtube.com/watch?v=${id}`;
       const options = ['--ignore-config', '--no-playlist', '--no-update', '--socket-timeout', '10', '--retries', '1'];
+      if (ffmpegLoc) {
+        options.push('--ffmpeg-location', ffmpegLoc);
+      }
       if (process.env.YTDLP_COOKIES_FILE) {
         options.push('--cookies', process.env.YTDLP_COOKIES_FILE);
       }
       const execOptions = { signal: controller.signal, timeout: 45000, maxBuffer: 2 * 1024 * 1024 };
-      const { stdout } = await run('yt-dlp', [...options, '-J', '--skip-download', url], execOptions);
+      const { stdout } = await run(ytdlpBin, [...options, '-J', '--skip-download', url], execOptions);
       const info = JSON.parse(stdout);
       if (info.is_live || ['is_live', 'is_upcoming', 'post_live'].includes(info.live_status)) {
         return fail(422, 'Không hỗ trợ video livestream đang hoặc sắp phát.');
@@ -65,7 +88,7 @@ export function createKaraokeDownloadHandler({ localhostOnly = true } = {}) {
       folder = await mkdtemp(join(tmpdir(), 'karaoke-video-'));
       const file = join(folder, 'song.mp4');
       await run(
-        'yt-dlp',
+        ytdlpBin,
         [
           ...options,
           '--no-progress',
