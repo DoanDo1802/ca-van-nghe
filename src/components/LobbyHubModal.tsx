@@ -21,11 +21,12 @@ import { isSupabaseConfigured } from '../network/supabaseClient';
 import { LOBBY_SCENE_ID } from '../engine/serialization/SceneRegistry';
 import {
   AVATAR_COLOR_PRESETS,
-  AVATAR_MODEL_PRESETS,
+  getAvatarModelPreset,
   getSavedAvatarColor,
   getSavedAvatarModel,
   saveAvatarColor,
   saveAvatarModel,
+  useCharacterPresets,
   type AvatarModelId,
 } from '../utils/avatarColor';
 import { matchesRoomSearch, supportsWebkitTextSecurity } from '../utils/roomInputHelpers';
@@ -71,6 +72,8 @@ export const LobbyHubModal: React.FC<LobbyHubModalProps> = ({
 
   const [avatarColor, setAvatarColor] = useState<string>(() => getSavedAvatarColor());
   const [avatarModel, setAvatarModel] = useState<AvatarModelId>(() => getSavedAvatarModel());
+  const characterPresets = useCharacterPresets();
+  const activeAvatarPreset = getAvatarModelPreset(avatarModel);
 
   const supabaseReady = isSupabaseConfigured();
   const useMaskedTextPasscode = supportsWebkitTextSecurity();
@@ -361,7 +364,7 @@ export const LobbyHubModal: React.FC<LobbyHubModalProps> = ({
                   </p>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                  {AVATAR_MODEL_PRESETS.map((model) => {
+                  {characterPresets.map((model) => {
                     const selected = avatarModel === model.id;
                     return (
                       <button
@@ -394,14 +397,14 @@ export const LobbyHubModal: React.FC<LobbyHubModalProps> = ({
               </div>
 
               {/* Avatar Color */}
-              <div className={`space-y-4 ${avatarModel !== 'default' ? 'opacity-60' : ''}`}>
+              <div className={`space-y-4 ${!activeAvatarPreset.tintable ? 'opacity-60' : ''}`}>
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <h3 className="text-sm font-semibold text-white">Chọn màu trang phục nhân vật</h3>
                     <p className="text-xs text-neutral-400 mt-0.5">
-                      {avatarModel === 'default'
+                      {activeAvatarPreset.tintable
                         ? 'Thay đổi hiển thị ngay lập tức cho bạn và mọi người trong phòng.'
-                        : 'Chỉ áp dụng cho Nhân vật Mặc định (Tyler giữ trang phục gốc).'}
+                        : `Nhân vật "${activeAvatarPreset.label}" giữ chất liệu & trang phục gốc.`}
                     </p>
                   </div>
                   <div

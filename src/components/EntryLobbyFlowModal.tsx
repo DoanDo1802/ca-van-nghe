@@ -24,11 +24,12 @@ import { isSupabaseConfigured } from '../network/supabaseClient';
 import { LOBBY_SCENE_ID } from '../engine/serialization/SceneRegistry';
 import {
   AVATAR_COLOR_PRESETS,
-  AVATAR_MODEL_PRESETS,
+  getAvatarModelPreset,
   getSavedAvatarColor,
   getSavedAvatarModel,
   saveAvatarColor,
   saveAvatarModel,
+  useCharacterPresets,
   type AvatarModelId,
 } from '../utils/avatarColor';
 import { matchesRoomSearch, supportsWebkitTextSecurity } from '../utils/roomInputHelpers';
@@ -73,6 +74,8 @@ export const EntryLobbyFlowModal: React.FC<EntryLobbyFlowModalProps> = ({
   const [guestName, setGuestName] = useState<string>(() => getDefaultGuestName());
   const [avatarColor, setAvatarColor] = useState<string>(() => getSavedAvatarColor());
   const [avatarModel, setAvatarModel] = useState<AvatarModelId>(() => getSavedAvatarModel());
+  const characterPresets = useCharacterPresets();
+  const activeAvatarPreset = getAvatarModelPreset(avatarModel);
 
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -453,8 +456,8 @@ export const EntryLobbyFlowModal: React.FC<EntryLobbyFlowModalProps> = ({
                   {/* Character Model Selector */}
                   <div className="space-y-2">
                     <label className="block text-xs text-neutral-400">Chọn nhân vật</label>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      {AVATAR_MODEL_PRESETS.map((model) => {
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto pr-0.5">
+                      {characterPresets.map((model) => {
                         const selected = avatarModel === model.id;
                         return (
                           <button
@@ -487,7 +490,7 @@ export const EntryLobbyFlowModal: React.FC<EntryLobbyFlowModalProps> = ({
                   </div>
 
                   {/* Avatar Color Picker */}
-                  <div className={`space-y-2 ${avatarModel !== 'default' ? 'opacity-60' : ''}`}>
+                  <div className={`space-y-2 ${!activeAvatarPreset.tintable ? 'opacity-60' : ''}`}>
                     <div className="flex items-center justify-between">
                       <label className="text-xs text-neutral-400">Màu trang phục nhân vật</label>
                       <input

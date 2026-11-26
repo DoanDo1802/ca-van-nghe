@@ -5,12 +5,19 @@ import './index.css';
 const EditorApp = lazy(() =>
   import('./editor/EditorApp').then((m) => ({ default: m.EditorApp }))
 );
+const CharacterStudioApp = lazy(() =>
+  import('./editor/CharacterStudioApp').then((m) => ({ default: m.CharacterStudioApp }))
+);
 const WebGamePlayer = lazy(() =>
   import('./editor/WebGamePlayer').then((m) => ({ default: m.WebGamePlayer }))
 );
 const AdminDashboard = lazy(() =>
   import('./editor/AdminDashboard').then((m) => ({ default: m.AdminDashboard }))
 );
+
+const isStudioMode =
+  window.location.search.includes('studio=1') ||
+  window.location.pathname === '/studio';
 
 const isEditorMode =
   window.location.search.includes('editor=1') ||
@@ -29,6 +36,10 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     {isAdminMode ? (
       <Suspense fallback={<Loader label="Đang tải trang Admin..." />}>
         <AdminDashboard />
+      </Suspense>
+    ) : isStudioMode ? (
+      <Suspense fallback={<Loader label="Đang tải Character & Animation Studio..." />}>
+        <CharacterStudioApp />
       </Suspense>
     ) : isEditorMode ? (
       <Suspense fallback={<Loader label="Đang tải 3D Game Editor (Admin)..." />}>

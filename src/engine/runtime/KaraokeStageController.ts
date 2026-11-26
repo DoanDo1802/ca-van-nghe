@@ -1,6 +1,8 @@
 import * as pc from 'playcanvas';
+import { getAvatarModelPreset, getSavedAvatarModel } from '../../utils/avatarColor';
 import { karaokeAudio } from '../../utils/karaokeAudio';
 import { loadGlbFromArrayBuffer } from '../animation/GlbAnimExtractor';
+import { buildHumanoidRigProfile } from '../animation/HumanoidRigMapper';
 
 const RIGHT_STAGE_SPOT = { x: 15.85, y: 0.36, z: 2.72 };
 
@@ -135,10 +137,17 @@ export class KaraokeStageController {
 
   setPlayerEntity(playerEntity: pc.Entity): void {
     this.playerEntity = playerEntity;
-    this.rightArmBone = findRigBone(playerEntity, 'rightarm');
-    this.rightForeArmBone = findRigBone(playerEntity, 'rightforearm');
-    this.rightHandBone = findRigBone(playerEntity, 'righthand');
-    this.headBone = findRigBone(playerEntity, 'head');
+    const preset = getAvatarModelPreset(getSavedAvatarModel());
+    const rig = buildHumanoidRigProfile(playerEntity, {
+      explicitBoneMap: preset.boneMap,
+      normalizeArmsToTPose: false,
+    });
+    this.rightArmBone = rig.bones.rightUpperArm?.node ?? findRigBone(playerEntity, 'rightarm');
+    this.rightForeArmBone =
+      rig.bones.rightLowerArm?.node ?? findRigBone(playerEntity, 'rightforearm');
+    this.rightHandBone =
+      findRigBone(playerEntity, 'righthand') ?? rig.bones.rightHand?.node ?? null;
+    this.headBone = rig.bones.head?.node ?? findRigBone(playerEntity, 'head');
   }
 
   setMusicPlaying(playing: boolean): void {

@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react';
 import fs from 'node:fs';
 import path from 'node:path';
 import { karaokeDownloadPlugin } from './scripts/karaokeDownloadPlugin.js';
+import { characterStudioPlugin } from './scripts/characterStudioPlugin.js';
 
 function parseYouTubeSearch(html) {
   const match = html.match(/var ytInitialData = (\{.*?\});<\/script>/);
@@ -121,7 +122,13 @@ function sceneSavePlugin() {
 
 // https://vitejs.dev/config/
 export default defineConfig({
-  plugins: [react(), youtubeSearchPlugin(), sceneSavePlugin(), karaokeDownloadPlugin()],
+  plugins: [
+    react(),
+    youtubeSearchPlugin(),
+    sceneSavePlugin(),
+    karaokeDownloadPlugin(),
+    characterStudioPlugin(),
+  ],
   server: {
     port: 3000,
     host: true,

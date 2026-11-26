@@ -1,60 +1,14 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { Mic, Music, Sparkles, X } from 'lucide-react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Flame, Heart, Mic, Music, Smile, Sparkles, X } from 'lucide-react';
+import { AnimationRegistry } from '../engine/animation/AnimationRegistry';
+import type { EmoteIconKind, EmoteSliceEntry } from '../types/characterStudio';
 
-export type RadialEmoteId = 'sing' | 'samba' | 'hiphop' | 'swing' | 'wavehiphop' | 'twerk';
+export type RadialEmoteId = string;
 
-interface RadialSlice {
-  id: RadialEmoteId;
-  label: string;
-  sublabel: string;
-  angleDeg: number; // Center angle in degrees (-90 = top, 0 = right, 90 = bottom, ±180 = left)
-  accent: string;
+interface ComputedRadialSlice extends EmoteSliceEntry {
+  angleDeg: number;
+  halfSpanDeg: number;
 }
-
-const SLICES: RadialSlice[] = [
-  {
-    id: 'sing',
-    label: 'Hát',
-    sublabel: 'Singing',
-    angleDeg: -90,
-    accent: '#f43f5e',
-  },
-  {
-    id: 'samba',
-    label: 'Nhảy Samba',
-    sublabel: 'Samba Dancing',
-    angleDeg: -30,
-    accent: '#f59e0b',
-  },
-  {
-    id: 'hiphop',
-    label: 'Slide Hip Hop',
-    sublabel: 'Hip Hop Dance',
-    angleDeg: 30,
-    accent: '#38bdf8',
-  },
-  {
-    id: 'swing',
-    label: 'Swing Dance',
-    sublabel: 'Swing Dancing',
-    angleDeg: 90,
-    accent: '#a855f7',
-  },
-  {
-    id: 'wavehiphop',
-    label: 'Wave Hip Hop',
-    sublabel: 'Wave Hip Hop Dance',
-    angleDeg: 150,
-    accent: '#10b981',
-  },
-  {
-    id: 'twerk',
-    label: 'Dancing Twerk',
-    sublabel: 'Dancing Twerk',
-    angleDeg: -150,
-    accent: '#ec4899',
-  },
-];
 
 interface RadialEmoteWheelProps {
   activeEmote: string | null;
@@ -62,14 +16,35 @@ interface RadialEmoteWheelProps {
   onSelectEmote: (emoteId: RadialEmoteId | null) => void;
 }
 
-function getSliceFromOffset(dx: number, dy: number): RadialEmoteId | null {
+function renderSliceIcon(icon?: EmoteIconKind) {
+  switch (icon) {
+    case 'mic':
+      return <Mic className="w-3.5 h-3.5" />;
+    case 'sparkles':
+      return <Sparkles className="w-3.5 h-3.5" />;
+    case 'flame':
+      return <Flame className="w-3.5 h-3.5" />;
+    case 'heart':
+      return <Heart className="w-3.5 h-3.5" />;
+    case 'smile':
+      return <Smile className="w-3.5 h-3.5" />;
+    default:
+      return <Music className="w-3.5 h-3.5" />;
+  }
+}
+
+function getSliceFromOffset(
+  dx: number,
+  dy: number,
+  slices: ComputedRadialSlice[]
+): RadialEmoteId | null {
   const dist = Math.hypot(dx, dy);
-  if (dist < 40) return null;
-  // Screen atan2: -90 is top, 0 is right, 90 is bottom, ±180 is left
+  if (dist < 40 || slices.length === 0) return null;
   const deg = (Math.atan2(dy, dx) * 180) / Math.PI;
+  const maxTolerance = Math.max(12, 180 / slices.length);
   let bestId: RadialEmoteId | null = null;
-  let bestDiff = 30;
-  for (const slice of SLICES) {
+  let bestDiff = maxTolerance;
+  for (const slice of slices) {
     const rawDiff = Math.abs(deg - slice.angleDeg);
     const wrappedDiff = Math.min(rawDiff, 360 - rawDiff);
     if (wrappedDiff <= bestDiff) {
@@ -112,12 +87,47 @@ export const RadialEmoteWheel: React.FC<RadialEmoteWheelProps> = ({
   disabled = false,
   onSelectEmote,
 }) => {
+  const [emotes, setEmotes] = useState<EmoteSliceEntry[]>(() =>
+    AnimationRegistry.getEmotesSync()
+  );
   const [isOpen, setIsOpen] = useState(false);
   const [hoveredId, setHoveredId] = useState<RadialEmoteId | null>(null);
   const isOpenRef = useRef(false);
   const hoveredRef = useRef<RadialEmoteId | null>(null);
   const onSelectRef = useRef(onSelectEmote);
   onSelectRef.current = onSelectEmote;
+
+  useEffect(() => {
+    let mounted = true;
+    void AnimationRegistry.ensureLoaded().then((m) => {
+      if (mounted) setEmotes([...m.emotes]);
+    });
+    const unsub = AnimationRegistry.subscribe((m) => {
+      if (mounted) setEmotes([...m.emotes]);
+    });
+    return () => {
+      mounted = false;
+      unsub();
+    };
+  }, []);
+
+  const slices = useMemo<ComputedRadialSlice[]>(() => {
+    const n = Math.max(1, emotes.length);
+    const stepDeg = 360 / n;
+    const gapDeg = Math.min(2.5, stepDeg * 0.08);
+    const halfSpanDeg = Math.max(8, stepDeg / 2 - gapDeg);
+    return emotes.map((item, idx) => {
+      // Start at -90° (top) and proceed clockwise, wrapping to [-180, 180]
+      let angleDeg = -90 + idx * stepDeg;
+      while (angleDeg > 180) angleDeg -= 360;
+      while (angleDeg <= -180) angleDeg += 360;
+      return {
+        ...item,
+        angleDeg,
+        halfSpanDeg,
+      };
+    });
+  }, [emotes]);
 
   useEffect(() => {
     if (disabled) {
@@ -173,13 +183,15 @@ export const RadialEmoteWheel: React.FC<RadialEmoteWheelProps> = ({
 
   if (!isOpen || disabled) return null;
 
-  const size = 312;
+  const size = slices.length > 8 ? 356 : 312;
   const c = size / 2;
+  const rOuter = slices.length > 8 ? 168 : 146;
+  const rLabel = slices.length > 8 ? 112 : 98;
 
   const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     const dx = e.clientX - window.innerWidth / 2;
     const dy = e.clientY - window.innerHeight / 2;
-    const next = getSliceFromOffset(dx, dy);
+    const next = getSliceFromOffset(dx, dy, slices);
     if (next !== hoveredRef.current) {
       hoveredRef.current = next;
       setHoveredId(next);
@@ -199,12 +211,12 @@ export const RadialEmoteWheel: React.FC<RadialEmoteWheelProps> = ({
     >
       <div className="relative flex items-center justify-center" style={{ width: size, height: size }}>
         <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-          {SLICES.map((slice) => {
-            const startDeg = slice.angleDeg - 28;
-            const endDeg = slice.angleDeg + 28;
+          {slices.map((slice) => {
+            const startDeg = slice.angleDeg - slice.halfSpanDeg;
+            const endDeg = slice.angleDeg + slice.halfSpanDeg;
             const isHovered = hoveredId === slice.id;
             const isCurrent = activeEmote === slice.id;
-            const d = describeAnnularSector(c, c, 46, 146, startDeg, endDeg);
+            const d = describeAnnularSector(c, c, 46, rOuter, startDeg, endDeg);
             return (
               <path
                 key={slice.id}
@@ -228,10 +240,8 @@ export const RadialEmoteWheel: React.FC<RadialEmoteWheelProps> = ({
           })}
         </svg>
 
-        {/* Labels positioned at each slice center */}
-        {SLICES.map((slice) => {
+        {slices.map((slice) => {
           const rad = (slice.angleDeg * Math.PI) / 180;
-          const rLabel = 98;
           const lx = c + rLabel * Math.cos(rad);
           const ly = c + rLabel * Math.sin(rad);
           const isHovered = hoveredId === slice.id;
@@ -249,22 +259,15 @@ export const RadialEmoteWheel: React.FC<RadialEmoteWheelProps> = ({
                   color: isHovered || isCurrent ? '#000' : '#fff',
                 }}
               >
-                {slice.id === 'sing' ? (
-                  <Mic className="w-3.5 h-3.5" />
-                ) : slice.id === 'samba' ? (
-                  <Sparkles className="w-3.5 h-3.5" />
-                ) : (
-                  <Music className="w-3.5 h-3.5" />
-                )}
+                {renderSliceIcon(slice.icon)}
               </span>
-              <span className="text-[11px] font-semibold text-white leading-tight">
+              <span className="text-[11px] font-semibold text-white leading-tight line-clamp-2">
                 {slice.label}
               </span>
             </div>
           );
         })}
 
-        {/* Center Idle / Stop Button */}
         <div
           onPointerEnter={() => {
             hoveredRef.current = null;

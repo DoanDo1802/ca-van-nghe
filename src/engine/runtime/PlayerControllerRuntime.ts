@@ -7,7 +7,10 @@ import {
   getSavedAvatarModel,
 } from '../../utils/avatarColor';
 import { DebugLogger } from '../../utils/debugLogger';
+import { AnimationRegistry } from '../animation/AnimationRegistry';
+import { CharacterRegistry } from '../animation/CharacterRegistry';
 import { loadGlbFromArrayBuffer } from '../animation/GlbAnimExtractor';
+import { applyCharacterAnimations } from '../animation/HumanoidRetargeter';
 import { getEntityMeta } from '../serialization/EntityComponentHelper';
 import { KaraokeStageController } from './KaraokeStageController';
 
@@ -194,6 +197,8 @@ export class PlayerControllerRuntime {
     window.addEventListener('cavannghe:karaoke-playing', this.onKaraokePlaying as EventListener);
     window.addEventListener('cavannghe:avatar-color', this.onAvatarColor as EventListener);
     window.addEventListener('cavannghe:avatar-model', this.onAvatarModel as EventListener);
+    window.addEventListener('cavannghe:character-manifest-updated', this.onManifestRefresh);
+    window.addEventListener('cavannghe:animation-manifest-updated', this.onManifestRefresh);
     pc.Application.getApplication()?.systems.on('postUpdate', this.onPostUpdate);
 
     this.updateCameraTransform(1);
@@ -290,6 +295,8 @@ export class PlayerControllerRuntime {
     window.removeEventListener('cavannghe:karaoke-playing', this.onKaraokePlaying as EventListener);
     window.removeEventListener('cavannghe:avatar-color', this.onAvatarColor as EventListener);
     window.removeEventListener('cavannghe:avatar-model', this.onAvatarModel as EventListener);
+    window.removeEventListener('cavannghe:character-manifest-updated', this.onManifestRefresh);
+    window.removeEventListener('cavannghe:animation-manifest-updated', this.onManifestRefresh);
     this.keys.clear();
     this.emitProximity(null);
   }
@@ -864,18 +871,31 @@ export class PlayerControllerRuntime {
     void this.swapPlayerModel(e.detail);
   };
 
+  private onManifestRefresh = (): void => {
+    void this.swapPlayerModel(getSavedAvatarModel());
+  };
+
   private async swapPlayerModel(modelId: string): Promise<void> {
     const app = pc.Application.getApplication() as pc.Application | undefined;
     if (!app || !this.playerEntity || this.destroyed) return;
 
+    await Promise.all([
+      CharacterRegistry.ensureLoaded(),
+      AnimationRegistry.ensureLoaded(),
+    ]);
+    if (this.destroyed || !this.playerEntity) return;
+
     const preset = getAvatarModelPreset(modelId);
     try {
-      const res = await fetch(preset.url);
+      const bustUrl = preset.updatedAt
+        ? `${preset.url}${preset.url.includes('?') ? '&' : '?'}v=${encodeURIComponent(preset.updatedAt)}`
+        : preset.url;
+      const res = await fetch(bustUrl);
       if (!res.ok || this.destroyed || !this.playerEntity) return;
       const buf = await res.arrayBuffer();
       if (this.destroyed || !this.playerEntity) return;
 
-      const loaded = await loadGlbFromArrayBuffer(app, buf, preset.filename, preset.url);
+      const loaded = await loadGlbFromArrayBuffer(app, buf, preset.filename, bustUrl);
       if (this.destroyed || !this.playerEntity) {
         loaded.entity.destroy();
         loaded.destroyResources();
@@ -899,6 +919,7 @@ export class PlayerControllerRuntime {
 
       applyAvatarColor(newEntity, getSavedAvatarColor(), preset.id);
       this.disablePlayerFrustumCulling(newEntity);
+      await applyCharacterAnimations(app, newEntity, preset);
 
       if (newEntity.anim) {
         newEntity.anim.activate = true;
@@ -1126,19 +1147,7 @@ export class PlayerControllerRuntime {
       return;
     }
     if (this.isSitting) return;
-    const map: Record<string, string> = {
-      sing: 'Singing',
-      dance: 'Dance_Loop',
-      samba: 'Samba_Dancing',
-      hiphop: 'Slide_Hip_Hop_Dance',
-      swing: 'Swing_Dancing',
-      wavehiphop: 'Wave_Hip_Hop_Dance',
-      twerk: 'Dancing_Twerk',
-      talk: 'Idle_Talking_Loop',
-      interact: 'Interact',
-      crouch: 'Crouch_Idle_Loop',
-    };
-    const animName = map[emote] ?? 'Dance_Loop';
+    const animName = AnimationRegistry.resolveEmoteStateName(emote);
     this.activeEmoteAnim = animName;
     this.activeEmoteId = emote;
     this.playAnim(animName);
