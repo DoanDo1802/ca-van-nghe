@@ -6,6 +6,11 @@ import { join, resolve } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { promisify } from 'node:util';
 import { checkR2KaraokeObject, getR2Config, uploadFileToR2Karaoke } from './r2Storage.js';
+import {
+  checkSupabaseKaraokeObject,
+  getSupabaseStorageConfig,
+  uploadFileToSupabaseKaraoke,
+} from './supabaseKaraokeStorage.js';
 
 const run = promisify(execFile);
 const require = createRequire(import.meta.url);
@@ -176,17 +181,20 @@ export function createKaraokeDownloadHandler({ localhostOnly = true } = {}) {
     const ytdlpBin = resolveYtdlpBin();
     const ffmpegLoc = resolveFfmpegLocation();
     try {
-      const r2Config = getR2Config();
-      if (r2Config) {
-        const cachedUrl = await checkR2KaraokeObject(id);
-        if (cachedUrl) {
-          res.writeHead(200, {
-            'Content-Type': 'application/json',
-            'Cache-Control': 'no-store',
-          });
-          res.end(JSON.stringify({ url: cachedUrl, cached: true }));
-          return;
-        }
+      const useR2 = Boolean(getR2Config());
+      const useSupabaseStorage = !useR2 && Boolean(getSupabaseStorageConfig());
+      const cachedUrl = useR2
+        ? await checkR2KaraokeObject(id)
+        : useSupabaseStorage
+          ? await checkSupabaseKaraokeObject(id)
+          : null;
+      if (cachedUrl) {
+        res.writeHead(200, {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-store',
+        });
+        res.end(JSON.stringify({ url: cachedUrl, cached: true }));
+        return;
       }
 
       const url = `https://www.youtube.com/watch?v=${id}`;
@@ -242,16 +250,18 @@ export function createKaraokeDownloadHandler({ localhostOnly = true } = {}) {
       const { size } = await stat(file);
       if (size <= 0 || size > MAX_BYTES) return fail(422, 'File video vượt giới hạn 80 MiB.');
 
-      if (r2Config) {
-        const publicVideoUrl = await uploadFileToR2Karaoke(id, file);
-        if (publicVideoUrl) {
-          res.writeHead(200, {
-            'Content-Type': 'application/json',
-            'Cache-Control': 'no-store',
-          });
-          res.end(JSON.stringify({ url: publicVideoUrl, cached: false }));
-          return;
-        }
+      const publicVideoUrl = useR2
+        ? await uploadFileToR2Karaoke(id, file)
+        : useSupabaseStorage
+          ? await uploadFileToSupabaseKaraoke(id, file)
+          : null;
+      if (publicVideoUrl) {
+        res.writeHead(200, {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-store',
+        });
+        res.end(JSON.stringify({ url: publicVideoUrl, cached: false }));
+        return;
       }
 
       res.writeHead(200, {
