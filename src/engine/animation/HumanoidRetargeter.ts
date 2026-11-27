@@ -1,6 +1,7 @@
 import * as pc from 'playcanvas';
 import {
-  HUMANOID_BONE_KEYS,
+  ALL_HUMANOID_BONE_KEYS,
+  type AnyHumanoidBoneKey,
   type AnimationClipEntry,
   type CharacterManifestEntry,
   type CoreAnimSlotId,
@@ -401,8 +402,8 @@ export function retargetTrackToHumanoid(
   }
 
   // Precompute mapped bone pairs & constant ancestor chain compensation on Target
-  const mappedNodeToKey = new Map<pc.GraphNode, HumanoidBoneKey>();
-  for (const key of HUMANOID_BONE_KEYS) {
+  const mappedNodeToKey = new Map<pc.GraphNode, AnyHumanoidBoneKey>();
+  for (const key of ALL_HUMANOID_BONE_KEYS) {
     const tb = targetRig.bones[key];
     const sb = srcRig.bones[key];
     if (tb && sb) {
@@ -411,12 +412,12 @@ export function retargetTrackToHumanoid(
   }
 
   interface RetargetBoneJob {
-    key: HumanoidBoneKey;
+    key: AnyHumanoidBoneKey;
     srcNode: pc.GraphNode;
     tgtEntityPath: string[];
     /** W_{S,TPose}^{-1} * W_{T,TPose} */
     qOffset: pc.Quat;
-    nearestMappedAncestorKey: HumanoidBoneKey | null;
+    nearestMappedAncestorKey: AnyHumanoidBoneKey | null;
     /** C_{a -> p} = W_{T,a,raw,0}^{-1} * W_{T,p,raw,0} for unmapped intermediate parent nodes */
     parentChainOffset: pc.Quat;
     outQuats: Float32Array;
@@ -424,7 +425,7 @@ export function retargetTrackToHumanoid(
 
   const jobs: RetargetBoneJob[] = [];
 
-  for (const key of HUMANOID_BONE_KEYS) {
+  for (const key of ALL_HUMANOID_BONE_KEYS) {
     const sb = srcRig.bones[key];
     const tb = targetRig.bones[key];
     if (!sb || !tb) continue;
@@ -434,7 +435,7 @@ export function retargetTrackToHumanoid(
 
     // Find nearest mapped ancestor in Target hierarchy
     let ancNode: pc.GraphNode | null = tb.node.parent;
-    let nearestKey: HumanoidBoneKey | null = null;
+    let nearestKey: AnyHumanoidBoneKey | null = null;
     while (ancNode && ancNode !== targetRig.spaceRoot) {
       const kFound = mappedNodeToKey.get(ancNode);
       if (kFound) {
@@ -537,7 +538,7 @@ export function retargetTrackToHumanoid(
     facingDelta.mul2(manualYawQ, facingDelta).normalize();
   }
 
-  const computedTargetWorldRot = new Map<HumanoidBoneKey, pc.Quat>();
+  const computedTargetWorldRot = new Map<AnyHumanoidBoneKey, pc.Quat>();
   for (const job of jobs) {
     computedTargetWorldRot.set(job.key, new pc.Quat());
   }

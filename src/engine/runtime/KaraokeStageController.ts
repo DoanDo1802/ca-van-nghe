@@ -26,7 +26,7 @@ function findRigBone(root: pc.GraphNode | null, kind: RigBoneKind): pc.GraphNode
         return node;
       }
     } else if (kind === 'righthand') {
-      if (/(^|[:_.-])righthandmiddle1([:_.-]|\d|$)/i.test(name)) {
+      if (/(^|[:_.-])(righthandmiddle1|f_middle[._-]?0?1[._-]?r)([:_.-]|\d|$)/i.test(name)) {
         return node;
       }
       if (
@@ -98,6 +98,7 @@ export class KaraokeStageController {
   private rightArmBone: pc.GraphNode | null = null;
   private rightForeArmBone: pc.GraphNode | null = null;
   private rightHandBone: pc.GraphNode | null = null;
+  private rightFingerTipBone: pc.GraphNode | null = null;
   private headBone: pc.GraphNode | null = null;
   private micEntity: pc.Entity | null = null;
   private micDestroyResources: (() => void) | null = null;
@@ -112,6 +113,7 @@ export class KaraokeStageController {
   private readonly tempCurVec = new pc.Vec3();
   private readonly tempTgtVec = new pc.Vec3();
   private readonly tempRight = new pc.Vec3();
+  private readonly tempGripPos = new pc.Vec3();
   private readonly tempMicPos = new pc.Vec3();
   private readonly tempCross = new pc.Vec3();
   private readonly tempDeltaQ = new pc.Quat();
@@ -146,7 +148,12 @@ export class KaraokeStageController {
     this.rightForeArmBone =
       rig.bones.rightLowerArm?.node ?? findRigBone(playerEntity, 'rightforearm');
     this.rightHandBone =
-      findRigBone(playerEntity, 'righthand') ?? rig.bones.rightHand?.node ?? null;
+      rig.bones.rightMiddle1?.node ??
+      findRigBone(playerEntity, 'righthand') ??
+      rig.bones.rightHand?.node ??
+      null;
+    this.rightFingerTipBone =
+      rig.bones.rightMiddle3?.node ?? rig.bones.rightMiddle2?.node ?? null;
     this.headBone = rig.bones.head?.node ?? findRigBone(playerEntity, 'head');
   }
 
@@ -187,6 +194,7 @@ export class KaraokeStageController {
     this.rightArmBone = null;
     this.rightForeArmBone = null;
     this.rightHandBone = null;
+    this.rightFingerTipBone = null;
     this.headBone = null;
     if (this.micEntity) {
       this.micEntity.enabled = false;
@@ -329,14 +337,29 @@ export class KaraokeStageController {
     this.micEntity.enabled = true;
 
     const handPos = this.rightHandBone.getPosition();
+    if (this.rightFingerTipBone) {
+      const tipPos = this.rightFingerTipBone.getPosition();
+      this.tempGripPos.set(
+        handPos.x * 0.55 + tipPos.x * 0.45,
+        handPos.y * 0.55 + tipPos.y * 0.45,
+        handPos.z * 0.55 + tipPos.z * 0.45
+      );
+    } else {
+      this.tempGripPos.set(
+        handPos.x + fwd.x * 0.016,
+        handPos.y,
+        handPos.z + fwd.z * 0.016
+      );
+    }
+
     // Tilt the grill cleanly toward the singer's lips instead of pointing straight up
     this.tempAimTarget.set(
-      handPos.x + (this.tempMouth.x - handPos.x) * 0.85,
-      handPos.y + 0.11,
-      handPos.z + (this.tempMouth.z - handPos.z) * 0.85
+      this.tempGripPos.x + (this.tempMouth.x - this.tempGripPos.x) * 0.85,
+      this.tempGripPos.y + 0.11,
+      this.tempGripPos.z + (this.tempMouth.z - this.tempGripPos.z) * 0.85
     );
 
-    this.tempDir.sub2(this.tempAimTarget, handPos);
+    this.tempDir.sub2(this.tempAimTarget, this.tempGripPos);
     const len = this.tempDir.length();
     if (len > 0.001) {
       this.tempDir.mulScalar(1 / len);
@@ -344,11 +367,11 @@ export class KaraokeStageController {
       this.tempDir.set(0, 1, 0);
     }
 
-    // Tuck slightly inward toward the palm/body (+fwd) so the handle sits snugly inside the curled fist
+    // Position the handle at the fist grip center, nudged slightly along aim direction so the grill clears the hand
     this.tempMicPos.set(
-      handPos.x + fwd.x * 0.016 + this.tempDir.x * 0.005,
-      handPos.y + this.tempDir.y * 0.005,
-      handPos.z + fwd.z * 0.016 + this.tempDir.z * 0.005
+      this.tempGripPos.x + this.tempDir.x * 0.012,
+      this.tempGripPos.y + this.tempDir.y * 0.012,
+      this.tempGripPos.z + this.tempDir.z * 0.012
     );
     this.micEntity.setPosition(this.tempMicPos);
     this.micEntity.lookAt(this.tempAimTarget);

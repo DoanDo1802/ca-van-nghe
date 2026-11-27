@@ -30,6 +30,48 @@ export const HUMANOID_BONE_KEYS = [
 
 export type HumanoidBoneKey = (typeof HUMANOID_BONE_KEYS)[number];
 
+export const HUMANOID_FINGER_BONE_KEYS = [
+  'leftThumb1',
+  'leftThumb2',
+  'leftThumb3',
+  'leftIndex1',
+  'leftIndex2',
+  'leftIndex3',
+  'leftMiddle1',
+  'leftMiddle2',
+  'leftMiddle3',
+  'leftRing1',
+  'leftRing2',
+  'leftRing3',
+  'leftPinky1',
+  'leftPinky2',
+  'leftPinky3',
+  'rightThumb1',
+  'rightThumb2',
+  'rightThumb3',
+  'rightIndex1',
+  'rightIndex2',
+  'rightIndex3',
+  'rightMiddle1',
+  'rightMiddle2',
+  'rightMiddle3',
+  'rightRing1',
+  'rightRing2',
+  'rightRing3',
+  'rightPinky1',
+  'rightPinky2',
+  'rightPinky3',
+] as const;
+
+export type HumanoidFingerBoneKey = (typeof HUMANOID_FINGER_BONE_KEYS)[number];
+
+export type AnyHumanoidBoneKey = HumanoidBoneKey | HumanoidFingerBoneKey;
+
+export const ALL_HUMANOID_BONE_KEYS: readonly AnyHumanoidBoneKey[] = [
+  ...HUMANOID_BONE_KEYS,
+  ...HUMANOID_FINGER_BONE_KEYS,
+] as const;
+
 export type HumanoidBoneMap = Partial<Record<HumanoidBoneKey, string>>;
 
 export type CoreAnimSlotId =

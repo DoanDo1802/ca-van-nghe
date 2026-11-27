@@ -1,8 +1,11 @@
 import * as pc from 'playcanvas';
 import {
+  ALL_HUMANOID_BONE_KEYS,
   HUMANOID_BONE_KEYS,
+  type AnyHumanoidBoneKey,
   type HumanoidBoneKey,
   type HumanoidBoneMap,
+  type HumanoidFingerBoneKey,
 } from '../../types/characterStudio';
 
 export interface BoneRestTransform {
@@ -28,7 +31,7 @@ export interface HumanoidRigProfile {
   spaceRoot: pc.GraphNode;
   modelRoot: pc.GraphNode;
   animRootBone: pc.GraphNode;
-  bones: Partial<Record<HumanoidBoneKey, BoneRestTransform>>;
+  bones: Partial<Record<AnyHumanoidBoneKey, BoneRestTransform>>;
   boneMap: HumanoidBoneMap;
   /** Rotates this rig's raw bind-pose character space so front faces +Z and left arm is +X */
   facingQuat: pc.Quat;
@@ -37,6 +40,7 @@ export interface HumanoidRigProfile {
   estimatedHeight: number;
   detectedRigType: 'mixamo' | 'rigify' | 'humanoid' | 'custom';
   mappedCount: number;
+  mappedFingerCount: number;
   allNodeNames: string[];
 }
 
@@ -405,7 +409,7 @@ export function buildHumanoidRigProfile(
     }
   }
 
-  const resolvedNodes: Partial<Record<HumanoidBoneKey, pc.GraphNode>> = {};
+  const resolvedNodes: Partial<Record<AnyHumanoidBoneKey, pc.GraphNode>> = {};
   const usedNodes = new Set<pc.GraphNode>();
 
   // 1. Apply explicit overrides from manifest / Studio Bone Mapper first
@@ -491,6 +495,73 @@ export function buildHumanoidRigProfile(
     detectedRigType = 'humanoid';
   }
 
+  // 3. Auto-detect 30 finger bones (Thumb, Index, Middle, Ring, Pinky × 3 phalanges × 2 hands)
+  const FINGER_GROUPS: Array<{
+    finger: 'Thumb' | 'Index' | 'Middle' | 'Ring' | 'Pinky';
+    pattern: RegExp;
+  }> = [
+    { finger: 'Thumb', pattern: /thumb/i },
+    { finger: 'Index', pattern: /index|pointer/i },
+    { finger: 'Middle', pattern: /middle/i },
+    { finger: 'Ring', pattern: /ring/i },
+    { finger: 'Pinky', pattern: /pinky|little/i },
+  ];
+
+  const detectHandFingerBones = (handNode: pc.GraphNode | undefined, side: 'left' | 'right') => {
+    if (!handNode) return;
+    const descendants: Array<{ node: pc.GraphNode; depth: number }> = [];
+    const walkHand = (n: pc.GraphNode, depth: number) => {
+      for (const c of n.children) {
+        descendants.push({ node: c, depth });
+        walkHand(c, depth + 1);
+      }
+    };
+    walkHand(handNode, 1);
+
+    for (const { finger, pattern } of FINGER_GROUPS) {
+      const bestByDepth = new Map<number, { node: pc.GraphNode; score: number }>();
+
+      for (const { node, depth } of descendants) {
+        if (usedNodes.has(node) || !node.name) continue;
+        const rawLower = node.name.toLowerCase();
+        if (
+          /(^|[_.-])(ik|pole|target|ctrl|mch|org|vis|twist|roll|end|tip|palm|metacarpal|carpal)([_.-]|\d|$)/i.test(
+            rawLower
+          )
+        ) {
+          continue;
+        }
+        if (!pattern.test(node.name)) continue;
+
+        let score = 50;
+        if (skinBoneSet.size > 0) {
+          score += skinBoneSet.has(node) ? 100 : -40;
+        }
+        if (/^DEF-/i.test(node.name)) score += 30;
+        if (/^mixamorig/i.test(node.name)) score += 25;
+
+        const prev = bestByDepth.get(depth);
+        if (!prev || score > prev.score) {
+          bestByDepth.set(depth, { node, score });
+        }
+      }
+
+      const sortedPhalanges = Array.from(bestByDepth.entries())
+        .sort((a, b) => a[0] - b[0])
+        .slice(0, 3);
+
+      for (let i = 0; i < sortedPhalanges.length; i++) {
+        const key = `${side}${finger}${i + 1}` as HumanoidFingerBoneKey;
+        const chosen = sortedPhalanges[i][1].node;
+        resolvedNodes[key] = chosen;
+        usedNodes.add(chosen);
+      }
+    }
+  };
+
+  detectHandFingerBones(resolvedNodes.leftHand, 'left');
+  detectHandFingerBones(resolvedNodes.rightHand, 'right');
+
   // Compute character-space transforms relative to `spaceRoot` (outer wrapper entity),
   // preserving internal GLB root rotations/scales (such as Sketchfab -90deg X or 0.01 cm scale)
   // while remaining invariant to the player's world position/yaw/scale in the scene!
@@ -570,17 +641,100 @@ export function buildHumanoidRigProfile(
     const canonUpper = canonModelRotByNode.get(upper)!;
     adjustedCanonModelRot.set(upper, new pc.Quat().mul2(qUpperDelta, canonUpper).normalize());
 
+    let handAlignDelta = qUpperDelta;
     if (hand) {
       const pHand = canonModelPosByNode.get(hand)!;
       const foreDir = new pc.Vec3().sub2(pHand, pLower);
       if (foreDir.lengthSq() > 1e-6) {
         foreDir.normalize();
         const qForeDelta = quatFromUnitVectors(foreDir, desiredUpperDir);
+        handAlignDelta = qForeDelta;
         const canonLower = canonModelRotByNode.get(lower)!;
         adjustedCanonModelRot.set(lower, new pc.Quat().mul2(qForeDelta, canonLower).normalize());
         const canonHand = canonModelRotByNode.get(hand);
         if (canonHand) {
           adjustedCanonModelRot.set(hand, new pc.Quat().mul2(qForeDelta, canonHand).normalize());
+        }
+      }
+    }
+
+    const side: 'left' | 'right' = targetDirX > 0 ? 'left' : 'right';
+
+    // Rotate thumb bones rigidly with the hand during A-pose -> T-pose arm alignment
+    for (const idx of [1, 2, 3] as const) {
+      const thumbNode = resolvedNodes[`${side}Thumb${idx}` as HumanoidFingerBoneKey];
+      if (!thumbNode) continue;
+      const canonThumb = canonModelRotByNode.get(thumbNode);
+      if (canonThumb) {
+        adjustedCanonModelRot.set(
+          thumbNode,
+          new pc.Quat().mul2(handAlignDelta, canonThumb).normalize()
+        );
+      }
+    }
+
+    // Align the 4 fingers along desiredUpperDir so curled bind poses normalize to straight T-pose
+    for (const finger of ['Index', 'Middle', 'Ring', 'Pinky'] as const) {
+      const f1 = resolvedNodes[`${side}${finger}1` as HumanoidFingerBoneKey];
+      const f2 = resolvedNodes[`${side}${finger}2` as HumanoidFingerBoneKey];
+      const f3 = resolvedNodes[`${side}${finger}3` as HumanoidFingerBoneKey];
+
+      let qDelta1 = handAlignDelta;
+      if (f1 && f2) {
+        const p1 = canonModelPosByNode.get(f1);
+        const p2 = canonModelPosByNode.get(f2);
+        if (p1 && p2) {
+          const d1 = new pc.Vec3().sub2(p2, p1);
+          if (d1.lengthSq() > 1e-6) {
+            d1.normalize();
+            qDelta1 = quatFromUnitVectors(d1, desiredUpperDir);
+          }
+        }
+      }
+      if (f1) {
+        const canon1 = canonModelRotByNode.get(f1);
+        if (canon1) {
+          adjustedCanonModelRot.set(f1, new pc.Quat().mul2(qDelta1, canon1).normalize());
+        }
+      }
+
+      let qDelta2 = qDelta1;
+      if (f2 && f3) {
+        const p2 = canonModelPosByNode.get(f2);
+        const p3 = canonModelPosByNode.get(f3);
+        if (p2 && p3) {
+          const d2 = new pc.Vec3().sub2(p3, p2);
+          if (d2.lengthSq() > 1e-6) {
+            d2.normalize();
+            qDelta2 = quatFromUnitVectors(d2, desiredUpperDir);
+          }
+        }
+      }
+      if (f2) {
+        const canon2 = canonModelRotByNode.get(f2);
+        if (canon2) {
+          adjustedCanonModelRot.set(f2, new pc.Quat().mul2(qDelta2, canon2).normalize());
+        }
+      }
+
+      let qDelta3 = qDelta2;
+      if (f3) {
+        const p3 = canonModelPosByNode.get(f3);
+        if (p3) {
+          for (const child of f3.children) {
+            const pChild = canonModelPosByNode.get(child);
+            if (!pChild) continue;
+            const d3 = new pc.Vec3().sub2(pChild, p3);
+            if (d3.lengthSq() > 1e-6) {
+              d3.normalize();
+              qDelta3 = quatFromUnitVectors(d3, desiredUpperDir);
+              break;
+            }
+          }
+        }
+        const canon3 = canonModelRotByNode.get(f3);
+        if (canon3) {
+          adjustedCanonModelRot.set(f3, new pc.Quat().mul2(qDelta3, canon3).normalize());
         }
       }
     }
@@ -591,13 +745,21 @@ export function buildHumanoidRigProfile(
     alignLimbChain('rightUpperArm', 'rightLowerArm', 'rightHand', -1, extraArmDeg);
   }
 
-  const bones: Partial<Record<HumanoidBoneKey, BoneRestTransform>> = {};
+  const bones: Partial<Record<AnyHumanoidBoneKey, BoneRestTransform>> = {};
   const boneMap: HumanoidBoneMap = {};
+  const coreKeySet = new Set<string>(HUMANOID_BONE_KEYS);
+  let mappedCoreCount = 0;
+  let mappedFingerCount = 0;
 
-  for (const key of HUMANOID_BONE_KEYS) {
+  for (const key of ALL_HUMANOID_BONE_KEYS) {
     const node = resolvedNodes[key];
     if (!node) continue;
-    boneMap[key] = node.name;
+    if (coreKeySet.has(key)) {
+      boneMap[key as HumanoidBoneKey] = node.name;
+      mappedCoreCount++;
+    } else {
+      mappedFingerCount++;
+    }
     const parent = node.parent;
     const parentRawRot =
       parent && rawModelRotByNode.get(parent)
@@ -649,7 +811,8 @@ export function buildHumanoidRigProfile(
     hipsHeight: Math.max(0.15, hipsY),
     estimatedHeight: Math.max(0.3, skeletonSpan * 1.08),
     detectedRigType,
-    mappedCount: Object.keys(bones).length,
+    mappedCount: mappedCoreCount,
+    mappedFingerCount,
     allNodeNames: allNodes.filter((n) => n !== modelRoot && Boolean(n.name)).map((n) => n.name),
   };
 }
