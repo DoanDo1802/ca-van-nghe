@@ -19,10 +19,10 @@ function resolveYtdlpBin() {
 }
 
 function resolveFfmpegLocation() {
-  if (process.env.FFMPEG_BIN) return process.env.FFMPEG_BIN;
+  if (process.env.FFMPEG_BIN && existsSync(process.env.FFMPEG_BIN)) return process.env.FFMPEG_BIN;
   try {
     const bin = require('ffmpeg-static');
-    return typeof bin === 'string' && bin ? bin : null;
+    return typeof bin === 'string' && bin && existsSync(bin) ? bin : null;
   } catch {
     return null;
   }
@@ -69,7 +69,17 @@ export function createKaraokeDownloadHandler({ localhostOnly = true } = {}) {
       const ytdlpBin = resolveYtdlpBin();
       const ffmpegLoc = resolveFfmpegLocation();
       const url = `https://www.youtube.com/watch?v=${id}`;
-      const options = ['--ignore-config', '--no-playlist', '--no-update', '--socket-timeout', '10', '--retries', '1'];
+      const options = [
+        '--ignore-config',
+        '--no-playlist',
+        '--no-update',
+        '--socket-timeout',
+        '10',
+        '--retries',
+        '1',
+        '--js-runtimes',
+        `node:${process.execPath}`,
+      ];
       if (ffmpegLoc) {
         options.push('--ffmpeg-location', ffmpegLoc);
       }
@@ -122,7 +132,7 @@ export function createKaraokeDownloadHandler({ localhostOnly = true } = {}) {
           .filter(Boolean)
           .slice(-3)
           .join(' | ');
-        console.warn('Karaoke download failed:', error?.code, stderrLine);
+        console.warn('Karaoke download failed:', error?.code, `ffmpeg=${ffmpegLoc}`, stderrLine);
         fail(502, 'Không tải được video. Kiểm tra yt-dlp, FFmpeg và kết nối mạng.');
       }
     } finally {
