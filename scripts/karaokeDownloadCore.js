@@ -1,8 +1,7 @@
 import { execFile } from 'node:child_process';
-import { chmodSync, createReadStream, existsSync, writeFileSync } from 'node:fs';
+import { chmodSync, createReadStream, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { createRequire } from 'node:module';
-import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { promisify } from 'node:util';
@@ -11,6 +10,14 @@ const run = promisify(execFile);
 const require = createRequire(import.meta.url);
 const MAX_BYTES = 80 * 1024 * 1024;
 const FORMAT = 'b[height<=480][ext=mp4]/b[ext=mp4]/bv*[height<=480][ext=mp4]+ba[ext=m4a]';
+const WORK_TMP_ROOT = resolve(process.env.KARAOKE_TMP_DIR || '.tmp-karaoke');
+
+try {
+  rmSync(WORK_TMP_ROOT, { recursive: true, force: true });
+  mkdirSync(WORK_TMP_ROOT, { recursive: true });
+} catch {
+  // ignore startup cleanup errors
+}
 
 let cachedDbCookies = { value: '', fetchedAt: 0 };
 
@@ -62,7 +69,8 @@ async function resolveCookiesFile() {
   if (b64) {
     const normalized = normalizeToNetscapeCookies(Buffer.from(b64, 'base64').toString('utf8'));
     if (normalized) {
-      const out = join(tmpdir(), 'ytdlp-cookies.txt');
+      mkdirSync(WORK_TMP_ROOT, { recursive: true });
+      const out = join(WORK_TMP_ROOT, 'ytdlp-cookies.txt');
       writeFileSync(out, normalized, 'utf8');
       return out;
     }
@@ -97,7 +105,8 @@ async function resolveCookiesFile() {
 
   const normalized = normalizeToNetscapeCookies(cachedDbCookies.value);
   if (!normalized) return null;
-  const out = join(tmpdir(), 'ytdlp-cookies-db.txt');
+  mkdirSync(WORK_TMP_ROOT, { recursive: true });
+  const out = join(WORK_TMP_ROOT, 'ytdlp-cookies-db.txt');
   writeFileSync(out, normalized, 'utf8');
   return out;
 }
@@ -185,7 +194,12 @@ export function createKaraokeDownloadHandler({ localhostOnly = true } = {}) {
       if (cookiesFile) {
         options.push('--cookies', cookiesFile);
       }
-      const execOptions = { signal: controller.signal, timeout: 45000, maxBuffer: 2 * 1024 * 1024 };
+      const execOptions = {
+        signal: controller.signal,
+        timeout: 45000,
+        maxBuffer: 2 * 1024 * 1024,
+        env: { ...process.env, TMPDIR: WORK_TMP_ROOT },
+      };
       const { stdout } = await run(ytdlpBin, [...options, '-J', '--skip-download', url], execOptions);
       const info = JSON.parse(stdout);
       if (info.is_live || ['is_live', 'is_upcoming', 'post_live'].includes(info.live_status)) {
@@ -194,7 +208,8 @@ export function createKaraokeDownloadHandler({ localhostOnly = true } = {}) {
       if (!Number.isFinite(info.duration) || info.duration <= 0 || info.duration > 600) {
         return fail(422, 'Chỉ tải video có thời lượng tối đa 10 phút.');
       }
-      folder = await mkdtemp(join(tmpdir(), 'karaoke-video-'));
+      mkdirSync(WORK_TMP_ROOT, { recursive: true });
+      folder = await mkdtemp(join(WORK_TMP_ROOT, 'job-'));
       const file = join(folder, 'song.mp4');
       await run(
         ytdlpBin,
