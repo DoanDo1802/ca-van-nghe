@@ -2,7 +2,6 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import fs from 'node:fs';
 import path from 'node:path';
-import { karaokeDownloadPlugin } from './scripts/karaokeDownloadPlugin.js';
 import { handleYouTubeSearch } from './scripts/youtubeSearchCore.js';
 
 function youtubeSearchPlugin() {
@@ -52,7 +51,7 @@ function sceneSavePlugin() {
 
 // https://vitejs.dev/config/
 export default defineConfig({
-  plugins: [react(), youtubeSearchPlugin(), sceneSavePlugin(), karaokeDownloadPlugin()],
+  plugins: [react(), youtubeSearchPlugin(), sceneSavePlugin()],
   server: {
     port: 3000,
     host: true,

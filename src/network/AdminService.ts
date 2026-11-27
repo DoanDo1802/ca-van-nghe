@@ -289,53 +289,6 @@ export const AdminService = {
     return { ok: true };
   },
 
-  async fetchKaraokeCookiesInfo(): Promise<{
-    hasCookies: boolean;
-    lineCount: number;
-    updatedAt: string | null;
-  }> {
-    const supabase = getSupabaseClient();
-    if (!supabase) return { hasCookies: false, lineCount: 0, updatedAt: null };
-    const { data, error } = await supabase
-      .from('karaoke_server_secrets')
-      .select('ytdlp_cookies, updated_at')
-      .eq('id', 1)
-      .maybeSingle();
-
-    if (error || !data) {
-      return { hasCookies: false, lineCount: 0, updatedAt: null };
-    }
-    const raw = typeof data.ytdlp_cookies === 'string' ? data.ytdlp_cookies.trim() : '';
-    const lineCount = raw
-      ? raw.split(/\r?\n/).filter((l) => l.trim() && !l.trim().startsWith('#')).length
-      : 0;
-    return {
-      hasCookies: raw.length > 0,
-      lineCount,
-      updatedAt: (data.updated_at as string | null) ?? null,
-    };
-  },
-
-  async updateKaraokeCookies(
-    cookiesText: string,
-    adminAccountId?: string
-  ): Promise<{ ok: boolean; error?: string }> {
-    const supabase = getSupabaseClient();
-    if (!supabase) return { ok: false, error: 'Chưa cấu hình Supabase.' };
-
-    const { error } = await supabase
-      .from('karaoke_server_secrets')
-      .upsert({
-        id: 1,
-        ytdlp_cookies: cookiesText.trim(),
-        updated_by: adminAccountId ?? null,
-        updated_at: new Date().toISOString(),
-      });
-
-    if (error) return { ok: false, error: error.message };
-    return { ok: true };
-  },
-
   async fetchActiveRooms(): Promise<ActiveRoomInfo[]> {
     const supabase = getSupabaseClient();
     if (!supabase) return [];

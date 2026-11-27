@@ -4,17 +4,11 @@ import { stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { extname, join, normalize, resolve } from 'node:path';
 import { pipeline } from 'node:stream/promises';
-import { createKaraokeDownloadHandler } from './karaokeDownloadCore.js';
 import { handleYouTubeSearch } from './youtubeSearchCore.js';
 
 const PORT = Number(process.env.PORT || 3000);
 const DIST_DIR = resolve('dist');
 const INDEX_FILE = join(DIST_DIR, 'index.html');
-const ALLOWED_ORIGINS = (process.env.KARAOKE_CORS_ORIGIN || '')
-  .split(',')
-  .map((s) => s.trim())
-  .filter(Boolean);
-
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'application/javascript; charset=utf-8',
@@ -36,18 +30,6 @@ const MIME_TYPES = {
   '.wav': 'audio/wav',
 };
 
-const handleKaraokeDownload = createKaraokeDownloadHandler({ localhostOnly: false });
-
-function applyCors(req, res) {
-  const origin = req.headers.origin;
-  if (!origin) return;
-  if (ALLOWED_ORIGINS.includes('*') || ALLOWED_ORIGINS.includes(origin)) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-    res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  }
-}
-
 async function serveFile(res, filePath, isAsset) {
   const info = await stat(filePath);
   if (!info.isFile()) return false;
@@ -62,22 +44,10 @@ async function serveFile(res, filePath, isAsset) {
 }
 
 const server = createServer(async (req, res) => {
-  applyCors(req, res);
-  if (req.method === 'OPTIONS') {
-    res.writeHead(204);
-    res.end();
-    return;
-  }
-
   const url = new URL(req.url || '/', 'http://localhost');
   if (url.pathname === '/healthz') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end('{"ok":true}');
-    return;
-  }
-
-  if (url.pathname === '/api/karaoke-video') {
-    await handleKaraokeDownload(req, res);
     return;
   }
 

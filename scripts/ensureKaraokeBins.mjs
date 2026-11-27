@@ -10,28 +10,21 @@ if (process.platform !== 'linux') {
 const binDir = resolve('.bin');
 await mkdir(binDir, { recursive: true });
 
-async function ensureBinary(filename, url) {
-  const target = join(binDir, filename);
-  if (existsSync(target)) {
-    console.log(`${filename} already present at`, target);
-    return;
-  }
-  console.log(`Downloading ${url}...`);
-  const res = await fetch(url, { redirect: 'follow' });
-  if (!res.ok) {
-    throw new Error(`Failed to download ${url}: ${res.status} ${res.statusText}`);
-  }
-  const buf = Buffer.from(await res.arrayBuffer());
-  await writeFile(target, buf);
-  await chmod(target, 0o755);
-  console.log(`Saved ${target} (${(buf.length / (1024 * 1024)).toFixed(1)} MiB)`);
+// Keep this entry point for the existing Altare install command.
+const target = join(binDir, 'cloudflared');
+if (existsSync(target)) {
+  console.log('cloudflared already present at', target);
+  process.exit(0);
 }
 
-const ytdlpAsset = process.arch === 'arm64' ? 'yt-dlp_linux_aarch64' : 'yt-dlp_linux';
 const cloudflaredAsset = process.arch === 'arm64' ? 'cloudflared-linux-arm64' : 'cloudflared-linux-amd64';
-
-await ensureBinary('yt-dlp', `https://github.com/yt-dlp/yt-dlp/releases/latest/download/${ytdlpAsset}`);
-await ensureBinary(
-  'cloudflared',
-  `https://github.com/cloudflare/cloudflared/releases/latest/download/${cloudflaredAsset}`
-);
+const url = `https://github.com/cloudflare/cloudflared/releases/latest/download/${cloudflaredAsset}`;
+console.log(`Downloading ${url}...`);
+const res = await fetch(url);
+if (!res.ok) {
+  throw new Error(`Failed to download ${url}: ${res.status} ${res.statusText}`);
+}
+const buffer = Buffer.from(await res.arrayBuffer());
+await writeFile(target, buffer);
+await chmod(target, 0o755);
+console.log(`Saved ${target} (${(buffer.length / (1024 * 1024)).toFixed(1)} MiB)`);

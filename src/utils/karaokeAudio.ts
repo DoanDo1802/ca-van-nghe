@@ -8,11 +8,6 @@ import {
   type AutoTuneTelemetry,
 } from './rapAutoTune';
 
-export interface LyricLine {
-  time: number; // seconds
-  text: string;
-}
-
 export interface KaraokeSong {
   id: string;
   title: string;
@@ -23,10 +18,6 @@ export interface KaraokeSong {
   category: 'Acoustic' | 'Trữ tình' | 'Sôi động' | 'YouTube';
   thumbnail: string;
   youtubeId: string;
-  bpm?: number;
-  duration?: number;
-  chords?: number[][];
-  lyrics?: LyricLine[];
 }
 
 export const KARAOKE_SONGS: KaraokeSong[] = [
@@ -131,17 +122,11 @@ class KaraokeAudioEngine {
   private localMonitorEnabled = false;
   private micRequestId = 0;
 
-  private audioEl: HTMLMediaElement | null = null;
+  private audioEl: HTMLAudioElement | null = null;
   private mediaSource: MediaElementAudioSourceNode | null = null;
   private customObjectUrl: string | null = null;
 
-  private seqTimer: number | null = null;
   private isPlaying = false;
-  private useCustomFile = false;
-  private currentSong: KaraokeSong = KARAOKE_SONGS[0];
-  private startPerf = 0;
-  private pausedOffset = 0;
-  private chordStep = 0;
 
   private dataBuf = new Uint8Array(64);
   private micTimeBuf = new Uint8Array(256);
@@ -523,9 +508,6 @@ class KaraokeAudioEngine {
   }
 
   getBroadcastStream(): MediaStream | null {
-    if (!this.micBroadcastDest && this.useCustomFile) {
-      this.ensureContext();
-    }
     return this.micBroadcastDest?.stream ?? this.micStream;
   }
 
@@ -750,28 +732,15 @@ class KaraokeAudioEngine {
     };
   }
 
-  loadCustomFile(file: File, video?: HTMLVideoElement): string {
+  loadCustomFile(file: File): string {
     const ctx = this.ensureContext();
     this.clearCustomFile();
     this.customObjectUrl = URL.createObjectURL(file);
-    this.audioEl = video ?? new Audio();
+    this.audioEl = new Audio();
     this.audioEl.src = this.customObjectUrl;
     this.mediaSource = ctx.createMediaElementSource(this.audioEl);
     this.mediaSource.connect(this.musicGain!);
-    this.useCustomFile = true;
     return file.name;
-  }
-
-  loadRemoteVideo(url: string, title: string, video: HTMLVideoElement): string {
-    const ctx = this.ensureContext();
-    this.clearCustomFile();
-    video.crossOrigin = 'anonymous';
-    video.src = url;
-    this.audioEl = video;
-    this.mediaSource = ctx.createMediaElementSource(this.audioEl);
-    this.mediaSource.connect(this.musicGain!);
-    this.useCustomFile = true;
-    return title;
   }
 
   clearCustomFile(): void {
@@ -787,116 +756,34 @@ class KaraokeAudioEngine {
       URL.revokeObjectURL(this.customObjectUrl);
       this.customObjectUrl = null;
     }
-    this.useCustomFile = false;
-  }
-
-  selectBuiltInSong(song: KaraokeSong): void {
-    this.stop();
-    this.useCustomFile = false;
-    this.currentSong = song;
   }
 
   play(onEnded?: () => void, onPlayError = onEnded): void {
-    if (this.isPlaying) return;
-    if (this.useCustomFile) {
-      if (!this.audioEl) return;
-      this.ensureContext();
-      this.isPlaying = true;
-      const audio = this.audioEl;
-      const finish = (callback: (() => void) | undefined) => {
-        if (audio.onended !== onMediaEnded) return;
-        audio.onended = null;
-        this.isPlaying = false;
-        callback?.();
-      };
-      const onMediaEnded = () => finish(onEnded);
-      audio.onended = onMediaEnded;
-      void audio.play().catch(() => finish(onPlayError));
-      return;
-    }
+    const audio = this.audioEl;
+    if (this.isPlaying || !audio) return;
 
-    const { chords, bpm } = this.currentSong;
-    if (!chords || !bpm) return;
-    const ctx = this.ensureContext();
+    this.ensureContext();
     this.isPlaying = true;
-
-    this.startPerf = performance.now() - this.pausedOffset * 1000;
-    const beatMs = (60 / bpm) * 1000;
-
-    const triggerBeat = () => {
-      if (!this.isPlaying || !this.ctx || !this.musicGain || !this.currentSong.chords) return;
-      const elapsed = this.getCurrentTime();
-      if (elapsed >= (this.currentSong.duration ?? 30)) {
-        this.stop();
-        onEnded?.();
-        return;
-      }
-
-      const chordIdx = Math.floor(this.chordStep / 4) % this.currentSong.chords.length;
-      const chord = this.currentSong.chords[chordIdx];
-      const now = ctx.currentTime;
-
-      // Kick / soft bass on beat 0 & 2
-      if (this.chordStep % 2 === 0) {
-        const bass = ctx.createOscillator();
-        const bassGain = ctx.createGain();
-        bass.type = 'triangle';
-        bass.frequency.setValueAtTime(chord[0] * 0.5, now);
-        bassGain.gain.setValueAtTime(0.24, now);
-        bassGain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
-        bass.connect(bassGain);
-        bassGain.connect(this.musicGain);
-        bass.start(now);
-        bass.stop(now + 0.38);
-      }
-
-      // Acoustic strum / arpeggio on each beat
-      const notesToPlay = this.chordStep % 4 === 0 ? chord : [chord[this.chordStep % chord.length]];
-      notesToPlay.forEach((freq, idx) => {
-        const osc = ctx.createOscillator();
-        const g = ctx.createGain();
-        osc.type = 'sine';
-        const t0 = now + idx * 0.03;
-        osc.frequency.setValueAtTime(freq, t0);
-        g.gain.setValueAtTime(0.001, t0);
-        g.gain.linearRampToValueAtTime(0.11, t0 + 0.02);
-        g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.65);
-        osc.connect(g);
-        g.connect(this.musicGain!);
-        osc.start(t0);
-        osc.stop(t0 + 0.7);
-      });
-
-      this.chordStep += 1;
+    const finish = (callback: (() => void) | undefined) => {
+      if (audio.onended !== onMediaEnded) return;
+      audio.onended = null;
+      this.isPlaying = false;
+      callback?.();
     };
-
-    triggerBeat();
-    this.seqTimer = window.setInterval(triggerBeat, beatMs);
+    const onMediaEnded = () => finish(onEnded);
+    audio.onended = onMediaEnded;
+    void audio.play().catch(() => finish(onPlayError));
   }
 
   pause(): void {
-    if (!this.isPlaying) return;
+    if (!this.isPlaying || !this.audioEl) return;
     this.isPlaying = false;
-    if (this.useCustomFile && this.audioEl) {
-      this.audioEl.onended = null;
-      this.audioEl.pause();
-    } else {
-      this.pausedOffset = this.getCurrentTime();
-      if (this.seqTimer !== null) {
-        clearInterval(this.seqTimer);
-        this.seqTimer = null;
-      }
-    }
+    this.audioEl.onended = null;
+    this.audioEl.pause();
   }
 
   stop(): void {
     this.isPlaying = false;
-    this.pausedOffset = 0;
-    this.chordStep = 0;
-    if (this.seqTimer !== null) {
-      clearInterval(this.seqTimer);
-      this.seqTimer = null;
-    }
     if (this.audioEl) {
       this.audioEl.onended = null;
       this.audioEl.pause();
@@ -905,18 +792,7 @@ class KaraokeAudioEngine {
   }
 
   getCurrentTime(): number {
-    if (this.useCustomFile && this.audioEl) {
-      return this.audioEl.currentTime || 0;
-    }
-    if (!this.isPlaying) return this.pausedOffset;
-    return (performance.now() - this.startPerf) / 1000;
-  }
-
-  getDuration(): number {
-    if (this.useCustomFile && this.audioEl && Number.isFinite(this.audioEl.duration)) {
-      return this.audioEl.duration;
-    }
-    return this.currentSong.duration ?? 0;
+    return this.audioEl?.currentTime || 0;
   }
 
   getEnergy(): { music: number; mic: number } {

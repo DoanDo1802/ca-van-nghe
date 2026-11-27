@@ -1,18 +1,38 @@
 type TabCaptureDevices = MediaDevices & {
-  setCaptureHandleConfig?: (config: { handle: string; permittedOrigins: string[] }) => void;
+  setCaptureHandleConfig: (config: { handle: string; permittedOrigins: string[] }) => void;
 };
 
 type TabCaptureTrack = MediaStreamTrack & {
   getCaptureHandle?: () => { handle: string } | null;
 };
 
+export const KARAOKE_TAB_AUDIO_UNAVAILABLE =
+  'Trình duyệt này không thể lấy tiếng YouTube để hát trong phòng. Bạn có thể chọn file nhạc bằng nút MP3.';
+
+function getTabCaptureDevices(): TabCaptureDevices | null {
+  const devices = navigator.mediaDevices as Partial<TabCaptureDevices> | undefined;
+  if (
+    typeof devices?.getDisplayMedia !== 'function' ||
+    typeof devices.setCaptureHandleConfig !== 'function' ||
+    typeof MediaStreamTrack === 'undefined' ||
+    !('getCaptureHandle' in MediaStreamTrack.prototype)
+  ) {
+    return null;
+  }
+  return devices as TabCaptureDevices;
+}
+
+export function supportsKaraokeTabAudio(): boolean {
+  return getTabCaptureDevices() !== null;
+}
+
 export async function captureKaraokeTabAudio(): Promise<{
   stream: MediaStream;
   isKaraokeTab: () => boolean;
 }> {
-  const devices = navigator.mediaDevices as TabCaptureDevices | undefined;
-  if (!devices?.getDisplayMedia || !devices.setCaptureHandleConfig) {
-    throw new Error('Trình duyệt này chưa hỗ trợ thu tiếng tab karaoke. Hãy chọn file nhạc.');
+  const devices = getTabCaptureDevices();
+  if (!devices) {
+    throw new Error(KARAOKE_TAB_AUDIO_UNAVAILABLE);
   }
 
   const handle = crypto.randomUUID();
