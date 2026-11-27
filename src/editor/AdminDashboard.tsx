@@ -48,6 +48,15 @@ export const AdminDashboard: React.FC = () => {
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsMsg, setSettingsMsg] = useState('');
 
+  const [ytCookiesInput, setYtCookiesInput] = useState('');
+  const [ytCookiesInfo, setYtCookiesInfo] = useState<{
+    hasCookies: boolean;
+    lineCount: number;
+    updatedAt: string | null;
+  }>({ hasCookies: false, lineCount: 0, updatedAt: null });
+  const [savingCookies, setSavingCookies] = useState(false);
+  const [cookiesMsg, setCookiesMsg] = useState('');
+
   const [announcementText, setAnnouncementText] = useState('');
   const [sendingAnnouncement, setSendingAnnouncement] = useState(false);
   const [announcementMsg, setAnnouncementMsg] = useState('');
@@ -62,8 +71,9 @@ export const AdminDashboard: React.FC = () => {
 
   const loadDashboardData = useCallback(async () => {
     setRefreshing(true);
-    const [settings, activeRooms, playersList, bansList, accList] = await Promise.all([
+    const [settings, cookiesInfo, activeRooms, playersList, bansList, accList] = await Promise.all([
       AdminService.fetchAppSettings(),
+      AdminService.fetchKaraokeCookiesInfo(),
       AdminService.fetchActiveRooms(),
       AdminService.fetchRoomPlayers(),
       AdminService.fetchBannedPlayers(),
@@ -71,6 +81,7 @@ export const AdminDashboard: React.FC = () => {
     ]);
     setMaxTotalPlayers(settings.max_total_players);
     setMaxPlayersPerRoom(settings.max_players_per_room);
+    setYtCookiesInfo(cookiesInfo);
     setRooms(activeRooms);
     setRoomPlayers(playersList);
     setBannedPlayers(bansList);
@@ -132,6 +143,42 @@ export const AdminDashboard: React.FC = () => {
     );
     setSavingSettings(false);
     setSettingsMsg(res.ok ? 'Đã lưu thiết lập lên Supabase.' : res.error || 'Lỗi khi lưu.');
+  };
+
+  const handleSaveCookies = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!account) return;
+    setSavingCookies(true);
+    setCookiesMsg('');
+    const res = await AdminService.updateKaraokeCookies(ytCookiesInput, account.id);
+    if (res.ok) {
+      setYtCookiesInput('');
+      setYtCookiesInfo(await AdminService.fetchKaraokeCookiesInfo());
+    }
+    setSavingCookies(false);
+    setCookiesMsg(res.ok ? 'Đã lưu cookies.txt lên Supabase.' : res.error || 'Lỗi khi lưu cookies.');
+  };
+
+  const handleClearCookies = async () => {
+    if (!account) return;
+    setSavingCookies(true);
+    setCookiesMsg('');
+    const res = await AdminService.updateKaraokeCookies('', account.id);
+    if (res.ok) {
+      setYtCookiesInput('');
+      setYtCookiesInfo({ hasCookies: false, lineCount: 0, updatedAt: new Date().toISOString() });
+    }
+    setSavingCookies(false);
+    setCookiesMsg(res.ok ? 'Đã xóa cookies trên Supabase.' : res.error || 'Lỗi khi xóa cookies.');
+  };
+
+  const handleUploadCookiesFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    const text = await file.text();
+    setYtCookiesInput(text);
+    setCookiesMsg(`Đã nạp file "${file.name}" (${text.split(/\r?\n/).length} dòng). Bấm Lưu Cookies để cập nhật.`);
   };
 
   const handleSignOut = async () => {
@@ -740,6 +787,82 @@ export const AdminDashboard: React.FC = () => {
                   <Save className="w-3.5 h-3.5" />
                   <span>{savingSettings ? 'Đang lưu...' : 'Lưu thiết lập'}</span>
                 </button>
+              </div>
+            </form>
+
+            {/* YouTube Karaoke Cookies (yt-dlp) */}
+            <form
+              onSubmit={(e) => void handleSaveCookies(e)}
+              className="rounded-2xl bg-[#12151c] border border-white/[0.08] p-5 space-y-3.5"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-lg bg-white/[0.04] border border-white/[0.08] flex items-center justify-center text-neutral-300">
+                    <KeyRound className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h2 className="text-sm font-semibold text-white">YouTube Cookies (Tải Karaoke)</h2>
+                    <p className="text-[11px] text-neutral-500">
+                      Lưu bảo mật trên Supabase (chỉ Admin xem/sửa)
+                    </p>
+                  </div>
+                </div>
+                <span
+                  className={`px-2 py-0.5 rounded-full border text-[11px] font-mono ${
+                    ytCookiesInfo.hasCookies
+                      ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                      : 'bg-white/[0.06] border-white/[0.08] text-neutral-400'
+                  }`}
+                >
+                  {ytCookiesInfo.hasCookies ? `${ytCookiesInfo.lineCount} dòng` : 'Chưa có'}
+                </span>
+              </div>
+
+              <textarea
+                rows={4}
+                value={ytCookiesInput}
+                onChange={(e) => setYtCookiesInput(e.target.value)}
+                placeholder="Dán thẳng nội dung file cookies.txt từ trình duyệt (Netscape format) hoặc chọn file bên dưới..."
+                className="w-full px-3.5 py-2.5 rounded-xl bg-[#0b0d12] border border-white/[0.08] text-xs text-white font-mono placeholder:text-neutral-500 focus:outline-none focus:border-white/30 resize-y transition"
+              />
+
+              {cookiesMsg && (
+                <p className="text-xs text-neutral-200 bg-white/[0.06] border border-white/15 rounded-lg px-3 py-1.5">
+                  {cookiesMsg}
+                </p>
+              )}
+
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <label className="px-3 py-2 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] border border-white/[0.08] text-xs text-neutral-200 cursor-pointer transition">
+                  Chọn file cookies.txt
+                  <input
+                    type="file"
+                    accept=".txt,text/plain"
+                    onChange={(e) => void handleUploadCookiesFile(e)}
+                    className="hidden"
+                  />
+                </label>
+
+                <div className="flex items-center gap-2">
+                  {ytCookiesInfo.hasCookies && (
+                    <button
+                      type="button"
+                      disabled={savingCookies}
+                      onClick={() => void handleClearCookies()}
+                      className="px-3 py-2 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] border border-white/[0.08] text-neutral-300 text-xs font-medium transition"
+                    >
+                      Xóa
+                    </button>
+                  )}
+                  <button
+                    type="submit"
+                    disabled={savingCookies || !ytCookiesInput.trim()}
+                    className="px-4 py-2 rounded-xl bg-white hover:bg-neutral-200 disabled:opacity-50 text-neutral-950 text-xs font-semibold flex items-center justify-center gap-1.5 transition"
+                  >
+                    <Save className="w-3.5 h-3.5" />
+                    <span>{savingCookies ? 'Đang lưu...' : 'Lưu Cookies'}</span>
+                  </button>
+                </div>
               </div>
             </form>
 

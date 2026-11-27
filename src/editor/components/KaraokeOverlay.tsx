@@ -754,10 +754,15 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
         return true;
       } catch (error) {
         if (!controller.signal.aborted && isOpenRef.current) {
-          setSearchError(error instanceof Error ? error.message : 'Không tải được video.');
-          setIsPickerOpen(true);
+          if (useDevKaraokeApi) {
+            setSearchError(error instanceof Error ? error.message : 'Không tải được video.');
+            setIsPickerOpen(true);
+            return false;
+          }
+          DebugLogger.warn('KaraokeOverlay', 'Server MP4 download failed, falling back to YouTube iframe', error);
+        } else {
+          return false;
         }
-        return false;
       } finally {
         if (downloadRef.current === controller) {
           downloadRef.current = null;

@@ -12,7 +12,9 @@ const require = createRequire(import.meta.url);
 const MAX_BYTES = 80 * 1024 * 1024;
 const FORMAT = 'b[height<=480][ext=mp4]/b[ext=mp4]/bv*[height<=480][ext=mp4]+ba[ext=m4a]';
 
-function resolveCookiesFile() {
+let cachedDbCookies = { value: '', fetchedAt: 0 };
+
+async function resolveCookiesFile() {
   if (process.env.YTDLP_COOKIES_FILE && existsSync(process.env.YTDLP_COOKIES_FILE)) {
     return process.env.YTDLP_COOKIES_FILE;
   }
@@ -22,7 +24,38 @@ function resolveCookiesFile() {
     writeFileSync(out, Buffer.from(b64, 'base64'));
     return out;
   }
-  return null;
+
+  const supabaseUrl = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '').trim().replace(/\/+$/, '');
+  const serviceKey = (process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
+  if (!supabaseUrl || !serviceKey) return null;
+
+  if (Date.now() - cachedDbCookies.fetchedAt > 60_000) {
+    try {
+      const res = await fetch(
+        `${supabaseUrl}/rest/v1/karaoke_server_secrets?id=eq.1&select=ytdlp_cookies`,
+        {
+          headers: {
+            apikey: serviceKey,
+            Authorization: `Bearer ${serviceKey}`,
+          },
+        }
+      );
+      if (res.ok) {
+        const rows = await res.json();
+        cachedDbCookies = {
+          value: typeof rows?.[0]?.ytdlp_cookies === 'string' ? rows[0].ytdlp_cookies.trim() : '',
+          fetchedAt: Date.now(),
+        };
+      }
+    } catch {
+      // keep previous cache on transient network error
+    }
+  }
+
+  if (!cachedDbCookies.value) return null;
+  const out = join(tmpdir(), 'ytdlp-cookies-db.txt');
+  writeFileSync(out, cachedDbCookies.value, 'utf8');
+  return out;
 }
 
 function resolveYtdlpBin() {
@@ -104,7 +137,7 @@ export function createKaraokeDownloadHandler({ localhostOnly = true } = {}) {
       if (ffmpegLoc) {
         options.push('--ffmpeg-location', ffmpegLoc);
       }
-      const cookiesFile = resolveCookiesFile();
+      const cookiesFile = await resolveCookiesFile();
       if (cookiesFile) {
         options.push('--cookies', cookiesFile);
       }
@@ -156,10 +189,13 @@ export function createKaraokeDownloadHandler({ localhostOnly = true } = {}) {
           .join(' | ');
         console.warn('Karaoke download failed:', error?.code, `ffmpeg=${ffmpegLoc}`, stderrLine);
         const isAuthBlock = /sign in to confirm/i.test(stderrLine);
+        if (isAuthBlock) {
+          cachedDbCookies.fetchedAt = 0;
+        }
         fail(
           500,
           isAuthBlock
-            ? 'YouTube yêu cầu xác thực trên server (cần cấu hình YTDLP_COOKIES_B64).'
+            ? 'YouTube yêu cầu xác thực trên server (Admin cần cập nhật cookies.txt).'
             : 'Không tải được video. Kiểm tra yt-dlp, FFmpeg và kết nối mạng.'
         );
       }
