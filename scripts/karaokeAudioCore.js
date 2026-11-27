@@ -175,6 +175,7 @@ export function createKaraokeAudioHandler({ localhostOnly = false } = {}) {
         '--ignore-config',
         '--no-playlist',
         '--no-update',
+        '--verbose',
         '--socket-timeout',
         '10',
         '--retries',
@@ -186,13 +187,15 @@ export function createKaraokeAudioHandler({ localhostOnly = false } = {}) {
         '!is_live & duration <= 600',
         '--js-runtimes',
         `node:${process.execPath}`,
+        '--extractor-args',
+        'youtube:player_client=mweb,web;fetch_pot=always',
         '-f',
         AUDIO_FORMAT,
       ];
       const execOptions = {
         signal: controller.signal,
         timeout: 65000,
-        maxBuffer: 2 * 1024 * 1024,
+        maxBuffer: 4 * 1024 * 1024,
         env: {
           ...process.env,
           TMPDIR: WORK_TMP_ROOT,
@@ -251,13 +254,17 @@ export function createKaraokeAudioHandler({ localhostOnly = false } = {}) {
       await pipeline(createReadStream(file), res, { signal: controller.signal });
     } catch (error) {
       if (!controller.signal.aborted) {
-        const stderrLine = String(error?.stderr || error?.message || '')
+        const rawCombined = `${error?.stderr || ''}\n${error?.stdout || ''}\n${error?.message || ''}`;
+        const lines = rawCombined
           .split(/\r?\n/)
           .map((s) => s.trim())
-          .filter(Boolean)
-          .slice(-3)
-          .join(' | ');
+          .filter(Boolean);
+        const potLines = lines.filter((l) => /\[pot\]|bgutil/i.test(l)).slice(-8);
+        const stderrLine = lines.slice(-3).join(' | ');
         console.warn('Karaoke audio download failed:', error?.code, stderrLine);
+        if (potLines.length > 0) {
+          console.warn('Karaoke [pot] diagnostics:', potLines.join(' | '));
+        }
         const isAuthBlock = /sign in to confirm/i.test(stderrLine);
         fail(
           500,

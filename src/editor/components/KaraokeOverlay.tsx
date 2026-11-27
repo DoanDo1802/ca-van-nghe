@@ -806,27 +806,33 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
         });
         return true;
       } catch (error) {
-        if (!controller.signal.aborted && isOpenRef.current) {
-          setIsPickerOpen(true);
-          setSearchError(
-            error instanceof Error ? error.message : 'Không tải được âm thanh bài hát.',
-          );
+        if (controller.signal.aborted || !isOpenRef.current) {
+          return false;
         }
-        return false;
+        DebugLogger.warn(
+          'KaraokeOverlay',
+          'Remote audio download failed on mobile, falling back to synced YouTube iframe',
+          error,
+        );
+        setIsRemoteAudioMode(false);
+        setNeedsAudioTapToStart(false);
+        karaokeAudio.setBroadcastTabAudio(null);
+        const fallbackStream = karaokeAudio.getBroadcastStream();
+        if (fallbackStream) KaraokeVoiceManager.getInstance().startBroadcasting(fallbackStream);
       } finally {
         if (remoteAudioAbortRef.current === controller) {
           remoteAudioAbortRef.current = null;
           setIsLoadingRemoteAudio(false);
         }
       }
+    } else {
+      remoteAudioAbortRef.current?.abort();
+      remoteAudioAbortRef.current = null;
+      setIsRemoteAudioMode(false);
+      setNeedsAudioTapToStart(false);
     }
 
-    remoteAudioAbortRef.current?.abort();
-    remoteAudioAbortRef.current = null;
-    setIsRemoteAudioMode(false);
-    setNeedsAudioTapToStart(false);
-
-    if (mp.getRoomStatus().joiningOrInRoom && !tabCaptureRef.current) {
+    if (mp.getRoomStatus().joiningOrInRoom && !tabCaptureRef.current && supportsKaraokeTabAudio()) {
       if (capturePendingRef.current) return false;
       capturePendingRef.current = true;
       const request = ++captureRequestRef.current;
