@@ -65,9 +65,9 @@ export function createKaraokeDownloadHandler({ localhostOnly = true } = {}) {
     res.once('close', abort);
 
     let folder;
+    const ytdlpBin = resolveYtdlpBin();
+    const ffmpegLoc = resolveFfmpegLocation();
     try {
-      const ytdlpBin = resolveYtdlpBin();
-      const ffmpegLoc = resolveFfmpegLocation();
       const url = `https://www.youtube.com/watch?v=${id}`;
       const options = [
         '--ignore-config',
