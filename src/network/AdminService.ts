@@ -293,19 +293,49 @@ export const AdminService = {
     const supabase = getSupabaseClient();
     if (!supabase) return [];
     const cutoff = new Date(Date.now() - 45 * 1000).toISOString();
-    const { data, error } = await supabase
-      .from('active_rooms')
-      .select('*')
-      .gt('player_count', 0)
-      .gte('last_active_at', cutoff)
-      .order('last_active_at', { ascending: false });
+    const [roomsRes, playersRes] = await Promise.all([
+      supabase
+        .from('active_rooms')
+        .select('*')
+        .gt('player_count', 0)
+        .gte('last_active_at', cutoff)
+        .order('last_active_at', { ascending: false }),
+      supabase
+        .from('room_players')
+        .select('room_id, player_id')
+        .gte('last_seen_at', cutoff),
+    ]);
 
-    if (error) {
-      DebugLogger.error('AdminService', 'fetchActiveRooms failed:', error.message);
+    if (roomsRes.error) {
+      DebugLogger.error('AdminService', 'fetchActiveRooms failed:', roomsRes.error.message);
       return [];
     }
-    if (!data) return [];
-    return data as ActiveRoomInfo[];
+    const rooms = (roomsRes.data ?? []) as ActiveRoomInfo[];
+    if (rooms.length === 0 || playersRes.error || !Array.isArray(playersRes.data)) {
+      return rooms;
+    }
+
+    const liveCounts = new Map<string, number>();
+    for (const p of playersRes.data as Array<{ room_id: string; player_id: string }>) {
+      if (p.room_id) {
+        liveCounts.set(p.room_id, (liveCounts.get(p.room_id) ?? 0) + 1);
+      }
+    }
+
+    const reconciled: ActiveRoomInfo[] = [];
+    for (const room of rooms) {
+      const liveCount = liveCounts.get(room.room_id) ?? 0;
+      if (liveCount <= 0) {
+        void this.deleteRoom(
+          room.room_id,
+          room.host_name || '',
+          room.scene_id || 'ca-van-nghe-lobby'
+        );
+        continue;
+      }
+      reconciled.push({ ...room, player_count: liveCount });
+    }
+    return reconciled;
   },
 
   async deleteRoom(
@@ -315,19 +345,48 @@ export const AdminService = {
   ): Promise<void> {
     const supabase = getSupabaseClient();
     if (!supabase) return;
-    await supabase.from('room_players').delete().eq('room_id', roomId);
-    const { error } = await supabase.from('active_rooms').delete().eq('room_id', roomId);
-    if (error) {
-      DebugLogger.warn(
-        'AdminService',
-        `active_rooms delete failed for "${roomId}" (${error.message}), falling back to playerCount=0`
-      );
-      await this.upsertRoomHeartbeat({
-        roomId,
-        hostName: fallbackHostName,
-        sceneId,
-        playerCount: 0,
-      });
+
+    const { data: deletedPlayers, error: delPlayersErr } = await supabase
+      .from('room_players')
+      .delete()
+      .eq('room_id', roomId)
+      .select('player_id');
+    if (delPlayersErr || !deletedPlayers || deletedPlayers.length === 0) {
+      const remainingPlayers = await this.fetchRoomPlayers(roomId);
+      if (remainingPlayers.length > 0) {
+        await Promise.all(
+          remainingPlayers.map((p) => this.removeRoomPlayer(roomId, p.player_id))
+        );
+      }
+    }
+
+    const { data: deletedRooms, error: delRoomErr } = await supabase
+      .from('active_rooms')
+      .delete()
+      .eq('room_id', roomId)
+      .select('room_id');
+
+    if (delRoomErr || !deletedRooms || deletedRooms.length === 0) {
+      const { data: existing } = await supabase
+        .from('active_rooms')
+        .select('room_id, player_count')
+        .eq('room_id', roomId)
+        .maybeSingle();
+
+      if (existing && Number(existing.player_count) > 0) {
+        DebugLogger.warn(
+          'AdminService',
+          `active_rooms delete did not remove "${roomId}" (${delRoomErr?.message ?? 'RLS/0 rows'}), falling back to playerCount=0`
+        );
+        await this.upsertRoomHeartbeat({
+          roomId,
+          hostName: fallbackHostName,
+          sceneId,
+          playerCount: 0,
+          hasPassword: false,
+          password: '',
+        });
+      }
     }
   },
 
@@ -429,12 +488,28 @@ export const AdminService = {
     }
 
     const cutoff = new Date(Date.now() - 45 * 1000).toISOString();
-    const { data: roomRow } = await supabase
+    const { data: rawRoomRow } = await supabase
       .from('active_rooms')
-      .select('player_count, has_password, host_name')
+      .select('player_count, has_password, host_name, scene_id')
       .eq('room_id', roomId)
+      .gt('player_count', 0)
       .gte('last_active_at', cutoff)
       .maybeSingle();
+
+    let roomRow = rawRoomRow;
+    if (roomRow) {
+      const livePlayers = await this.fetchRoomPlayers(roomId);
+      if (livePlayers.length === 0) {
+        void this.deleteRoom(
+          roomId,
+          roomRow.host_name || '',
+          roomRow.scene_id || 'ca-van-nghe-lobby'
+        );
+        roomRow = null;
+      } else {
+        roomRow = { ...roomRow, player_count: livePlayers.length };
+      }
+    }
 
     const isOwnReclaim = Boolean(
       roomRow &&

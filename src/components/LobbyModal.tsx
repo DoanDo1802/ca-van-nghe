@@ -3,6 +3,7 @@ import { Users, ArrowRight, WifiOff, Lock, ShieldCheck } from 'lucide-react';
 import { MultiplayerManager } from '../network/MultiplayerManager';
 import { AdminService } from '../network/AdminService';
 import { isSupabaseConfigured } from '../network/supabaseClient';
+import { supportsWebkitTextSecurity } from '../utils/roomInputHelpers';
 
 interface LobbyModalProps {
   onJoined: () => void;
@@ -10,8 +11,9 @@ interface LobbyModalProps {
 
 export const LobbyModal: React.FC<LobbyModalProps> = ({ onJoined }) => {
   const params = new URLSearchParams(window.location.search);
-  const initialRoom = params.get('room') || 'ca-van-nghe-1';
+  const initialRoom = params.get('room') || '';
   const wantsAdminJoin = params.get('admin') === '1';
+  const useMaskedTextPasscode = supportsWebkitTextSecurity();
 
   const [playerName, setPlayerName] = useState(
     () => localStorage.getItem('cavannghe:player-name') || 'Khách Lounge'
@@ -87,6 +89,7 @@ export const LobbyModal: React.FC<LobbyModalProps> = ({ onJoined }) => {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
       <form
+        autoComplete="off"
         onSubmit={(e) => void handleJoinOnline(e)}
         className="w-full max-w-sm max-h-[92dvh] overflow-y-auto rounded-2xl bg-[#121212] border border-white/10 shadow-2xl"
       >
@@ -113,11 +116,13 @@ export const LobbyModal: React.FC<LobbyModalProps> = ({ onJoined }) => {
             <label className="block text-xs text-neutral-400">Tên hiển thị</label>
             <input
               type="text"
+              name="quick-player-name"
+              autoComplete="off"
               maxLength={24}
               value={playerName}
               onChange={(e) => setPlayerName(e.target.value)}
               placeholder="Nhập tên..."
-              className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-white/10 text-base sm:text-sm text-white placeholder:text-neutral-500 focus:outline-none focus:border-white/30"
+              className="w-full px-3.5 py-2.5 rounded-xl bg-neutral-950 border border-white/10 text-base sm:text-sm text-white placeholder:text-neutral-500 focus:outline-none focus:border-white/30 select-text"
             />
           </div>
 
@@ -127,11 +132,20 @@ export const LobbyModal: React.FC<LobbyModalProps> = ({ onJoined }) => {
               <Users className="w-4 h-4 text-neutral-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
+                name="quick-room-code"
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck={false}
+                data-lpignore="true"
+                data-1p-ignore="true"
+                data-bwignore="true"
+                data-form-type="other"
                 maxLength={32}
                 value={roomId}
                 onChange={(e) => setRoomId(e.target.value)}
-                placeholder="ca-van-nghe-1"
-                className="w-full pl-10 pr-3.5 py-2.5 rounded-xl bg-neutral-950 border border-white/10 text-base sm:text-sm text-white font-mono placeholder:text-neutral-500 focus:outline-none focus:border-white/30"
+                placeholder="Nhập mã phòng (vd: phong-cua-toi)"
+                className="w-full pl-10 pr-3.5 py-2.5 rounded-xl bg-neutral-950 border border-white/10 text-base sm:text-sm text-white font-mono placeholder:text-neutral-500 focus:outline-none focus:border-white/30 select-text"
               />
             </div>
           </div>
@@ -144,12 +158,23 @@ export const LobbyModal: React.FC<LobbyModalProps> = ({ onJoined }) => {
               <div className="relative">
                 <Lock className="w-4 h-4 text-neutral-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
                 <input
-                  type="password"
+                  type={useMaskedTextPasscode ? 'text' : roomPassword.length > 0 ? 'password' : 'text'}
+                  name="quick-room-passcode"
+                  autoComplete={useMaskedTextPasscode ? 'off' : 'new-password'}
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  spellCheck={false}
+                  data-lpignore="true"
+                  data-1p-ignore="true"
+                  data-bwignore="true"
+                  data-form-type="other"
                   maxLength={32}
                   value={roomPassword}
                   onChange={(e) => setRoomPassword(e.target.value)}
                   placeholder="Để trống nếu phòng mở..."
-                  className="w-full pl-10 pr-3.5 py-2.5 rounded-xl bg-neutral-950 border border-white/10 text-base sm:text-sm text-white placeholder:text-neutral-500 focus:outline-none focus:border-white/30"
+                  className={`w-full pl-10 pr-3.5 py-2.5 rounded-xl bg-neutral-950 border border-white/10 text-base sm:text-sm text-white placeholder:text-neutral-500 focus:outline-none focus:border-white/30 select-text ${
+                    useMaskedTextPasscode ? 'room-passcode-mask' : ''
+                  }`}
                 />
               </div>
             </div>

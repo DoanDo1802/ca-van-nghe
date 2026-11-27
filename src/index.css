@@ -75,3 +75,7 @@ html.game-viewport-lock #root {
   animation: pulseGlow 2.5s infinite ease-in-out;
 }
 
+.room-passcode-mask {
+  -webkit-text-security: disc;
+}
+

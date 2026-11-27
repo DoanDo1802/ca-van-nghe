@@ -103,7 +103,7 @@ class KaraokeAudioEngine {
   private keyPollTimer: number | null = null;
   private micAnalyser: AnalyserNode | null = null;
   private micGain: GainNode | null = null;
-  private micWarmthEq: BiquadFilterNode | null = null;
+  private micMudCutEq: BiquadFilterNode | null = null;
   private micPresenceEq: BiquadFilterNode | null = null;
   private micWetGain: GainNode | null = null;
   private micDelayGain: GainNode | null = null;
@@ -175,6 +175,7 @@ class KaraokeAudioEngine {
       this.broadcastTabGain.gain.value = this.backingMusicVolume;
       this.musicGain.connect(broadcastLimiter);
       this.broadcastTabGain.connect(broadcastLimiter);
+      this.broadcastTabGain.connect(this.keyAnalyser);
 
       this.micRecordBus = this.ctx.createGain();
       this.micRecordBus.gain.value = 1.0;
@@ -225,8 +226,8 @@ class KaraokeAudioEngine {
       echoCancellation = true,
       echoAmount = 0.55,
       micSensitivity = 3.4,
-      bassDb = 3.5,
-      trebleDb = 4.5,
+      bassDb = 0,
+      trebleDb = 0,
     } = options;
     const requestId = ++this.micRequestId;
     let stream: MediaStream | undefined;
@@ -250,45 +251,66 @@ class KaraokeAudioEngine {
       this.micStream = stream;
       this.micSource = source;
 
-      // 1. Fixed gentle Preamp Gain before EQ & Compressor
-      const preamp = ctx.createGain();
-      preamp.gain.value = 2.6;
-
-      // 2. Vocal Sculpting EQ: High-pass (85Hz) + Warmth (220Hz) + Presence Clarity (3.2kHz)
+      // 1. High-pass Filter (90 Hz) to remove rumble & plosives before YIN pitch tracking
       const hp = ctx.createBiquadFilter();
       hp.type = 'highpass';
-      hp.frequency.value = 85;
+      hp.frequency.value = 90;
+      hp.Q.value = 0.707;
 
-      const warmth = ctx.createBiquadFilter();
-      warmth.type = 'peaking';
-      warmth.frequency.value = 220;
-      warmth.Q.value = 1.0;
-      warmth.gain.value = bassDb;
-      this.micWarmthEq = warmth;
+      // 2. Gentle Preamp + Light Pre-Compressor (2.5:1) to stabilize dynamics before YIN
+      const preamp = ctx.createGain();
+      preamp.gain.value = 1.45;
+
+      const preComp = ctx.createDynamicsCompressor();
+      preComp.threshold.value = -24;
+      preComp.knee.value = 12;
+      preComp.ratio.value = 2.5;
+      preComp.attack.value = 0.004;
+      preComp.release.value = 0.12;
+
+      // 3. Modern Vocal Sculpting EQ (post-Auto-Tune):
+      //    Mud-Cut (-2.5dB @ 260Hz) + De-esser (-3dB @ 7kHz) + Presence (+2dB @ 3.2kHz) + Air (+3dB @ 11kHz)
+      const mudCut = ctx.createBiquadFilter();
+      mudCut.type = 'peaking';
+      mudCut.frequency.value = 260;
+      mudCut.Q.value = 1.2;
+      mudCut.gain.value = Math.max(-10, Math.min(6, -2.5 + bassDb));
+      this.micMudCutEq = mudCut;
+
+      const deEsser = ctx.createBiquadFilter();
+      deEsser.type = 'peaking';
+      deEsser.frequency.value = 7000;
+      deEsser.Q.value = 2.0;
+      deEsser.gain.value = -3.0;
 
       const presence = ctx.createBiquadFilter();
       presence.type = 'peaking';
       presence.frequency.value = 3200;
-      presence.Q.value = 1.1;
-      presence.gain.value = trebleDb;
+      presence.Q.value = 1.0;
+      presence.gain.value = Math.max(-8, Math.min(10, 2.0 + trebleDb));
       this.micPresenceEq = presence;
 
-      // 3. Gentle Vocal Compressor (keeps dynamics natural instead of brickwall clipping)
-      const comp = ctx.createDynamicsCompressor();
-      comp.threshold.value = -18;
-      comp.knee.value = 16;
-      comp.ratio.value = 3.0;
-      comp.attack.value = 0.005;
-      comp.release.value = 0.18;
+      const air = ctx.createBiquadFilter();
+      air.type = 'highshelf';
+      air.frequency.value = 11000;
+      air.gain.value = 3.0;
+
+      // 4. Main Vocal Compressor (4.5:1, fast attack/release for modern tight pop/rap mix)
+      const mainComp = ctx.createDynamicsCompressor();
+      mainComp.threshold.value = -18;
+      mainComp.knee.value = 10;
+      mainComp.ratio.value = 4.5;
+      mainComp.attack.value = 0.008;
+      mainComp.release.value = 0.08;
 
       this.micAnalyser = ctx.createAnalyser();
       this.micAnalyser.fftSize = 256;
       this.micAnalyser.smoothingTimeConstant = 0.75;
 
-      // 4. Post-Compressor Output Level (controlled by singer's Mic % slider) + Studio Reverb/Echo
+      // 5. Post-Compressor Output Level (controlled by singer's Mic % slider) + Studio Reverb/Echo
       const makeup = ctx.createGain();
-      makeup.gain.value = 1.15;
-      comp.connect(makeup);
+      makeup.gain.value = 1.75;
+      mainComp.connect(makeup);
 
       this.micGain = ctx.createGain();
       this.micGain.gain.value = Math.max(0, Math.min(2.5, micSensitivity));
@@ -315,6 +337,8 @@ class KaraokeAudioEngine {
       this.micDelayGain = delayOut;
 
       this.micSource.connect(hp);
+      hp.connect(preamp);
+      preamp.connect(preComp);
       if (autoTuneNode) {
         autoTuneNode.port.onmessage = (ev: MessageEvent) => {
           const data = ev.data as {
@@ -328,10 +352,6 @@ class KaraokeAudioEngine {
           if (!data || data.type !== 'telemetry') return;
           const voiced = Boolean(data.voiced);
           const detectedFreq = voiced ? Number(data.detectedFreq) || 0 : 0;
-          if (voiced && detectedFreq > 0 && this.autoTuneConfig.enabled && this.autoTuneConfig.autoMatchTone) {
-            this.keyMatcher.feedFreq(detectedFreq, 1.0);
-            this.applyAutoMatchedTone();
-          }
           const telemetry: AutoTuneTelemetry = {
             voiced,
             detectedFreq,
@@ -344,14 +364,15 @@ class KaraokeAudioEngine {
           }
         };
         this.autoTuneNode = autoTuneNode;
-        hp.connect(autoTuneNode);
-        autoTuneNode.connect(warmth);
+        preComp.connect(autoTuneNode);
+        autoTuneNode.connect(mudCut);
       } else {
-        hp.connect(warmth);
+        preComp.connect(mudCut);
       }
-      warmth.connect(presence);
-      presence.connect(preamp);
-      preamp.connect(comp);
+      mudCut.connect(deEsser);
+      deEsser.connect(presence);
+      presence.connect(air);
+      air.connect(mainComp);
       this.micGain.connect(this.micAnalyser);
 
       const monitorGain = ctx.createGain();
@@ -400,12 +421,15 @@ class KaraokeAudioEngine {
       }
 
       this.micNodes = [
-        preamp,
         hp,
+        preamp,
+        preComp,
         ...(autoTuneNode ? [autoTuneNode] : []),
-        warmth,
+        mudCut,
+        deEsser,
         presence,
-        comp,
+        air,
+        mainComp,
         makeup,
         dry,
         convolver,
@@ -456,7 +480,7 @@ class KaraokeAudioEngine {
       } catch {}
     }
     this.micNodes = [];
-    this.micWarmthEq = null;
+    this.micMudCutEq = null;
     this.micPresenceEq = null;
     this.micWetGain = null;
     this.micDelayGain = null;
@@ -518,11 +542,17 @@ class KaraokeAudioEngine {
    */
   createRecordingStream(
     tabAudioStream?: MediaStream | null
-  ): { stream: MediaStream; cleanup: () => void } | null {
+  ): { stream: MediaStream; audioContext: AudioContext; sourceNode: AudioNode; cleanup: () => void } | null {
     if (!tabAudioStream || tabAudioStream.getAudioTracks().length === 0) {
+      const ctx = this.ensureContext();
       const broadcastStream = this.getBroadcastStream();
-      if (!broadcastStream) return null;
-      return { stream: broadcastStream, cleanup: () => {} };
+      if (!broadcastStream || !this.broadcastLimiter) return null;
+      return {
+        stream: broadcastStream,
+        audioContext: ctx,
+        sourceNode: this.broadcastLimiter,
+        cleanup: () => {},
+      };
     }
 
     const ctx = this.ensureContext();
@@ -589,7 +619,12 @@ class KaraokeAudioEngine {
       });
     };
 
-    return { stream: recordDest.stream, cleanup };
+    return {
+      stream: recordDest.stream,
+      audioContext: ctx,
+      sourceNode: recordLimiter,
+      cleanup,
+    };
   }
 
   isMicActive(): boolean {
@@ -621,8 +656,8 @@ class KaraokeAudioEngine {
   }
 
   setToneEQ(bassDb: number, trebleDb: number): void {
-    if (this.micWarmthEq) this.micWarmthEq.gain.value = Math.max(-8, Math.min(10, bassDb));
-    if (this.micPresenceEq) this.micPresenceEq.gain.value = Math.max(-8, Math.min(10, trebleDb));
+    if (this.micMudCutEq) this.micMudCutEq.gain.value = Math.max(-10, Math.min(6, -2.5 + bassDb));
+    if (this.micPresenceEq) this.micPresenceEq.gain.value = Math.max(-8, Math.min(10, 2.0 + trebleDb));
   }
 
   private applyAutoMatchedTone(): void {
@@ -656,7 +691,7 @@ class KaraokeAudioEngine {
     }
     if (this.keyPollTimer !== null) return;
     this.keyPollTimer = window.setInterval(() => {
-      if (!this.isPlaying || !this.keyAnalyser || !this.keyFreqBuf || !this.ctx) return;
+      if ((!this.isPlaying && !this.broadcastTabSource) || !this.keyAnalyser || !this.keyFreqBuf || !this.ctx) return;
       this.keyAnalyser.getByteFrequencyData(this.keyFreqBuf);
       const fed = this.keyMatcher.feedSpectrum(
         this.keyFreqBuf,
@@ -681,6 +716,7 @@ class KaraokeAudioEngine {
       ...this.autoTuneConfig,
       ...partial,
       retuneSpeedMs: Math.max(0, Math.min(100, partial.retuneSpeedMs ?? this.autoTuneConfig.retuneSpeedMs)),
+      humanize: Math.max(0, Math.min(1, partial.humanize ?? this.autoTuneConfig.humanize)),
       mix: Math.max(0, Math.min(1, partial.mix ?? this.autoTuneConfig.mix)),
     };
     if (this.autoTuneNode) {

@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { KARAOKE_SONGS, karaokeAudio, type KaraokeSong } from '../../utils/karaokeAudio';
 import {
+  AUTOTUNE_PRESETS,
   MUSICAL_KEYS,
   SCALE_DEFINITIONS,
   type AutoTuneConfig,
@@ -94,10 +95,10 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
   const [selectedDeviceId, setSelectedDeviceId] = useState('');
   const [echoCancellation, setEchoCancellation] = useState(true);
   const [localMonitor, setLocalMonitor] = useState(() => karaokeAudio.isLocalMonitorEnabled());
-  const [micPercent, setMicPercent] = useState(100);
+  const [micPercent, setMicPercent] = useState(40);
   const [echoAmount, setEchoAmount] = useState(0.55);
-  const [bassDb, setBassDb] = useState(3.5);
-  const [trebleDb, setTrebleDb] = useState(4.5);
+  const [bassDb, setBassDb] = useState(0);
+  const [trebleDb, setTrebleDb] = useState(0);
   const [activePreset, setActivePreset] = useState<'acoustic' | 'lounge' | 'stage' | 'rapper' | null>('lounge');
   const [autoTune, setAutoTune] = useState<AutoTuneConfig>(() => karaokeAudio.getAutoTuneConfig());
   const [pitchTelemetry, setPitchTelemetry] = useState<AutoTuneTelemetry | null>(null);
@@ -405,6 +406,7 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
   }, [recState.isRecording, recState.recordingStartedAt]);
 
   const handleToggleRecord = async () => {
+    if (recState.isProcessing) return;
     const request = ++recordRequestRef.current;
     if (recState.isRecording) {
       await karaokeRecorder.stop();
@@ -466,14 +468,18 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
       activeSong?.title ||
       customFileName ||
       (youtubeVideoId ? `YouTube (${youtubeVideoId})` : 'Bản thu Karaoke');
-    const started = karaokeRecorder.start(
-      recSession.stream,
+    const started = await karaokeRecorder.start(
+      recSession,
       { title: songTitle, singerName },
       recSession.cleanup
     );
     if (!started) {
       recSession.cleanup();
       setMicError('Không thể bắt đầu ghi âm trên trình duyệt này');
+      return;
+    }
+    if (!isOpenRef.current || request !== recordRequestRef.current) {
+      void karaokeRecorder.stop();
     }
   };
 
@@ -937,24 +943,23 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
   const applyPreset = (preset: 'acoustic' | 'lounge' | 'stage' | 'rapper') => {
     const cfg =
       preset === 'acoustic'
-        ? { micPct: 85, echo: 0.25, bass: 2.5, treble: 3.0 }
+        ? { echo: 0.25, bass: 0, treble: -0.5 }
         : preset === 'lounge'
-          ? { micPct: 100, echo: 0.55, bass: 3.5, treble: 4.5 }
+          ? { echo: 0.55, bass: 0.5, treble: 0 }
           : preset === 'stage'
-            ? { micPct: 120, echo: 0.78, bass: 4.5, treble: 5.5 }
-            : { micPct: 115, echo: 0.3, bass: 2.0, treble: 5.5 };
+            ? { echo: 0.78, bass: 1.0, treble: 1.0 }
+            : { echo: 0.3, bass: 0, treble: 0 };
     setActivePreset(preset);
-    setMicPercent(cfg.micPct);
     setEchoAmount(cfg.echo);
     setBassDb(cfg.bass);
     setTrebleDb(cfg.treble);
-    karaokeAudio.setMicVolume(micPercentToGain(cfg.micPct));
     karaokeAudio.setEchoAmount(cfg.echo);
     karaokeAudio.setToneEQ(cfg.bass, cfg.treble);
     if (preset === 'rapper') {
       updateAutoTune({
         enabled: true,
         retuneSpeedMs: 0,
+        humanize: 0,
         formantPreserve: true,
         mix: 1.0,
       });
@@ -1168,15 +1173,29 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
               <div className="flex items-center gap-2">
                 <button
                   type="button"
+                  disabled={recState.isProcessing}
                   onClick={() => void handleToggleRecord()}
-                  title={recState.isRecording ? 'Dừng ghi âm & nghe lại' : 'Ghi âm giọng hát'}
+                  title={
+                    recState.isProcessing
+                      ? 'Đang xuất bản thu MP3...'
+                      : recState.isRecording
+                        ? 'Dừng ghi âm & nghe lại'
+                        : 'Ghi âm giọng hát'
+                  }
                   className={`h-10 px-3 rounded-xl border backdrop-blur-xl shadow-xl flex items-center gap-2 text-xs font-semibold transition ${
-                    recState.isRecording
-                      ? 'bg-rose-600/90 hover:bg-rose-500 border-rose-300/40 text-white'
-                      : 'bg-[#121212]/90 hover:bg-[#1e1e1e] border-white/15 text-neutral-100'
+                    recState.isProcessing
+                      ? 'bg-amber-500/20 border-amber-400/40 text-amber-200 cursor-wait'
+                      : recState.isRecording
+                        ? 'bg-rose-600/90 hover:bg-rose-500 border-rose-300/40 text-white'
+                        : 'bg-[#121212]/90 hover:bg-[#1e1e1e] border-white/15 text-neutral-100'
                   }`}
                 >
-                  {recState.isRecording ? (
+                  {recState.isProcessing ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-300" />
+                      <span className="hidden sm:inline">Xuất MP3...</span>
+                    </>
+                  ) : recState.isRecording ? (
                     <>
                       <Square className="w-3.5 h-3.5 fill-current animate-pulse" />
                       <span className="font-mono">{formatDurationSec(recordingElapsedSec)}</span>
@@ -1356,26 +1375,41 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
 
               <button
                 type="button"
+                disabled={recState.isProcessing}
                 onClick={() => {
                   setIsMenuOpen(false);
                   void handleToggleRecord();
                 }}
                 className={`w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl font-medium transition ${
-                  recState.isRecording
-                    ? 'bg-rose-600/30 text-rose-200 border border-rose-400/35'
-                    : 'hover:bg-white/10 text-neutral-200'
+                  recState.isProcessing
+                    ? 'bg-amber-500/20 text-amber-200 border border-amber-400/35 cursor-wait'
+                    : recState.isRecording
+                      ? 'bg-rose-600/30 text-rose-200 border border-rose-400/35'
+                      : 'hover:bg-white/10 text-neutral-200'
                 }`}
               >
                 <span className="flex items-center gap-2">
-                  {recState.isRecording ? (
+                  {recState.isProcessing ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-300" />
+                  ) : recState.isRecording ? (
                     <Square className="w-3.5 h-3.5 fill-current" />
                   ) : (
                     <Circle className="w-3.5 h-3.5 text-rose-400 fill-rose-400" />
                   )}
-                  <span>{recState.isRecording ? 'Dừng ghi âm' : 'Ghi âm'}</span>
+                  <span>
+                    {recState.isProcessing
+                      ? 'Xuất MP3...'
+                      : recState.isRecording
+                        ? 'Dừng ghi âm'
+                        : 'Ghi âm'}
+                  </span>
                 </span>
                 <span className="text-[11px] font-mono text-neutral-400">
-                  {recState.isRecording ? formatDurationSec(recordingElapsedSec) : 'REC'}
+                  {recState.isProcessing
+                    ? 'MP3'
+                    : recState.isRecording
+                      ? formatDurationSec(recordingElapsedSec)
+                      : 'REC'}
                 </span>
               </button>
 
@@ -1429,7 +1463,14 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
                 </button>
               </div>
 
-              {recState.recordings.length === 0 ? (
+              {recState.isProcessing && (
+                <div className="flex items-center gap-2 px-2.5 py-2 rounded-xl bg-amber-500/15 border border-amber-400/30 text-amber-200">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                  <span>Đang xuất bản thu MP3...</span>
+                </div>
+              )}
+
+              {recState.recordings.length === 0 && !recState.isProcessing ? (
                 <div className="py-5 text-center space-y-2 text-neutral-400">
                   <p>Chưa có bản thu nào.</p>
                   <p className="text-[11px] text-neutral-500">
@@ -1450,14 +1491,15 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
                           <div className="min-w-0">
                             <p className="font-medium text-white truncate">{rec.title}</p>
                             <p className="text-[11px] text-neutral-400 truncate">
-                              {rec.singerName} • {formatDurationSec(sec)} • {sizeKb} KB
+                              {rec.singerName} • {formatDurationSec(sec)} • {sizeKb} KB •{' '}
+                              {rec.extension.toUpperCase()}
                             </p>
                           </div>
                           <div className="flex items-center gap-1 shrink-0">
                             <button
                               type="button"
                               onClick={() => karaokeRecorder.downloadRecording(rec)}
-                              title="Tải về máy"
+                              title="Tải về file MP3"
                               className="p-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/35 text-amber-200 border border-amber-400/30 transition"
                             >
                               <Download className="w-3.5 h-3.5" />
@@ -1472,7 +1514,7 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
                             </button>
                           </div>
                         </div>
-                        <audio controls src={rec.url} className="w-full h-8" />
+                        <audio controls preload="metadata" src={rec.url} className="w-full h-8" />
                       </div>
                     );
                   })}
@@ -1657,7 +1699,7 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
                             ? 'bg-sky-500/20 border-sky-400/40 text-sky-200'
                             : 'bg-white/5 border-white/10 text-neutral-300 hover:bg-white/10'
                         }`}
-                        title="Tự động nghe giọng hát hoặc nhạc nền để chọn Tone & Scale phù hợp"
+                        title="Tự động nghe nhạc nền để chọn Tone & Scale phù hợp"
                       >
                         <span className="flex items-center gap-1">
                           <Sparkles className="w-3 h-3 text-sky-300" />
@@ -1671,6 +1713,34 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
                             : 'TẮT'}
                         </span>
                       </button>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-1">
+                      {AUTOTUNE_PRESETS.map((preset) => {
+                        const isMatch =
+                          autoTune.retuneSpeedMs === preset.config.retuneSpeedMs &&
+                          Math.abs(autoTune.humanize - preset.config.humanize) < 0.01 &&
+                          autoTune.formantPreserve === preset.config.formantPreserve &&
+                          Math.abs(autoTune.mix - preset.config.mix) < 0.01;
+                        return (
+                          <button
+                            key={preset.id}
+                            type="button"
+                            onClick={() => updateAutoTune(preset.config)}
+                            title={preset.subtitle}
+                            className={`py-1 px-1.5 rounded-lg border text-center transition ${
+                              isMatch
+                                ? 'bg-fuchsia-500/30 border-fuchsia-300/60 text-white'
+                                : 'bg-white/5 border-white/10 text-neutral-300 hover:bg-white/10'
+                            }`}
+                          >
+                            <div className="text-[10px] font-semibold leading-tight">{preset.label}</div>
+                            <div className="text-[9px] text-neutral-400 leading-tight truncate">
+                              {preset.subtitle}
+                            </div>
+                          </button>
+                        );
+                      })}
                     </div>
 
                     <div className="grid grid-cols-[74px_1fr] gap-1.5">
@@ -1710,7 +1780,7 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
                         type="range"
                         min={0}
                         max={80}
-                        step={5}
+                        step={1}
                         value={autoTune.retuneSpeedMs}
                         onChange={(e) =>
                           updateAutoTune({ retuneSpeedMs: parseFloat(e.target.value) })
@@ -1719,6 +1789,24 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
                       />
                       <span className="w-16 text-right font-mono text-[10px] text-fuchsia-200">
                         {autoTune.retuneSpeedMs === 0 ? '0ms (T-Pain)' : `${autoTune.retuneSpeedMs}ms`}
+                      </span>
+                    </label>
+
+                    <label className="flex items-center justify-between gap-2 text-[11px]">
+                      <span className="text-fuchsia-200/90 w-24 shrink-0">Humanize</span>
+                      <input
+                        type="range"
+                        min={0}
+                        max={1}
+                        step={0.05}
+                        value={autoTune.humanize}
+                        onChange={(e) =>
+                          updateAutoTune({ humanize: parseFloat(e.target.value) })
+                        }
+                        className="flex-1 accent-fuchsia-400"
+                      />
+                      <span className="w-16 text-right font-mono text-[10px] text-fuchsia-200">
+                        {Math.round(autoTune.humanize * 100)}%
                       </span>
                     </label>
 
@@ -1791,7 +1879,6 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
                     Chỉnh chung âm lượng nhạc tại máy bạn và gửi khán giả.
                   </p>
                 </div>
-
                 <label className="flex items-center justify-between gap-2">
                   <span className="text-emerald-300 w-24 shrink-0">Giọng hát (Mic)</span>
                   <input
@@ -1802,7 +1889,6 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
                     value={micPercent}
                     onChange={(e) => {
                       const v = parseFloat(e.target.value);
-                      setActivePreset(null);
                       setMicPercent(v);
                       karaokeAudio.setMicVolume(micPercentToGain(v));
                     }}

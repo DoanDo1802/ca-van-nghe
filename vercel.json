@@ -4,7 +4,7 @@
   "outputDirectory": "dist",
   "rewrites": [
     {
-      "source": "/((?!api/|assets/|models/|textures/|media/).*)",
+      "source": "/((?!api/|assets/|models/|animations/|characters/|textures/|media/|ammo/|scenes/|worklets/).*)",
       "destination": "/index.html"
     }
   ]

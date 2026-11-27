@@ -1,0 +1,54 @@
+{
+  "version": "1.0.0",
+  "defaultCharacterId": "default",
+  "characters": [
+    {
+      "id": "default",
+      "label": "Nhân vật Mặc định",
+      "subtitle": "Đổi màu trang phục tự do",
+      "url": "/models/Character.glb",
+      "filename": "Character.glb",
+      "scale": 0.62,
+      "groundOffsetY": 0,
+      "facingYawOffset": 0,
+      "armPoseOffsetDeg": 0,
+      "tintable": true,
+      "isBuiltIn": true,
+      "originalPreset": {
+        "label": "Nhân vật Mặc định",
+        "subtitle": "Đổi màu trang phục tự do",
+        "url": "/models/Character.glb",
+        "filename": "Character.glb",
+        "scale": 0.62,
+        "groundOffsetY": 0,
+        "facingYawOffset": 0,
+        "armPoseOffsetDeg": 0,
+        "tintable": true
+      }
+    },
+    {
+      "id": "tyler",
+      "label": "Tyler Baudelaire",
+      "subtitle": "Trang phục gốc • Mixamo Rig",
+      "url": "/models/Tyler.glb",
+      "filename": "Tyler.glb",
+      "scale": 0.4,
+      "groundOffsetY": 0,
+      "facingYawOffset": 180,
+      "armPoseOffsetDeg": 0,
+      "tintable": false,
+      "isBuiltIn": true,
+      "originalPreset": {
+        "label": "Tyler Baudelaire",
+        "subtitle": "Trang phục gốc • Mixamo Rig",
+        "url": "/models/Tyler.glb",
+        "filename": "Tyler.glb",
+        "scale": 0.4,
+        "groundOffsetY": 0,
+        "facingYawOffset": 180,
+        "armPoseOffsetDeg": 0,
+        "tintable": false
+      }
+    }
+  ]
+}

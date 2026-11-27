@@ -21,6 +21,7 @@ import {
   Square,
   Undo2,
   Upload,
+  Wand2,
 } from 'lucide-react';
 import { EditorEngine } from '../../engine/EditorEngine';
 import {
@@ -653,8 +654,16 @@ export const TopToolbar: React.FC<TopToolbarProps> = ({ viewportSize }) => {
         </button>
       </div>
 
-      {/* Right: Build Player / Standalone Play / Viewport Resolution */}
+      {/* Right: Character Studio / Build Player / Standalone Play / Viewport Resolution */}
       <div className="flex items-center gap-2 shrink-0">
+        <a
+          href="/studio"
+          title="Mở Character & Animation Studio (Kéo thả đổi Model Player & thêm Animation/Emote)"
+          className="px-2.5 py-0.5 rounded bg-indigo-500/20 border border-indigo-400/40 text-indigo-200 hover:bg-indigo-500/35 text-[11px] font-semibold transition-colors flex items-center gap-1"
+        >
+          <Wand2 className="w-3 h-3" />
+          <span>Character Studio</span>
+        </a>
         <button
           type="button"
           onClick={() => setBuildSettingsOpen(true)}

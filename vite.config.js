@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react';
 import fs from 'node:fs';
 import path from 'node:path';
 import { handleYouTubeSearch } from './scripts/youtubeSearchCore.js';
+import { characterStudioPlugin } from './scripts/characterStudioPlugin.js';
 
 function youtubeSearchPlugin() {
   const attachMiddleware = (server) => {
@@ -51,7 +52,12 @@ function sceneSavePlugin() {
 
 // https://vitejs.dev/config/
 export default defineConfig({
-  plugins: [react(), youtubeSearchPlugin(), sceneSavePlugin()],
+  plugins: [
+    react(),
+    youtubeSearchPlugin(),
+    sceneSavePlugin(),
+    characterStudioPlugin(),
+  ],
   server: {
     port: 3000,
     host: true,

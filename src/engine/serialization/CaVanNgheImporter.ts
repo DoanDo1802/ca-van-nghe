@@ -10,6 +10,9 @@ import { useAssetStore } from '../../store/useAssetStore';
 import type { PrefabData, ScriptAttributeValue } from '../../types';
 import type { EditorEngine } from '../EditorEngine';
 import { clearGlbContainerCache, loadGlbFromArrayBuffer } from '../animation/GlbAnimExtractor';
+import { AnimationRegistry } from '../animation/AnimationRegistry';
+import { CharacterRegistry } from '../animation/CharacterRegistry';
+import { applyCharacterAnimations } from '../animation/HumanoidRetargeter';
 import { getEntityMeta } from './EntityComponentHelper';
 import { clearGlbAssetBufferCache } from './SceneDeserializer';
 import {
@@ -185,6 +188,11 @@ async function spawnPlayerAndCamera(options: {
   mainCam.lookAt(camLookAt[0], camLookAt[1], camLookAt[2]);
   sceneRoot.addChild(mainCam);
 
+  await Promise.all([
+    CharacterRegistry.ensureLoaded(),
+    AnimationRegistry.ensureLoaded(),
+  ]);
+
   const avatarPreset = getAvatarModelPreset(getSavedAvatarModel());
   const charUrl = avatarPreset.url;
   let charBuf = bufferCache.get(charUrl);
@@ -199,6 +207,7 @@ async function spawnPlayerAndCamera(options: {
       // fallback to Character.glb below if custom model fetch fails
     }
   }
+  const resolvedPreset = charBuf ? avatarPreset : getAvatarModelPreset('default');
   const resolvedUrl = charBuf ? charUrl : '/models/Character.glb';
   const resolvedFilename = charBuf ? avatarPreset.filename : 'Character.glb';
   const resolvedScale = charBuf ? avatarPreset.scale : 0.62;
@@ -222,13 +231,14 @@ async function spawnPlayerAndCamera(options: {
     playerEntity.setLocalScale(resolvedScale, resolvedScale, resolvedScale);
     playerEntity.tags.add('player');
     applyAvatarColor(playerEntity, getSavedAvatarColor(), resolvedModelId);
-    if (charLoaded.animTracks.length > 0) {
+
+    const assignedStates = await applyCharacterAnimations(app, playerEntity, resolvedPreset);
+    const allStates = assignedStates.length > 0 ? assignedStates : charLoaded.animTracks;
+    if (allStates.length > 0) {
       const meta = getEntityMeta(playerEntity);
       meta.anim = {
-        defaultState: charLoaded.animTracks.includes('Idle_Loop')
-          ? 'Idle_Loop'
-          : charLoaded.animTracks[0],
-        states: charLoaded.animTracks.map((trackName) => ({
+        defaultState: allStates.includes('Idle_Loop') ? 'Idle_Loop' : allStates[0],
+        states: allStates.map((trackName) => ({
           name: trackName,
           clipAssetId: trackName,
           speed: 1,

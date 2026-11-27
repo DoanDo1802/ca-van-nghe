@@ -1,52 +1,28 @@
+import { useEffect, useState } from 'react';
 import * as pc from 'playcanvas';
+import { CharacterRegistry } from '../engine/animation/CharacterRegistry';
+import type { CharacterManifestEntry } from '../types/characterStudio';
 
 export const DEFAULT_AVATAR_COLOR = '#e8a246';
 export const DEFAULT_AVATAR_MODEL = 'default';
 
-export type AvatarModelId = 'default' | 'tyler';
+export type AvatarModelId = string;
+export type AvatarModelPreset = CharacterManifestEntry;
 
-export interface AvatarModelPreset {
-  id: AvatarModelId;
-  label: string;
-  subtitle: string;
-  url: string;
-  filename: string;
-  scale: number;
-  tintable: boolean;
-}
-
-export const AVATAR_MODEL_PRESETS: AvatarModelPreset[] = [
-  {
-    id: 'default',
-    label: 'Nhân vật Mặc định',
-    subtitle: 'Đổi màu trang phục tự do',
-    url: '/models/Character.glb',
-    filename: 'Character.glb',
-    scale: 0.62,
-    tintable: true,
-  },
-  {
-    id: 'tyler',
-    label: 'Tyler Baudelaire',
-    subtitle: 'Trang phục gốc • Mixamo Dance',
-    url: '/models/Tyler.glb',
-    filename: 'Tyler.glb',
-    scale: 0.4,
-    tintable: false,
-  },
-];
+/** Live fallback export kept for backwards compatibility; use `useCharacterPresets()` in React UI */
+export const AVATAR_MODEL_PRESETS: AvatarModelPreset[] = CharacterRegistry.getCharactersSync();
 
 const AVATAR_MODEL_STORAGE_KEY = 'cavannghe:avatar-model';
 
 export function normalizeAvatarModelId(raw?: string | null): AvatarModelId {
-  return raw === 'tyler' ? 'tyler' : 'default';
+  return CharacterRegistry.normalizeCharacterId(raw);
 }
 
 export function getSavedAvatarModel(): AvatarModelId {
   try {
     return normalizeAvatarModelId(localStorage.getItem(AVATAR_MODEL_STORAGE_KEY));
   } catch {
-    return DEFAULT_AVATAR_MODEL;
+    return CharacterRegistry.getDefaultCharacterIdSync();
   }
 }
 
@@ -61,8 +37,33 @@ export function saveAvatarModel(modelId: string): AvatarModelId {
 }
 
 export function getAvatarModelPreset(modelId?: string | null): AvatarModelPreset {
-  const clean = normalizeAvatarModelId(modelId);
-  return AVATAR_MODEL_PRESETS.find((p) => p.id === clean) ?? AVATAR_MODEL_PRESETS[0];
+  return CharacterRegistry.getCharacterPresetSync(modelId);
+}
+
+/**
+ * React hook returning live character presets from `/characters/manifest.json`
+ * and re-rendering automatically when edited in Character & Animation Studio.
+ */
+export function useCharacterPresets(): AvatarModelPreset[] {
+  const [presets, setPresets] = useState<AvatarModelPreset[]>(() =>
+    CharacterRegistry.getCharactersSync()
+  );
+
+  useEffect(() => {
+    let mounted = true;
+    void CharacterRegistry.ensureLoaded().then((m) => {
+      if (mounted) setPresets([...m.characters]);
+    });
+    const unsub = CharacterRegistry.subscribe((m) => {
+      if (mounted) setPresets([...m.characters]);
+    });
+    return () => {
+      mounted = false;
+      unsub();
+    };
+  }, []);
+
+  return presets;
 }
 
 export interface AvatarColorPreset {
@@ -121,12 +122,15 @@ export function applyAvatarColor(
   modelId?: string | null
 ): void {
   if (!entity) return;
-  if (modelId && !getAvatarModelPreset(modelId).tintable) return;
-  const hex = hexColor && /^#[0-9a-fA-F]{6}$/.test(hexColor.trim()) ? hexColor.trim() : DEFAULT_AVATAR_COLOR;
+  const preset = modelId ? getAvatarModelPreset(modelId) : undefined;
+  if (preset && !preset.tintable) return;
+
+  const hex =
+    hexColor && /^#[0-9a-fA-F]{6}$/.test(hexColor.trim()) ? hexColor.trim() : DEFAULT_AVATAR_COLOR;
   const target = new pc.Color().fromString(hex);
   const defaultRef = new pc.Color().fromString(DEFAULT_AVATAR_COLOR);
+  const isOriginalCharacterGlb = !preset || preset.url === '/models/Character.glb';
 
-  // Relative multiplier lets Character.glb keep joint contrast while shifting main body color cleanly
   const ratioR = target.r / Math.max(0.05, defaultRef.r);
   const ratioG = target.g / Math.max(0.05, defaultRef.g);
   const ratioB = target.b / Math.max(0.05, defaultRef.b);
@@ -159,15 +163,24 @@ export function applyAvatarColor(
   for (const mat of entry.mats) {
     const orig = entry.originals.get(mat);
     if (!orig) continue;
-    // Detect dark/accent joints vs main body mesh (warm amber diffuse on Character.glb)
-    const isAccentJoint = orig.b > orig.r * 0.9 && orig.r < 0.45;
-    if (isAccentJoint) {
-      mat.diffuse.set(orig.r, orig.g, orig.b);
+    if (isOriginalCharacterGlb) {
+      const isAccentJoint = orig.b > orig.r * 0.9 && orig.r < 0.45;
+      if (isAccentJoint) {
+        mat.diffuse.set(orig.r, orig.g, orig.b);
+      } else {
+        mat.diffuse.set(
+          Math.min(1, Math.max(0.02, orig.r * ratioR)),
+          Math.min(1, Math.max(0.02, orig.g * ratioG)),
+          Math.min(1, Math.max(0.02, orig.b * ratioB))
+        );
+      }
     } else {
+      // Generic tint multiplication for custom imported tintable characters
+      const lum = Math.max(0.35, 0.299 * orig.r + 0.587 * orig.g + 0.114 * orig.b);
       mat.diffuse.set(
-        Math.min(1, Math.max(0.02, orig.r * ratioR)),
-        Math.min(1, Math.max(0.02, orig.g * ratioG)),
-        Math.min(1, Math.max(0.02, orig.b * ratioB))
+        Math.min(1, lum * target.r),
+        Math.min(1, lum * target.g),
+        Math.min(1, lum * target.b)
       );
     }
     mat.update();

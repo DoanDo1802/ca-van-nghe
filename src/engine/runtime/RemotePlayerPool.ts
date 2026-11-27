@@ -7,7 +7,10 @@ import {
   type AvatarModelId,
 } from '../../utils/avatarColor';
 import { DebugLogger } from '../../utils/debugLogger';
+import { AnimationRegistry } from '../animation/AnimationRegistry';
+import { CharacterRegistry } from '../animation/CharacterRegistry';
 import { loadGlbFromArrayBuffer } from '../animation/GlbAnimExtractor';
+import { applyCharacterAnimations } from '../animation/HumanoidRetargeter';
 
 export interface NameplateEntry {
   id: string;
@@ -356,17 +359,7 @@ export class RemotePlayerPool {
 
     // Either before first snapshot or slightly past latest snapshot -> extrapolate gently
     const latest = snaps[snaps.length - 1];
-    const isStationaryAnim =
-      latest.anim === 'Idle_Loop' ||
-      latest.anim === 'Idle_Talking_Loop' ||
-      latest.anim === 'Singing' ||
-      latest.anim === 'Dance_Loop' ||
-      latest.anim === 'Samba_Dancing' ||
-      latest.anim === 'Slide_Hip_Hop_Dance' ||
-      latest.anim === 'Swing_Dancing' ||
-      latest.anim === 'Wave_Hip_Hop_Dance' ||
-      latest.anim === 'Dancing_Twerk' ||
-      latest.anim === 'Crouch_Idle_Loop';
+    const isStationaryAnim = AnimationRegistry.isStationaryState(latest.anim);
     if (
       renderTime > latest.recvTime &&
       !latest.isSitting &&
@@ -399,6 +392,12 @@ export class RemotePlayerPool {
 
   private async spawnAvatar(state: RemotePlayerState): Promise<void> {
     try {
+      await Promise.all([
+        CharacterRegistry.ensureLoaded(),
+        AnimationRegistry.ensureLoaded(),
+      ]);
+      if (this.destroyed) return;
+
       const preset = getAvatarModelPreset(state.avatarModel);
       const buf = await this.getModelBuffer(preset.url);
       if (!buf) {
@@ -426,6 +425,7 @@ export class RemotePlayerPool {
       entity.setLocalPosition(state.x, state.y, state.z);
       entity.setLocalEulerAngles(0, state.yaw, 0);
       applyAvatarColor(entity, state.avatarColor, preset.id);
+      await applyCharacterAnimations(this.app, entity, preset);
 
       entity.findComponents('render').forEach((comp) => {
         const rc = comp as pc.RenderComponent;

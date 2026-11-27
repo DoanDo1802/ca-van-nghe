@@ -1,0 +1,260 @@
+{
+  "version": "1.0.0",
+  "slots": {
+    "idle": "idle_loop",
+    "walk": "walk_loop",
+    "run": "running",
+    "jump": "jumping",
+    "jumpRun": "jump_while_run",
+    "sit": "sitting",
+    "talk": "idle_talking_loop"
+  },
+  "defaultSlots": {
+    "idle": "idle_loop",
+    "walk": "walk_loop",
+    "run": "running",
+    "jump": "jumping",
+    "jumpRun": "jump_while_run",
+    "sit": "crouch_idle_loop",
+    "talk": "idle_talking_loop"
+  },
+  "emotes": [
+    {
+      "id": "sing",
+      "label": "Hát",
+      "sublabel": "Singing",
+      "accent": "#f43f5e",
+      "icon": "mic",
+      "clipId": "singing",
+      "isBuiltIn": true
+    },
+    {
+      "id": "samba",
+      "label": "Nhảy Samba",
+      "sublabel": "Samba Dancing",
+      "accent": "#f59e0b",
+      "icon": "sparkles",
+      "clipId": "samba_dancing",
+      "isBuiltIn": true
+    },
+    {
+      "id": "hiphop",
+      "label": "Slide Hip Hop",
+      "sublabel": "Hip Hop Dance",
+      "accent": "#38bdf8",
+      "icon": "music",
+      "clipId": "slide_hip_hop_dance",
+      "isBuiltIn": true
+    },
+    {
+      "id": "swing",
+      "label": "Swing Dance",
+      "sublabel": "Swing Dancing",
+      "accent": "#a855f7",
+      "icon": "music",
+      "clipId": "swing_dancing",
+      "isBuiltIn": true
+    },
+    {
+      "id": "wavehiphop",
+      "label": "Wave Hip Hop",
+      "sublabel": "Wave Hip Hop Dance",
+      "accent": "#10b981",
+      "icon": "music",
+      "clipId": "wave_hip_hop_dance",
+      "isBuiltIn": true
+    },
+    {
+      "id": "twerk",
+      "label": "Dancing Twerk",
+      "sublabel": "Dancing Twerk",
+      "accent": "#ec4899",
+      "icon": "flame",
+      "clipId": "dancing_twerk",
+      "isBuiltIn": true
+    },
+    {
+      "id": "clapping",
+      "label": "Clapping",
+      "sublabel": "Clapping",
+      "accent": "#06b6d4",
+      "icon": "flame",
+      "clipId": "clapping",
+      "isBuiltIn": false
+    }
+  ],
+  "clips": [
+    {
+      "id": "idle_loop",
+      "name": "Idle_Loop",
+      "url": "/animations/core_locomotion.glb",
+      "trackName": "Idle_Loop",
+      "speed": 1,
+      "loop": true,
+      "inPlace": true,
+      "isBuiltIn": true
+    },
+    {
+      "id": "walk_loop",
+      "name": "Walk_Loop",
+      "url": "/animations/core_locomotion.glb",
+      "trackName": "Walk_Loop",
+      "speed": 1,
+      "loop": true,
+      "inPlace": true,
+      "isBuiltIn": true
+    },
+    {
+      "id": "running",
+      "name": "Running",
+      "url": "/animations/core_locomotion.glb",
+      "trackName": "Running",
+      "speed": 1,
+      "loop": true,
+      "inPlace": true,
+      "isBuiltIn": true
+    },
+    {
+      "id": "jumping",
+      "name": "Jumping",
+      "url": "/animations/core_locomotion.glb",
+      "trackName": "Jumping",
+      "speed": 1,
+      "loop": false,
+      "inPlace": true,
+      "isBuiltIn": true
+    },
+    {
+      "id": "jump_while_run",
+      "name": "JumpWhileRun",
+      "url": "/animations/core_locomotion.glb",
+      "trackName": "JumpWhileRun",
+      "speed": 1,
+      "loop": false,
+      "inPlace": true,
+      "isBuiltIn": true
+    },
+    {
+      "id": "crouch_idle_loop",
+      "name": "Crouch_Idle_Loop",
+      "url": "/animations/core_locomotion.glb",
+      "trackName": "Crouch_Idle_Loop",
+      "speed": 1,
+      "loop": true,
+      "inPlace": true,
+      "isBuiltIn": true
+    },
+    {
+      "id": "sitting_idle_loop",
+      "name": "Sitting_Idle_Loop",
+      "url": "/animations/core_locomotion.glb",
+      "trackName": "Sitting_Idle_Loop",
+      "speed": 1,
+      "loop": true,
+      "inPlace": true,
+      "isBuiltIn": true
+    },
+    {
+      "id": "idle_talking_loop",
+      "name": "Idle_Talking_Loop",
+      "url": "/animations/core_locomotion.glb",
+      "trackName": "Idle_Talking_Loop",
+      "speed": 1,
+      "loop": true,
+      "inPlace": true,
+      "isBuiltIn": true
+    },
+    {
+      "id": "dance_loop",
+      "name": "Dance_Loop",
+      "url": "/animations/core_locomotion.glb",
+      "trackName": "Dance_Loop",
+      "speed": 1,
+      "loop": true,
+      "inPlace": true,
+      "isBuiltIn": true
+    },
+    {
+      "id": "singing",
+      "name": "Singing",
+      "url": "/animations/core_emotes.glb",
+      "trackName": "Singing",
+      "speed": 1,
+      "loop": true,
+      "inPlace": true,
+      "isBuiltIn": true
+    },
+    {
+      "id": "samba_dancing",
+      "name": "Samba_Dancing",
+      "url": "/animations/core_emotes.glb",
+      "trackName": "Samba_Dancing",
+      "speed": 1,
+      "loop": true,
+      "inPlace": true,
+      "isBuiltIn": true
+    },
+    {
+      "id": "slide_hip_hop_dance",
+      "name": "Slide_Hip_Hop_Dance",
+      "url": "/animations/core_emotes.glb",
+      "trackName": "Slide_Hip_Hop_Dance",
+      "speed": 1,
+      "loop": true,
+      "inPlace": true,
+      "isBuiltIn": true
+    },
+    {
+      "id": "swing_dancing",
+      "name": "Swing_Dancing",
+      "url": "/animations/core_emotes.glb",
+      "trackName": "Swing_Dancing",
+      "speed": 1,
+      "loop": true,
+      "inPlace": true,
+      "isBuiltIn": true
+    },
+    {
+      "id": "wave_hip_hop_dance",
+      "name": "Wave_Hip_Hop_Dance",
+      "url": "/animations/core_emotes.glb",
+      "trackName": "Wave_Hip_Hop_Dance",
+      "speed": 1,
+      "loop": true,
+      "inPlace": true,
+      "isBuiltIn": true
+    },
+    {
+      "id": "dancing_twerk",
+      "name": "Dancing_Twerk",
+      "url": "/animations/core_emotes.glb",
+      "trackName": "Dancing_Twerk",
+      "speed": 1,
+      "loop": true,
+      "inPlace": true,
+      "isBuiltIn": true
+    },
+    {
+      "id": "clapping",
+      "name": "Custom_clapping",
+      "url": "/animations/clapping.glb",
+      "trackName": "Clapping",
+      "speed": 1,
+      "loop": true,
+      "inPlace": true,
+      "isBuiltIn": false,
+      "updatedAt": "2026-11-26T18:41:05.761Z"
+    },
+    {
+      "id": "sitting",
+      "name": "Custom_sitting",
+      "url": "/animations/sitting.glb",
+      "trackName": "Sitting",
+      "speed": 1,
+      "loop": true,
+      "inPlace": true,
+      "isBuiltIn": false,
+      "updatedAt": "2026-11-26T18:42:32.598Z"
+    }
+  ]
+}

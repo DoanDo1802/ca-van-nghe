@@ -165,6 +165,9 @@ export class MultiplayerManager {
   private roomPassword = '';
   private lastJoinError = '';
   private roomHeartbeatTimer: number | null = null;
+  private inFlightDbSyncs = new Set<Promise<void>>();
+  private pendingCleanupPromise: Promise<void> | null = null;
+  private lastKnownOtherDbPlayers = 0;
   private joinedAt = Date.now();
   private localChairId: string | null = null;
   private hostStageState: NetworkStageState | null = null;
@@ -256,12 +259,26 @@ export class MultiplayerManager {
       const otherPresence = this.presenceList.filter((p) => p.playerId !== this.localPlayerId);
       const encodedRoomId = encodeURIComponent(this.baseRoomId);
 
-      if (otherPresence.length === 0 && this.remotePlayers.size === 0) {
-        // Last player in room: immediately delete the empty room on DB
+      if (otherPresence.length === 0 && this.remotePlayers.size === 0 && this.lastKnownOtherDbPlayers === 0) {
+        // Last player in room: delete empty room AND zero player_count via RPC in case RLS blocks DELETE
         void fetch(`${cfg.url}/rest/v1/active_rooms?room_id=eq.${encodedRoomId}`, {
           method: 'DELETE',
           keepalive: true,
           headers,
+        });
+        void fetch(`${cfg.url}/rest/v1/rpc/upsert_room_heartbeat`, {
+          method: 'POST',
+          keepalive: true,
+          headers,
+          body: JSON.stringify({
+            p_room_id: this.baseRoomId,
+            p_room_name: this.baseRoomId,
+            p_host_name: this.hostName || this.localPlayerName,
+            p_scene_id: this.sceneScopeId || 'ca-van-nghe-lobby',
+            p_player_count: 0,
+            p_has_password: false,
+            p_password: null,
+          }),
         });
       } else if (this.isHost() && otherPresence.length > 0) {
         // Host closing browser while others remain: immediately transfer host on DB
@@ -355,6 +372,19 @@ export class MultiplayerManager {
     }
   }
 
+  async waitForPendingCleanup(): Promise<void> {
+    if (this.pendingCleanupPromise) {
+      await this.pendingCleanupPromise;
+    }
+  }
+
+  private trackDbSync(promise: Promise<void>): Promise<void> {
+    this.inFlightDbSyncs.add(promise);
+    return promise.finally(() => {
+      this.inFlightDbSyncs.delete(promise);
+    });
+  }
+
   getLastJoinError(): string {
     return this.lastJoinError;
   }
@@ -372,8 +402,13 @@ export class MultiplayerManager {
     }
 
     const targetRoomId = roomId.trim() || 'ca-van-nghe-1';
-    const targetPassword = options?.password?.trim() ?? this.roomPassword;
     const isSceneSwitch = Boolean(options?.isSceneSwitch) && targetRoomId === this.baseRoomId;
+    const targetPassword =
+      options?.password !== undefined
+        ? options.password.trim()
+        : isSceneSwitch
+          ? this.roomPassword
+          : '';
     const isAdminBypass = this.localIsAdmin && (options?.bypassLimits !== false);
 
     this.lastJoinError = '';
@@ -414,6 +449,7 @@ export class MultiplayerManager {
     this.presenceList = [];
     this.speakingPeers.clear();
     this.voicePolicy = { mode: 'free', updatedBy: '', updatedAt: 0 };
+    this.lastKnownOtherDbPlayers = 0;
 
     // Start DB heartbeat immediately for non-lobby rooms so room & player stay alive
     // even if Realtime takes a moment or temporarily hiccups later.
@@ -421,9 +457,7 @@ export class MultiplayerManager {
 
     const ok = await this.subscribeRoomChannel(sessionId, true);
     if (!ok && this.roomSessionId === sessionId) {
-      this.desiredRoomActive = false;
-      this.stopRoomHeartbeat();
-      this.emitRoomStatus();
+      await this.leaveRoom();
     }
     return ok;
   }
@@ -788,6 +822,7 @@ export class MultiplayerManager {
       this.lastRemoteKaraokeTimestamp = -1;
       this.speakingPeers.clear();
       this.voicePolicy = { mode: 'free', updatedBy: '', updatedAt: 0 };
+      this.lastKnownOtherDbPlayers = 0;
 
       if (hadRemoteKaraoke) {
         this.onRemoteKaraokeCallback?.({
@@ -812,58 +847,80 @@ export class MultiplayerManager {
         window.dispatchEvent(new CustomEvent('cavannghe:room-left'));
       }
 
-      if (ch) {
-        try {
-          await ch.untrack();
-        } catch {
-          // ignore
-        }
-        try {
-          const supabase = getSupabaseClient();
-          if (supabase) {
-            await supabase.removeChannel(ch);
-          } else {
-            await ch.unsubscribe();
+      const runCleanup = (async () => {
+        if (ch) {
+          try {
+            await ch.untrack();
+          } catch {
+            // ignore
           }
-        } catch {
-          // ignore
-        }
-      }
-
-      if (prevBaseRoomId && !preserveRoomMembership) {
-        DebugLogger.log('Multiplayer', `Left room "${prevBaseRoomId}" (scene=${prevScene || 'default'})`);
-        await AdminService.removeRoomPlayer(prevBaseRoomId, this.localPlayerId);
-        const remaining = await AdminService.fetchRoomPlayers(prevBaseRoomId);
-        const remainingOthers = remaining.filter((p) => p.player_id !== this.localPlayerId);
-        const rejoinedSameRoom = this.desiredRoomActive && this.baseRoomId === prevBaseRoomId;
-
-        if (remainingOthers.length === 0 && !rejoinedSameRoom) {
-          DebugLogger.log('Multiplayer', `Room "${prevBaseRoomId}" is empty; deleting room on DB`);
-          await AdminService.deleteRoom(prevBaseRoomId, prevHostName, prevScene);
-        } else if (wasHost && !rejoinedSameRoom) {
-          const targetHost = nextPresenceHost
-            ? { id: nextPresenceHost.playerId, name: nextPresenceHost.name }
-            : remainingOthers[0]
-              ? { id: remainingOthers[0].player_id, name: remainingOthers[0].player_name }
-              : null;
-          if (targetHost) {
-            DebugLogger.log(
-              'Multiplayer',
-              `Host "${prevHostName}" left "${prevBaseRoomId}"; transferring DB host to "${targetHost.name}"`
-            );
-            await AdminService.transferRoomHost({
-              roomId: prevBaseRoomId,
-              newHostId: targetHost.id,
-              newHostName: targetHost.name,
-              sceneId: prevScene,
-              playerCount: Math.max(1, otherPresence.length, remainingOthers.length),
-              hasPassword: Boolean(prevRoomPassword),
-              password: prevRoomPassword,
-            });
+          try {
+            const supabase = getSupabaseClient();
+            if (supabase) {
+              await supabase.removeChannel(ch);
+            } else {
+              await ch.unsubscribe();
+            }
+          } catch {
+            // ignore
           }
         }
+
+        if (prevBaseRoomId && !preserveRoomMembership) {
+          DebugLogger.log('Multiplayer', `Left room "${prevBaseRoomId}" (scene=${prevScene || 'default'})`);
+          if (this.inFlightDbSyncs.size > 0) {
+            await Promise.race([
+              Promise.allSettled([...this.inFlightDbSyncs]),
+              new Promise<void>((resolve) => window.setTimeout(resolve, 1500)),
+            ]);
+          }
+          await AdminService.removeRoomPlayer(prevBaseRoomId, this.localPlayerId);
+          const remaining = await AdminService.fetchRoomPlayers(prevBaseRoomId);
+          const remainingOthers = remaining.filter((p) => p.player_id !== this.localPlayerId);
+          const rejoinedSameRoom = this.desiredRoomActive && this.baseRoomId === prevBaseRoomId;
+
+          if (remainingOthers.length === 0 && !rejoinedSameRoom) {
+            DebugLogger.log('Multiplayer', `Room "${prevBaseRoomId}" is empty; deleting room on DB`);
+            await AdminService.deleteRoom(prevBaseRoomId, prevHostName, prevScene);
+          } else if (wasHost && !rejoinedSameRoom) {
+            const targetHost = nextPresenceHost
+              ? { id: nextPresenceHost.playerId, name: nextPresenceHost.name }
+              : remainingOthers[0]
+                ? { id: remainingOthers[0].player_id, name: remainingOthers[0].player_name }
+                : null;
+            if (targetHost) {
+              DebugLogger.log(
+                'Multiplayer',
+                `Host "${prevHostName}" left "${prevBaseRoomId}"; transferring DB host to "${targetHost.name}"`
+              );
+              await AdminService.transferRoomHost({
+                roomId: prevBaseRoomId,
+                newHostId: targetHost.id,
+                newHostName: targetHost.name,
+                sceneId: prevScene,
+                playerCount: Math.max(1, otherPresence.length, remainingOthers.length),
+                hasPassword: Boolean(prevRoomPassword),
+                password: prevRoomPassword,
+              });
+            }
+          }
+        }
+      })();
+
+      if (!preserveRoomMembership) {
+        const trackedCleanup: Promise<void> = runCleanup.finally(() => {
+          if (this.pendingCleanupPromise === trackedCleanup) {
+            this.pendingCleanupPromise = null;
+          }
+        });
+        this.pendingCleanupPromise = trackedCleanup;
+        await trackedCleanup;
+      } else {
+        await runCleanup;
       }
       this.emitRoomStatus();
+    } else {
+      await this.waitForPendingCleanup();
     }
   }
 
@@ -1593,38 +1650,68 @@ export class MultiplayerManager {
     }
   }
 
-  private async syncSelfPlayerRow(): Promise<void> {
-    if (!this.desiredRoomActive) return;
-    await AdminService.upsertRoomPlayer({
-      roomId: this.baseRoomId,
-      playerId: this.localPlayerId,
-      playerName: this.localPlayerName,
-      deviceId: this.localDeviceId,
-      sceneId: this.sceneScopeId || 'ca-van-nghe-lobby',
-      isHost: this.isHost(),
-      isAdmin: this.localIsAdmin,
-    });
+  private syncSelfPlayerRow(): Promise<void> {
+    const sessionId = this.roomSessionId;
+    const roomId = this.baseRoomId;
+    if (!this.desiredRoomActive || !roomId) return Promise.resolve();
+    const playerId = this.localPlayerId;
+    const playerName = this.localPlayerName;
+    const deviceId = this.localDeviceId;
+    const sceneId = this.sceneScopeId || 'ca-van-nghe-lobby';
+    const isHost = this.isHost();
+    const isAdmin = this.localIsAdmin;
+
+    return this.trackDbSync(
+      (async () => {
+        if (!this.desiredRoomActive || this.roomSessionId !== sessionId) return;
+        await AdminService.upsertRoomPlayer({
+          roomId,
+          playerId,
+          playerName,
+          deviceId,
+          sceneId,
+          isHost,
+          isAdmin,
+        });
+      })()
+    );
   }
 
-  private async syncRoomRegistry(): Promise<void> {
-    if (!this.desiredRoomActive) return;
-    await this.syncSelfPlayerRow();
-    const roomPlayers = await AdminService.fetchRoomPlayers(this.baseRoomId);
-    const count = Math.max(
-      1,
-      roomPlayers.length,
-      this.presenceList.length,
-      this.remotePlayers.size + 1
+  private syncRoomRegistry(): Promise<void> {
+    const sessionId = this.roomSessionId;
+    const roomId = this.baseRoomId;
+    if (!this.desiredRoomActive || !roomId) return Promise.resolve();
+    const hostName = this.hostName || this.localPlayerName;
+    const sceneId = this.sceneScopeId || 'ca-van-nghe-lobby';
+    const password = this.roomPassword;
+
+    return this.trackDbSync(
+      (async () => {
+        if (!this.desiredRoomActive || this.roomSessionId !== sessionId) return;
+        await this.syncSelfPlayerRow();
+        if (!this.desiredRoomActive || this.roomSessionId !== sessionId) return;
+        const roomPlayers = await AdminService.fetchRoomPlayers(roomId);
+        if (!this.desiredRoomActive || this.roomSessionId !== sessionId) return;
+        this.lastKnownOtherDbPlayers = roomPlayers.filter(
+          (p) => p.player_id !== this.localPlayerId
+        ).length;
+        const count = Math.max(
+          1,
+          roomPlayers.length,
+          this.presenceList.length,
+          this.remotePlayers.size + 1
+        );
+        await AdminService.upsertRoomHeartbeat({
+          roomId,
+          roomName: roomId,
+          hostName,
+          sceneId,
+          playerCount: count,
+          hasPassword: Boolean(password),
+          password,
+        });
+      })()
     );
-    await AdminService.upsertRoomHeartbeat({
-      roomId: this.baseRoomId,
-      roomName: this.baseRoomId,
-      hostName: this.hostName || this.localPlayerName,
-      sceneId: this.sceneScopeId || 'ca-van-nghe-lobby',
-      playerCount: count,
-      hasPassword: Boolean(this.roomPassword),
-      password: this.roomPassword,
-    });
   }
 
   private handleRemotePlayerState(payload: RemotePlayerState): void {
