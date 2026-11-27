@@ -1,4 +1,5 @@
-import { createReadStream } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { createReadStream, existsSync } from 'node:fs';
 import { stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { extname, join, normalize, resolve } from 'node:path';
@@ -104,6 +105,43 @@ const server = createServer(async (req, res) => {
   }
 });
 
+function startCloudflareTunnel() {
+  const token = process.env.CLOUDFLARE_TUNNEL_TOKEN?.trim();
+  const quick = process.env.ENABLE_CLOUDFLARE_QUICK_TUNNEL === 'true';
+  if (!token && !quick) return null;
+
+  const localBin = resolve('.bin/cloudflared');
+  const bin = process.env.CLOUDFLARED_BIN || (existsSync(localBin) ? localBin : 'cloudflared');
+  const args = token
+    ? ['tunnel', '--no-autoupdate', 'run', '--token', token]
+    : ['tunnel', '--no-autoupdate', '--url', `http://127.0.0.1:${PORT}`];
+
+  const child = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  const logOutput = (chunk) => {
+    const text = chunk.toString();
+    for (const line of text.split(/\r?\n/)) {
+      if (!line.trim()) continue;
+      if (line.includes('trycloudflare.com') || line.includes('Registered tunnel connection') || line.includes('ERR')) {
+        console.log(`[cloudflared] ${line}`);
+      }
+    }
+  };
+  child.stdout?.on('data', logOutput);
+  child.stderr?.on('data', logOutput);
+  child.on('error', (err) => {
+    console.warn('[cloudflared] Failed to start:', err.message);
+  });
+  return child;
+}
+
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Server listening on http://0.0.0.0:${PORT}`);
+  const tunnel = startCloudflareTunnel();
+  if (tunnel) {
+    const stopTunnel = () => {
+      if (!tunnel.killed) tunnel.kill('SIGTERM');
+    };
+    process.once('SIGINT', stopTunnel);
+    process.once('SIGTERM', stopTunnel);
+  }
 });
