@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { chmodSync, createReadStream, existsSync } from 'node:fs';
+import { chmodSync, createReadStream, existsSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -11,6 +11,19 @@ const run = promisify(execFile);
 const require = createRequire(import.meta.url);
 const MAX_BYTES = 80 * 1024 * 1024;
 const FORMAT = 'b[height<=480][ext=mp4]/b[ext=mp4]/bv*[height<=480][ext=mp4]+ba[ext=m4a]';
+
+function resolveCookiesFile() {
+  if (process.env.YTDLP_COOKIES_FILE && existsSync(process.env.YTDLP_COOKIES_FILE)) {
+    return process.env.YTDLP_COOKIES_FILE;
+  }
+  const b64 = process.env.YTDLP_COOKIES_B64?.trim();
+  if (b64) {
+    const out = join(tmpdir(), 'ytdlp-cookies.txt');
+    writeFileSync(out, Buffer.from(b64, 'base64'));
+    return out;
+  }
+  return null;
+}
 
 function resolveYtdlpBin() {
   if (process.env.YTDLP_BIN) return process.env.YTDLP_BIN;
@@ -91,8 +104,9 @@ export function createKaraokeDownloadHandler({ localhostOnly = true } = {}) {
       if (ffmpegLoc) {
         options.push('--ffmpeg-location', ffmpegLoc);
       }
-      if (process.env.YTDLP_COOKIES_FILE) {
-        options.push('--cookies', process.env.YTDLP_COOKIES_FILE);
+      const cookiesFile = resolveCookiesFile();
+      if (cookiesFile) {
+        options.push('--cookies', cookiesFile);
       }
       const execOptions = { signal: controller.signal, timeout: 45000, maxBuffer: 2 * 1024 * 1024 };
       const { stdout } = await run(ytdlpBin, [...options, '-J', '--skip-download', url], execOptions);
@@ -141,7 +155,13 @@ export function createKaraokeDownloadHandler({ localhostOnly = true } = {}) {
           .slice(-3)
           .join(' | ');
         console.warn('Karaoke download failed:', error?.code, `ffmpeg=${ffmpegLoc}`, stderrLine);
-        fail(502, 'Không tải được video. Kiểm tra yt-dlp, FFmpeg và kết nối mạng.');
+        const isAuthBlock = /sign in to confirm/i.test(stderrLine);
+        fail(
+          500,
+          isAuthBlock
+            ? 'YouTube yêu cầu xác thực trên server (cần cấu hình YTDLP_COOKIES_B64).'
+            : 'Không tải được video. Kiểm tra yt-dlp, FFmpeg và kết nối mạng.'
+        );
       }
     } finally {
       res.off('close', abort);
