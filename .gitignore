@@ -5,6 +5,7 @@ node_modules/
 dist/
 dist-player/
 .bin/
+.tmp-karaoke/
 
 # Environment & local
 .env

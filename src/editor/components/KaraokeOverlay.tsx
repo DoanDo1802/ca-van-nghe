@@ -36,7 +36,6 @@ import {
 } from '../../utils/rapAutoTune';
 import {
   captureKaraokeTabAudio,
-  KARAOKE_TAB_AUDIO_UNAVAILABLE,
   supportsKaraokeTabAudio,
 } from '../../utils/karaokeTabAudio';
 import { karaokeRecorder } from '../../utils/karaokeRecorder';
@@ -75,6 +74,12 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
   const [queue, setQueue] = useState<KaraokeSong[]>([]);
   const [youtubeVideoId, setYoutubeVideoId] = useState<string | null>(null);
   const [customFileName, setCustomFileName] = useState<string | null>(null);
+  const [isLoadingRemoteAudio, setIsLoadingRemoteAudio] = useState(false);
+  const [isRemoteAudioMode, setIsRemoteAudioMode] = useState(false);
+  const [needsAudioTapToStart, setNeedsAudioTapToStart] = useState(false);
+  const isRemoteAudioModeRef = useRef(false);
+  isRemoteAudioModeRef.current = isRemoteAudioMode;
+  const remoteAudioAbortRef = useRef<AbortController | null>(null);
   const [isPlayerCompact, setIsPlayerCompact] = useState(true);
   const [playerWidth, setPlayerWidth] = useState<number | null>(null);
   const [playerPos, setPlayerPos] = useState<{ x: number; y: number } | null>(null);
@@ -174,10 +179,10 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
       if (youtubeVideoId) {
         MultiplayerManager.getInstance().broadcastKaraokeState({
           active: true,
-          youtubeVideoId,
+          youtubeVideoId: isRemoteAudioMode ? null : youtubeVideoId,
           title: activeSong?.title ?? 'YouTube Karaoke',
           isPlaying: lastYtPlayingRef.current === true,
-          currentTime: ytCurrentTimeRef.current,
+          currentTime: isRemoteAudioMode ? karaokeAudio.getCurrentTime() : ytCurrentTimeRef.current,
           musicVolume: audienceMusicVolume,
         });
       } else if (customFileName && isFileSessionActiveRef.current) {
@@ -193,7 +198,7 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
     };
     window.addEventListener('cavannghe:channel-subscribed', onSubscribed);
     return () => window.removeEventListener('cavannghe:channel-subscribed', onSubscribed);
-  }, [isOpen, youtubeVideoId, activeSong?.title, customFileName, isFilePlaying, audienceMusicVolume]);
+  }, [isOpen, youtubeVideoId, isRemoteAudioMode, activeSong?.title, customFileName, isFilePlaying, audienceMusicVolume]);
 
   const handlePlayerPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if ((e.target as HTMLElement).closest('button')) return;
@@ -353,6 +358,11 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
   useEffect(() => {
     if (!isOpen) {
       stopTabCapture();
+      remoteAudioAbortRef.current?.abort();
+      remoteAudioAbortRef.current = null;
+      setIsLoadingRemoteAudio(false);
+      setIsRemoteAudioMode(false);
+      setNeedsAudioTapToStart(false);
       recordRequestRef.current++;
       karaokeAudio.clearCustomFile();
       setCustomFileName(null);
@@ -523,6 +533,11 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
         window.clearTimeout(presenceVolumeTimerRef.current);
       }
       stopTabCapture();
+      remoteAudioAbortRef.current?.abort();
+      remoteAudioAbortRef.current = null;
+      setIsLoadingRemoteAudio(false);
+      setIsRemoteAudioMode(false);
+      setNeedsAudioTapToStart(false);
       recordRequestRef.current++;
       if (karaokeRecorder.getSnapshot().isRecording) {
         void karaokeRecorder.stop();
@@ -574,6 +589,9 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
         const nextTime = parsed.info.currentTime;
         const jumped = Math.abs(nextTime - prevTime) > 1.8;
         ytCurrentTimeRef.current = nextTime;
+        if (isRemoteAudioModeRef.current && Math.abs(karaokeAudio.getCurrentTime() - nextTime) > 0.7) {
+          karaokeAudio.seekTo(nextTime);
+        }
         const now = Date.now();
         if (
           lastYtPlayingRef.current === true &&
@@ -584,10 +602,10 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
           MultiplayerManager.getInstance().broadcastKaraokeState(
             {
               active: true,
-              youtubeVideoId,
+              youtubeVideoId: isRemoteAudioModeRef.current ? null : youtubeVideoId,
               title: activeSong?.title ?? 'YouTube Karaoke',
               isPlaying: true,
-              currentTime: nextTime,
+              currentTime: isRemoteAudioModeRef.current ? karaokeAudio.getCurrentTime() : nextTime,
               musicVolume: audienceMusicVolumeRef.current,
             },
             { updatePresence: false }
@@ -610,13 +628,25 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
       if (![0, 1, 2].includes(playerState) || lastYtPlayingRef.current === nextPlaying) return;
       lastYtPlayingRef.current = nextPlaying;
       lastTimeSyncSentRef.current = Date.now();
+      if (isRemoteAudioModeRef.current) {
+        if (nextPlaying) {
+          karaokeAudio.play(
+            () => {
+              window.dispatchEvent(new CustomEvent('cavannghe:karaoke-playing', { detail: false }));
+            },
+            () => setNeedsAudioTapToStart(true),
+          );
+        } else {
+          karaokeAudio.pause();
+        }
+      }
       window.dispatchEvent(new CustomEvent('cavannghe:karaoke-playing', { detail: nextPlaying }));
       MultiplayerManager.getInstance().broadcastKaraokeState({
         active: true,
-        youtubeVideoId,
+        youtubeVideoId: isRemoteAudioModeRef.current ? null : youtubeVideoId,
         title: activeSong?.title ?? 'YouTube Karaoke',
         isPlaying: nextPlaying,
-        currentTime: ytCurrentTimeRef.current,
+        currentTime: isRemoteAudioModeRef.current ? karaokeAudio.getCurrentTime() : ytCurrentTimeRef.current,
         musicVolume: audienceMusicVolumeRef.current,
       });
     };
@@ -692,6 +722,12 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
 
   const stopYouTubeSong = () => {
     stopTabCapture();
+    remoteAudioAbortRef.current?.abort();
+    remoteAudioAbortRef.current = null;
+    setIsLoadingRemoteAudio(false);
+    setIsRemoteAudioMode(false);
+    setNeedsAudioTapToStart(false);
+    karaokeAudio.clearCustomFile();
     ytIframeRef.current?.contentWindow?.postMessage(
       JSON.stringify({ event: 'command', func: 'pauseVideo', args: [] }),
       'https://www.youtube.com',
@@ -709,6 +745,87 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
 
   const playYouTubeSong = async (song: KaraokeSong): Promise<boolean> => {
     const mp = MultiplayerManager.getInstance();
+    if (mp.getRoomStatus().joiningOrInRoom && !supportsKaraokeTabAudio()) {
+      karaokeAudio.unlockAudio();
+      remoteAudioAbortRef.current?.abort();
+      const controller = new AbortController();
+      remoteAudioAbortRef.current = controller;
+      setIsLoadingRemoteAudio(true);
+      setSearchError(null);
+      setNeedsAudioTapToStart(false);
+      try {
+        const res = await fetch(`/api/karaoke-audio?id=${encodeURIComponent(song.youtubeId)}`, {
+          method: 'POST',
+          signal: controller.signal,
+        });
+        if (!res.ok) {
+          const result = await res.json().catch(() => null);
+          throw new Error(result?.error ?? 'Không tải được âm thanh bài hát.');
+        }
+        const contentType = res.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          const data = (await res.json()) as { url?: string };
+          if (!data.url) throw new Error('Thiếu URL âm thanh từ server.');
+          if (!isOpenRef.current || controller.signal.aborted) return false;
+          karaokeAudio.loadRemoteAudio(data.url, song.title);
+        } else {
+          const blob = await res.blob();
+          if (!isOpenRef.current || controller.signal.aborted) return false;
+          karaokeAudio.loadCustomFile(new File([blob], song.title, { type: 'audio/mp4' }));
+        }
+
+        stopTabCapture();
+        isFileSessionActiveRef.current = false;
+        setCustomFileName(null);
+        setIsFilePlaying(false);
+        setIsRemoteAudioMode(true);
+        setActiveSong(song);
+        setYoutubeVideoId(song.youtubeId);
+        ytCurrentTimeRef.current = 0;
+        lastTimeSyncSentRef.current = Date.now();
+        lastYtPlayingRef.current = true;
+        setIsPickerOpen(false);
+
+        karaokeAudio.setBackingMusicVolume(audienceMusicVolumeRef.current / 100);
+        const broadcastStream = karaokeAudio.getBroadcastStream();
+        if (broadcastStream) KaraokeVoiceManager.getInstance().startBroadcasting(broadcastStream);
+        karaokeAudio.play(
+          () => {
+            window.dispatchEvent(new CustomEvent('cavannghe:karaoke-playing', { detail: false }));
+          },
+          () => setNeedsAudioTapToStart(true),
+        );
+        window.dispatchEvent(new CustomEvent('cavannghe:karaoke-playing', { detail: true }));
+        mp.broadcastKaraokeState({
+          active: true,
+          youtubeVideoId: null,
+          title: song.title,
+          isPlaying: true,
+          currentTime: 0,
+          musicVolume: audienceMusicVolumeRef.current,
+        });
+        return true;
+      } catch (error) {
+        if (!controller.signal.aborted && isOpenRef.current) {
+          setIsPickerOpen(true);
+          setSearchError(
+            error instanceof Error ? error.message : 'Không tải được âm thanh bài hát.',
+          );
+        }
+        return false;
+      } finally {
+        if (remoteAudioAbortRef.current === controller) {
+          remoteAudioAbortRef.current = null;
+          setIsLoadingRemoteAudio(false);
+        }
+      }
+    }
+
+    remoteAudioAbortRef.current?.abort();
+    remoteAudioAbortRef.current = null;
+    setIsRemoteAudioMode(false);
+    setNeedsAudioTapToStart(false);
+
     if (mp.getRoomStatus().joiningOrInRoom && !tabCaptureRef.current) {
       if (capturePendingRef.current) return false;
       capturePendingRef.current = true;
@@ -808,6 +925,11 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
     e.target.value = '';
 
     stopTabCapture();
+    remoteAudioAbortRef.current?.abort();
+    remoteAudioAbortRef.current = null;
+    setIsLoadingRemoteAudio(false);
+    setIsRemoteAudioMode(false);
+    setNeedsAudioTapToStart(false);
     setYoutubeVideoId(null);
     const name = karaokeAudio.loadCustomFile(file);
     setCustomFileName(name);
@@ -1049,7 +1171,7 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
                 ref={ytIframeRef}
                 key={youtubeVideoId}
                 className={`w-full aspect-video block ${isDraggingPlayer || isResizingPlayer ? 'pointer-events-none' : ''}`}
-                src={`https://www.youtube.com/embed/${youtubeVideoId}?autoplay=1&rel=0&modestbranding=1&enablejsapi=1&origin=${encodeURIComponent(window.location.origin)}`}
+                src={`https://www.youtube.com/embed/${youtubeVideoId}?autoplay=1&rel=0&modestbranding=1&enablejsapi=1&origin=${encodeURIComponent(window.location.origin)}${isRemoteAudioMode ? '&mute=1&playsinline=1' : ''}`}
                 title="YouTube Karaoke Player"
                 allow="autoplay; encrypted-media; picture-in-picture"
                 allowFullScreen
@@ -1066,6 +1188,31 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
                   window.setTimeout(sendListening, 1400);
                 }}
               />
+              {isRemoteAudioMode && needsAudioTapToStart && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    karaokeAudio.unlockAudio();
+                    karaokeAudio.play(
+                      () => {
+                        window.dispatchEvent(new CustomEvent('cavannghe:karaoke-playing', { detail: false }));
+                      },
+                      () => setNeedsAudioTapToStart(true),
+                    );
+                    ytIframeRef.current?.contentWindow?.postMessage(
+                      JSON.stringify({ event: 'command', func: 'playVideo', args: [] }),
+                      'https://www.youtube.com',
+                    );
+                    setNeedsAudioTapToStart(false);
+                  }}
+                  className="absolute inset-0 z-20 flex items-center justify-center bg-black/70 text-white text-xs font-semibold hover:bg-black/60 transition"
+                >
+                  <span className="px-3.5 py-2 rounded-xl bg-amber-500 text-black shadow-lg flex items-center gap-1.5">
+                    <Play className="w-3.5 h-3.5 fill-current" />
+                    Chạm để phát nhạc nền
+                  </span>
+                </button>
+              )}
               {/* Bottom-right resize handle */}
               <div
                 onPointerDown={handleResizePointerDown}
@@ -1749,7 +1896,7 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
                 <div className="space-y-1">
                   <label className="flex items-center justify-between gap-2">
                     <span className="text-sky-300 font-medium">
-                      {youtubeVideoId ? 'Nhạc nền gửi khán giả' : 'Âm lượng nhạc đang phát'}
+                      {youtubeVideoId && !isRemoteAudioMode ? 'Nhạc nền gửi khán giả' : 'Âm lượng nhạc đang phát'}
                     </span>
                     <span className="w-10 text-right font-mono text-sky-200">{audienceMusicVolume}%</span>
                   </label>
@@ -1768,7 +1915,7 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
                     className="w-full accent-sky-400"
                   />
                   <p className="text-[10px] text-neutral-400 leading-snug">
-                    {youtubeVideoId
+                    {youtubeVideoId && !isRemoteAudioMode
                       ? 'Âm lượng bạn nghe chỉnh trên trình phát YouTube.'
                       : 'Chỉnh nhạc bạn nghe và nhạc trong bản trộn gửi khán giả.'}
                   </p>
@@ -1975,12 +2122,19 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
             </button>
           </div>
 
-          {needsTabAudioPermission && !searchError && (
+          {needsTabAudioPermission && !searchError && !isLoadingRemoteAudio && (
             <p className="mx-3.5 mt-3 text-[11px] text-neutral-400">
               {supportsKaraokeTabAudio()
                 ? 'Khi chọn bài YouTube, hãy cho phép chia sẻ tiếng tab hiện tại. Khán giả chỉ nhận âm thanh đã trộn.'
-                : KARAOKE_TAB_AUDIO_UNAVAILABLE}
+                : 'Trên điện thoại: chọn bài YouTube sẽ tự động tải nhạc nền nhẹ (~2–3 MB) để trộn với micro và đồng bộ cùng lời YouTube.'}
             </p>
+          )}
+
+          {isLoadingRemoteAudio && (
+            <div className="mx-3.5 mt-2.5 px-3 py-2 rounded-lg bg-sky-500/15 border border-sky-400/30 text-[11px] text-sky-200 flex items-center gap-2">
+              <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+              <span>Đang tải nhạc nền cho điện thoại (~2–3 MB)...</span>
+            </div>
           )}
 
           {searchError && (

@@ -4,7 +4,11 @@ import { stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { extname, join, normalize, resolve } from 'node:path';
 import { pipeline } from 'node:stream/promises';
+import { createKaraokeAudioHandler } from './karaokeAudioCore.js';
+import { startPotServer } from './potServer.js';
 import { handleYouTubeSearch } from './youtubeSearchCore.js';
+
+const handleKaraokeAudio = createKaraokeAudioHandler({ localhostOnly: false });
 
 const PORT = Number(process.env.PORT || 3000);
 const DIST_DIR = resolve('dist');
@@ -53,6 +57,11 @@ const server = createServer(async (req, res) => {
 
   if (url.pathname === '/api/yt-search') {
     await handleYouTubeSearch(req, res);
+    return;
+  }
+
+  if (url.pathname === '/api/karaoke-audio') {
+    await handleKaraokeAudio(req, res);
     return;
   }
 
@@ -125,12 +134,12 @@ function startCloudflareTunnel() {
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Server listening on http://0.0.0.0:${PORT}`);
+  const potServer = startPotServer();
   const tunnel = startCloudflareTunnel();
-  if (tunnel) {
-    const stopTunnel = () => {
-      if (!tunnel.killed) tunnel.kill('SIGTERM');
-    };
-    process.once('SIGINT', stopTunnel);
-    process.once('SIGTERM', stopTunnel);
-  }
+  const stopChildren = () => {
+    potServer?.stop();
+    if (tunnel && !tunnel.killed) tunnel.kill('SIGTERM');
+  };
+  process.once('SIGINT', stopChildren);
+  process.once('SIGTERM', stopChildren);
 });
