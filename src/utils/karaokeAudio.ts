@@ -732,13 +732,6 @@ class KaraokeAudioEngine {
     };
   }
 
-  unlockAudio(): void {
-    const ctx = this.ensureContext();
-    if (ctx.state === 'suspended') {
-      void ctx.resume();
-    }
-  }
-
   loadCustomFile(file: File): string {
     const ctx = this.ensureContext();
     this.clearCustomFile();
@@ -748,28 +741,6 @@ class KaraokeAudioEngine {
     this.mediaSource = ctx.createMediaElementSource(this.audioEl);
     this.mediaSource.connect(this.musicGain!);
     return file.name;
-  }
-
-  loadRemoteAudio(url: string, title: string): string {
-    const ctx = this.ensureContext();
-    this.clearCustomFile();
-    const audio = new Audio();
-    audio.crossOrigin = 'anonymous';
-    audio.preload = 'auto';
-    audio.src = url;
-    this.audioEl = audio;
-    this.mediaSource = ctx.createMediaElementSource(audio);
-    this.mediaSource.connect(this.musicGain!);
-    return title;
-  }
-
-  seekTo(seconds: number): void {
-    if (!this.audioEl || !Number.isFinite(seconds)) return;
-    try {
-      this.audioEl.currentTime = Math.max(0, seconds);
-    } catch {
-      // ignore if audio metadata is not ready yet
-    }
   }
 
   clearCustomFile(): void {

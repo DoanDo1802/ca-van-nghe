@@ -2,21 +2,7 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import fs from 'node:fs';
 import path from 'node:path';
-import { createKaraokeAudioHandler } from './scripts/karaokeAudioCore.js';
 import { handleYouTubeSearch } from './scripts/youtubeSearchCore.js';
-
-function karaokeAudioPlugin() {
-  const handler = createKaraokeAudioHandler({ localhostOnly: true });
-  const attachMiddleware = (server) => {
-    server.middlewares.use('/api/karaoke-audio', handler);
-  };
-
-  return {
-    name: 'karaoke-audio-proxy',
-    configureServer: attachMiddleware,
-    configurePreviewServer: attachMiddleware,
-  };
-}
 
 function youtubeSearchPlugin() {
   const attachMiddleware = (server) => {
@@ -65,7 +51,7 @@ function sceneSavePlugin() {
 
 // https://vitejs.dev/config/
 export default defineConfig({
-  plugins: [react(), youtubeSearchPlugin(), karaokeAudioPlugin(), sceneSavePlugin()],
+  plugins: [react(), youtubeSearchPlugin(), sceneSavePlugin()],
   server: {
     port: 3000,
     host: true,
