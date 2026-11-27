@@ -14,15 +14,58 @@ const FORMAT = 'b[height<=480][ext=mp4]/b[ext=mp4]/bv*[height<=480][ext=mp4]+ba[
 
 let cachedDbCookies = { value: '', fetchedAt: 0 };
 
+function normalizeToNetscapeCookies(raw) {
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+  const lines = trimmed.split(/\r?\n/);
+  // Already Netscape cookies.txt format (7 tab-separated columns)
+  if (
+    trimmed.startsWith('# Netscape HTTP Cookie File') ||
+    lines.some((l) => !l.trim().startsWith('#') && l.split('\t').length >= 7)
+  ) {
+    return trimmed;
+  }
+
+  // Convert DevTools "NAME: VALUE" lines or "name=value; ..." header to Netscape format
+  const out = ['# Netscape HTTP Cookie File'];
+  const exp = '2147483647';
+  for (const line of lines) {
+    const clean = line.trim();
+    if (!clean || clean.startsWith('#')) continue;
+    const colonIdx = clean.indexOf(':');
+    if (colonIdx > 0 && !clean.slice(0, colonIdx).includes('=')) {
+      const name = clean.slice(0, colonIdx).trim();
+      const val = clean.slice(colonIdx + 1).trim();
+      if (name && val) {
+        out.push(`.youtube.com\tTRUE\t/\tTRUE\t${exp}\t${name}\t${val}`);
+      }
+      continue;
+    }
+    for (const part of clean.split(';')) {
+      const eqIdx = part.indexOf('=');
+      if (eqIdx <= 0) continue;
+      const name = part.slice(0, eqIdx).trim();
+      const val = part.slice(eqIdx + 1).trim();
+      if (name && val) {
+        out.push(`.youtube.com\tTRUE\t/\tTRUE\t${exp}\t${name}\t${val}`);
+      }
+    }
+  }
+  return out.length > 1 ? `${out.join('\n')}\n` : '';
+}
+
 async function resolveCookiesFile() {
   if (process.env.YTDLP_COOKIES_FILE && existsSync(process.env.YTDLP_COOKIES_FILE)) {
     return process.env.YTDLP_COOKIES_FILE;
   }
   const b64 = process.env.YTDLP_COOKIES_B64?.trim();
   if (b64) {
-    const out = join(tmpdir(), 'ytdlp-cookies.txt');
-    writeFileSync(out, Buffer.from(b64, 'base64'));
-    return out;
+    const normalized = normalizeToNetscapeCookies(Buffer.from(b64, 'base64').toString('utf8'));
+    if (normalized) {
+      const out = join(tmpdir(), 'ytdlp-cookies.txt');
+      writeFileSync(out, normalized, 'utf8');
+      return out;
+    }
   }
 
   const supabaseUrl = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '').trim().replace(/\/+$/, '');
@@ -52,9 +95,10 @@ async function resolveCookiesFile() {
     }
   }
 
-  if (!cachedDbCookies.value) return null;
+  const normalized = normalizeToNetscapeCookies(cachedDbCookies.value);
+  if (!normalized) return null;
   const out = join(tmpdir(), 'ytdlp-cookies-db.txt');
-  writeFileSync(out, cachedDbCookies.value, 'utf8');
+  writeFileSync(out, normalized, 'utf8');
   return out;
 }
 
