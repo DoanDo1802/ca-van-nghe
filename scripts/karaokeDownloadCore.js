@@ -116,7 +116,13 @@ export function createKaraokeDownloadHandler({ localhostOnly = true } = {}) {
       await pipeline(createReadStream(file), res, { signal: controller.signal });
     } catch (error) {
       if (!controller.signal.aborted) {
-        console.warn('Karaoke download failed:', error?.code, error?.message?.split('\n').at(-1));
+        const stderrLine = String(error?.stderr || error?.message || '')
+          .split(/\r?\n/)
+          .map((s) => s.trim())
+          .filter(Boolean)
+          .slice(-3)
+          .join(' | ');
+        console.warn('Karaoke download failed:', error?.code, stderrLine);
         fail(502, 'Không tải được video. Kiểm tra yt-dlp, FFmpeg và kết nối mạng.');
       }
     } finally {
