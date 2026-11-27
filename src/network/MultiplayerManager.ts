@@ -41,6 +41,7 @@ export interface NetworkKaraokeState {
   isPlaying: boolean;
   currentTime?: number;
   musicVolume?: number;
+  syncYouTubeAudio?: boolean;
   updatedAt: number;
 }
 
