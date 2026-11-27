@@ -106,25 +106,32 @@ const server = createServer(async (req, res) => {
 });
 
 function startCloudflareTunnel() {
-  const token = process.env.CLOUDFLARE_TUNNEL_TOKEN?.trim();
+  const rawToken = process.env.CLOUDFLARE_TUNNEL_TOKEN?.trim() || '';
+  const token = rawToken
+    .replace(/^cloudflared(?:\.exe)?\s+service\s+install\s+/i, '')
+    .replace(/^.*?--token\s+/i, '')
+    .trim();
   const quick = process.env.ENABLE_CLOUDFLARE_QUICK_TUNNEL === 'true';
   if (!token && !quick) return null;
 
   const localBin = resolve('.bin/cloudflared');
   const bin = process.env.CLOUDFLARED_BIN || (existsSync(localBin) ? localBin : 'cloudflared');
   const args = token
-    ? ['tunnel', '--no-autoupdate', 'run', '--token', token]
-    : ['tunnel', '--no-autoupdate', '--url', `http://127.0.0.1:${PORT}`];
+    ? ['tunnel', '--no-autoupdate', '--protocol', 'http2', 'run', '--token', token]
+    : ['tunnel', '--no-autoupdate', '--protocol', 'http2', '--url', `http://127.0.0.1:${PORT}`];
 
-  console.log(`[cloudflared] Starting ${token ? 'named' : 'quick'} tunnel via ${bin}...`);
+  console.log(`[cloudflared] Starting ${token ? 'named' : 'quick'} tunnel (http2) via ${bin}...`);
   const child = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  let loggedLines = 0;
   const logOutput = (chunk) => {
     const text = chunk.toString();
     for (const line of text.split(/\r?\n/)) {
       if (!line.trim()) continue;
       if (
+        loggedLines < 25 ||
         /trycloudflare\.com|registered|connected|error|err|warn|failed|unable/i.test(line)
       ) {
+        loggedLines++;
         console.log(`[cloudflared] ${line}`);
       }
     }
@@ -133,6 +140,9 @@ function startCloudflareTunnel() {
   child.stderr?.on('data', logOutput);
   child.on('error', (err) => {
     console.warn('[cloudflared] Failed to start:', err.message);
+  });
+  child.on('exit', (code, signal) => {
+    console.warn(`[cloudflared] Exited with code=${code} signal=${signal}`);
   });
   return child;
 }
