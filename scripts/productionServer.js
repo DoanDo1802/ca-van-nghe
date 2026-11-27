@@ -4,7 +4,10 @@ import { stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { extname, join, normalize, resolve } from 'node:path';
 import { pipeline } from 'node:stream/promises';
+import { createKaraokeAudioHandler } from './karaokeAudioCore.js';
 import { handleYouTubeSearch } from './youtubeSearchCore.js';
+
+const handleKaraokeAudio = createKaraokeAudioHandler({ localhostOnly: false });
 
 const PORT = Number(process.env.PORT || 3000);
 const DIST_DIR = resolve('dist');
@@ -53,6 +56,11 @@ const server = createServer(async (req, res) => {
 
   if (url.pathname === '/api/yt-search') {
     await handleYouTubeSearch(req, res);
+    return;
+  }
+
+  if (url.pathname === '/api/karaoke-audio') {
+    await handleKaraokeAudio(req, res);
     return;
   }
 

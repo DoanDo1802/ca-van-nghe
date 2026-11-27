@@ -100,41 +100,52 @@ async function fetchWithProgress(
   url: string,
   onFraction: (fraction: number) => void
 ): Promise<ArrayBuffer> {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Failed to fetch model "${url}": ${response.status} ${response.statusText}`);
-  }
+  const maxAttempts = 2;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 30_000);
+    try {
+      const response = await fetch(url, { signal: controller.signal });
+      if (!response.ok) {
+        throw new Error(`Failed to fetch model "${url}": ${response.status} ${response.statusText}`);
+      }
 
-  const contentLength = Number(response.headers.get('content-length') || 0);
-  const largeOrMobile = isMobileSceneDevice() || contentLength > 15 * 1024 * 1024;
-  if (!response.body || contentLength <= 0 || largeOrMobile) {
-    const buf = await response.arrayBuffer();
-    onFraction(1);
-    return buf;
-  }
+      const contentLength = Number(response.headers.get('content-length') || 0);
+      if (!response.body || contentLength <= 0 || contentLength > 15 * 1024 * 1024) {
+        const buf = await response.arrayBuffer();
+        onFraction(1);
+        return buf;
+      }
 
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let received = 0;
+      const reader = response.body.getReader();
+      const chunks: Uint8Array[] = [];
+      let received = 0;
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (value) {
-      chunks.push(value);
-      received += value.byteLength;
-      onFraction(Math.min(1, received / contentLength));
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) {
+          chunks.push(value);
+          received += value.byteLength;
+          onFraction(Math.min(1, received / contentLength));
+        }
+      }
+
+      const merged = new Uint8Array(received);
+      let offset = 0;
+      for (const chunk of chunks) {
+        merged.set(chunk, offset);
+        offset += chunk.byteLength;
+      }
+      onFraction(1);
+      return merged.buffer;
+    } catch (err) {
+      if (attempt >= maxAttempts) throw err;
+    } finally {
+      window.clearTimeout(timeoutId);
     }
   }
-
-  const merged = new Uint8Array(received);
-  let offset = 0;
-  for (const chunk of chunks) {
-    merged.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  onFraction(1);
-  return merged.buffer;
+  throw new Error(`Failed to fetch model "${url}"`);
 }
 
 async function spawnPlayerAndCamera(options: {
@@ -269,6 +280,7 @@ export async function importCaVanNgheSceneById(
   engine.prepareEmptyScene();
   clearGlbContainerCache(app);
   clearGlbAssetBufferCache();
+  report(10, `Đang tải tài nguyên ${sceneDef.shortName}...`);
 
   const isEditor = engine.isEditorAutoDraftEnabled();
   const isMobile = isMobileSceneDevice();
