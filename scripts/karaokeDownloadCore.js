@@ -5,11 +5,12 @@ import { createRequire } from 'node:module';
 import { join, resolve } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { promisify } from 'node:util';
+import { checkR2KaraokeObject, getR2Config, uploadFileToR2Karaoke } from './r2Storage.js';
 
 const run = promisify(execFile);
 const require = createRequire(import.meta.url);
 const MAX_BYTES = 80 * 1024 * 1024;
-const FORMAT = 'b[height<=480][ext=mp4]/b[ext=mp4]/bv*[height<=480][ext=mp4]+ba[ext=m4a]';
+const FORMAT = 'b[height<=360][ext=mp4]/b[height<=480][ext=mp4]/b[ext=mp4]/bv*[height<=480][ext=mp4]+ba[ext=m4a]';
 const WORK_TMP_ROOT = resolve(process.env.KARAOKE_TMP_DIR || '.tmp-karaoke');
 
 try {
@@ -175,6 +176,19 @@ export function createKaraokeDownloadHandler({ localhostOnly = true } = {}) {
     const ytdlpBin = resolveYtdlpBin();
     const ffmpegLoc = resolveFfmpegLocation();
     try {
+      const r2Config = getR2Config();
+      if (r2Config) {
+        const cachedUrl = await checkR2KaraokeObject(id);
+        if (cachedUrl) {
+          res.writeHead(200, {
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-store',
+          });
+          res.end(JSON.stringify({ url: cachedUrl, cached: true }));
+          return;
+        }
+      }
+
       const url = `https://www.youtube.com/watch?v=${id}`;
       const options = [
         '--ignore-config',
@@ -196,18 +210,10 @@ export function createKaraokeDownloadHandler({ localhostOnly = true } = {}) {
       }
       const execOptions = {
         signal: controller.signal,
-        timeout: 45000,
+        timeout: 95000,
         maxBuffer: 2 * 1024 * 1024,
         env: { ...process.env, TMPDIR: WORK_TMP_ROOT },
       };
-      const { stdout } = await run(ytdlpBin, [...options, '-J', '--skip-download', url], execOptions);
-      const info = JSON.parse(stdout);
-      if (info.is_live || ['is_live', 'is_upcoming', 'post_live'].includes(info.live_status)) {
-        return fail(422, 'Không hỗ trợ video livestream đang hoặc sắp phát.');
-      }
-      if (!Number.isFinite(info.duration) || info.duration <= 0 || info.duration > 600) {
-        return fail(422, 'Chỉ tải video có thời lượng tối đa 10 phút.');
-      }
       mkdirSync(WORK_TMP_ROOT, { recursive: true });
       folder = await mkdtemp(join(WORK_TMP_ROOT, 'job-'));
       const file = join(folder, 'song.mp4');
@@ -228,10 +234,26 @@ export function createKaraokeDownloadHandler({ localhostOnly = true } = {}) {
           file,
           url,
         ],
-        { ...execOptions, timeout: 90000 }
+        execOptions
       );
+      if (!existsSync(file)) {
+        return fail(422, 'Video không hợp lệ (livestream hoặc dài hơn 10 phút).');
+      }
       const { size } = await stat(file);
       if (size <= 0 || size > MAX_BYTES) return fail(422, 'File video vượt giới hạn 80 MiB.');
+
+      if (r2Config) {
+        const publicVideoUrl = await uploadFileToR2Karaoke(id, file);
+        if (publicVideoUrl) {
+          res.writeHead(200, {
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-store',
+          });
+          res.end(JSON.stringify({ url: publicVideoUrl, cached: false }));
+          return;
+        }
+      }
+
       res.writeHead(200, {
         'Content-Type': 'video/mp4',
         'Content-Length': size,

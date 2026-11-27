@@ -745,11 +745,19 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
           const result = await response.json().catch(() => null);
           throw new Error(result?.error ?? 'Không tải được video.');
         }
-        const blob = await response.blob();
-        if (!isOpenRef.current || controller.signal.aborted) return false;
+        const contentType = response.headers.get('content-type') || '';
         const video = document.createElement('video');
         video.playsInline = true;
         video.className = 'block w-full aspect-video bg-black';
+        if (contentType.includes('application/json')) {
+          const data = (await response.json()) as { url?: string };
+          if (!data.url) throw new Error('Thiếu URL video từ server.');
+          if (!isOpenRef.current || controller.signal.aborted) return false;
+          playLocalFile(data.url, video, song.title);
+          return true;
+        }
+        const blob = await response.blob();
+        if (!isOpenRef.current || controller.signal.aborted) return false;
         playLocalFile(new File([blob], song.title, { type: 'video/mp4' }), video);
         return true;
       } catch (error) {
@@ -878,10 +886,13 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
     e.target.value = '';
   };
 
-  const playLocalFile = (file: File, video?: HTMLVideoElement) => {
+  const playLocalFile = (source: File | string, video?: HTMLVideoElement, remoteTitle?: string) => {
     stopTabCapture();
     setYoutubeVideoId(null);
-    const name = karaokeAudio.loadCustomFile(file, video);
+    const name =
+      typeof source === 'string' && video
+        ? karaokeAudio.loadRemoteVideo(source, remoteTitle || 'YouTube Karaoke', video)
+        : karaokeAudio.loadCustomFile(source as File, video);
     setDownloadedVideo(video ?? null);
     setCustomFileName(name);
     setActiveSong(null);

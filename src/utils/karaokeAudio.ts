@@ -762,6 +762,18 @@ class KaraokeAudioEngine {
     return file.name;
   }
 
+  loadRemoteVideo(url: string, title: string, video: HTMLVideoElement): string {
+    const ctx = this.ensureContext();
+    this.clearCustomFile();
+    video.crossOrigin = 'anonymous';
+    video.src = url;
+    this.audioEl = video;
+    this.mediaSource = ctx.createMediaElementSource(this.audioEl);
+    this.mediaSource.connect(this.musicGain!);
+    this.useCustomFile = true;
+    return title;
+  }
+
   clearCustomFile(): void {
     this.stop();
     this.mediaSource?.disconnect();
