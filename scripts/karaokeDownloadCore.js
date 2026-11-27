@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { createReadStream, existsSync } from 'node:fs';
+import { chmodSync, createReadStream, existsSync } from 'node:fs';
 import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -10,7 +10,7 @@ import { promisify } from 'node:util';
 const run = promisify(execFile);
 const require = createRequire(import.meta.url);
 const MAX_BYTES = 80 * 1024 * 1024;
-const FORMAT = 'bv*[height<=480][ext=mp4]+ba[ext=m4a]/b[height<=480][ext=mp4]';
+const FORMAT = 'b[height<=480][ext=mp4]/b[ext=mp4]/bv*[height<=480][ext=mp4]+ba[ext=m4a]';
 
 function resolveYtdlpBin() {
   if (process.env.YTDLP_BIN) return process.env.YTDLP_BIN;
@@ -22,7 +22,15 @@ function resolveFfmpegLocation() {
   if (process.env.FFMPEG_BIN && existsSync(process.env.FFMPEG_BIN)) return process.env.FFMPEG_BIN;
   try {
     const bin = require('ffmpeg-static');
-    return typeof bin === 'string' && bin && existsSync(bin) ? bin : null;
+    if (typeof bin === 'string' && bin && existsSync(bin)) {
+      try {
+        chmodSync(bin, 0o755);
+      } catch {
+        // ignore
+      }
+      return bin;
+    }
+    return null;
   } catch {
     return null;
   }
