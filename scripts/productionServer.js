@@ -116,12 +116,15 @@ function startCloudflareTunnel() {
     ? ['tunnel', '--no-autoupdate', 'run', '--token', token]
     : ['tunnel', '--no-autoupdate', '--url', `http://127.0.0.1:${PORT}`];
 
+  console.log(`[cloudflared] Starting ${token ? 'named' : 'quick'} tunnel via ${bin}...`);
   const child = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
   const logOutput = (chunk) => {
     const text = chunk.toString();
     for (const line of text.split(/\r?\n/)) {
       if (!line.trim()) continue;
-      if (line.includes('trycloudflare.com') || line.includes('Registered tunnel connection') || line.includes('ERR')) {
+      if (
+        /trycloudflare\.com|registered|connected|error|err|warn|failed|unable/i.test(line)
+      ) {
         console.log(`[cloudflared] ${line}`);
       }
     }
