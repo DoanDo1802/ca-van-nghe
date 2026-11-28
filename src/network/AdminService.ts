@@ -833,4 +833,64 @@ export const AdminService = {
       });
     });
   },
+
+  async fetchAnalyticsDashboard(params: {
+    fromIso: string;
+    toIso: string;
+    scene?: string | null;
+    platform?: string | null;
+    guest?: string | null;
+  }): Promise<{ data?: Record<string, unknown>; error?: string }> {
+    const supabase = getSupabaseClient();
+    if (!supabase) return { error: 'Chưa cấu hình Supabase.' };
+    const { data, error } = await supabase.rpc('analytics_dashboard_data', {
+      p_from: params.fromIso,
+      p_to: params.toIso,
+      p_scene: params.scene || null,
+      p_platform: params.platform || null,
+      p_guest: params.guest || null,
+    });
+    if (error) return { error: error.message };
+    return { data: (data as Record<string, unknown>) ?? {} };
+  },
+
+  async fetchStorageStats(): Promise<{
+    db_bytes: number;
+    db_limit_bytes: number;
+    analytics_bytes: number;
+    analytics_budget_bytes: number;
+    tables: Array<{ table_name: string; bytes: number; rows: number }>;
+  } | null> {
+    const supabase = getSupabaseClient();
+    if (!supabase) return null;
+    const { data, error } = await supabase.rpc('get_storage_stats');
+    if (error || !data) return null;
+    return data as {
+      db_bytes: number;
+      db_limit_bytes: number;
+      analytics_bytes: number;
+      analytics_budget_bytes: number;
+      tables: Array<{ table_name: string; bytes: number; rows: number }>;
+    };
+  },
+
+  async updateAnalyticsSettings(
+    level: number,
+    retentionDays: number,
+    adminAccountId?: string
+  ): Promise<{ ok: boolean; error?: string }> {
+    const supabase = getSupabaseClient();
+    if (!supabase) return { ok: false, error: 'Chưa cấu hình Supabase.' };
+    const { error } = await supabase
+      .from('app_settings')
+      .update({
+        analytics_level: level,
+        analytics_retention_days: retentionDays,
+        updated_by: adminAccountId ?? null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', 1);
+    if (error) return { ok: false, error: error.message };
+    return { ok: true };
+  },
 };

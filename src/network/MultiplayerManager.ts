@@ -9,6 +9,7 @@ import {
   type AvatarModelId,
 } from '../utils/avatarColor';
 import { DebugLogger } from '../utils/debugLogger';
+import { Tracker, ANALYTICS_EVENT } from '../analytics/Tracker';
 
 export const PUBLIC_LOBBY_ROOM_ID = 'public-lobby';
 
@@ -442,6 +443,16 @@ export class MultiplayerManager {
       );
       if (!check.allowed) {
         this.lastJoinError = check.reason || 'Không thể tham gia phòng.';
+        const denyReason = this.lastJoinError.includes('cấm')
+          ? 'banned'
+          : this.lastJoinError.includes('giới hạn tối đa')
+            ? 'server_full'
+            : this.lastJoinError.includes('đầy')
+              ? 'room_full'
+              : this.lastJoinError.includes('Mật khẩu')
+                ? 'wrong_pw'
+                : 'other';
+        Tracker.track(ANALYTICS_EVENT.ROOM_DENIED, { reason: denyReason });
         DebugLogger.warn('Multiplayer', `Join room "${targetRoomId}" denied: ${this.lastJoinError}`);
         return false;
       }
@@ -475,7 +486,19 @@ export class MultiplayerManager {
     // even if Realtime takes a moment or temporarily hiccups later.
     this.startRoomHeartbeat();
 
+    const joinStartMs = Date.now();
     const ok = await this.subscribeRoomChannel(sessionId, true);
+    if (!isSceneSwitch) {
+      Tracker.track(ANALYTICS_EVENT.ROOM_JOIN, {
+        ok,
+        ms: Date.now() - joinStartMs,
+        is_host: ok ? this.isHost() : false,
+        count: ok ? this.remotePlayers.size + 1 : 0,
+      });
+    }
+    if (ok) {
+      Tracker.setRoomContext(this.baseRoomId, this.sceneScopeId);
+    }
     if (!ok && this.roomSessionId === sessionId) {
       await this.leaveRoom();
     }
@@ -501,6 +524,7 @@ export class MultiplayerManager {
     const delay =
       overrideDelayMs ?? Math.min(10_000, Math.round(1500 * Math.pow(1.6, this.reconnectAttempt)));
     this.reconnectAttempt = Math.min(this.reconnectAttempt + 1, 6);
+    Tracker.incReconnect();
     DebugLogger.warn(
       'Multiplayer',
       `Scheduling reconnect for "${this.getChannelTopic()}" in ${delay}ms (attempt #${this.reconnectAttempt})`
@@ -796,8 +820,11 @@ export class MultiplayerManager {
   async switchSceneRoom(sceneId: string): Promise<boolean> {
     const nextScope = sceneId.trim();
     if (this.sceneScopeId === nextScope) return true;
+    const prevScope = this.sceneScopeId;
+    Tracker.track(ANALYTICS_EVENT.SCENE_SWITCH, { from: prevScope, to: nextScope, via: 'room' });
     if (!this.connected && !this.desiredRoomActive) {
       this.sceneScopeId = nextScope;
+      Tracker.setRoomContext(this.baseRoomId || null, nextScope);
       return true;
     }
     return this.joinRoom(this.baseRoomId, this.localPlayerName, nextScope, {
@@ -811,6 +838,9 @@ export class MultiplayerManager {
     const wasHost = this.isHost();
     this.roomSessionId += 1;
     this.desiredRoomActive = false;
+    if (!preserveRoomMembership) {
+      Tracker.setRoomContext(null);
+    }
     this.clearReconnectTimer();
     this.stopRoomHeartbeat();
     this.clearKaraokeRecovery();
@@ -1338,6 +1368,7 @@ export class MultiplayerManager {
 
   broadcastApplause(x = 0, z = 0): void {
     if (!this.connected || !this.channel) return;
+    Tracker.incClap();
     void this.channel.send({
       type: 'broadcast',
       event: 'stage:applause',
@@ -1366,6 +1397,7 @@ export class MultiplayerManager {
     };
 
     window.dispatchEvent(new CustomEvent<ChatMessage>('cavannghe:chat-message', { detail: msg }));
+    Tracker.incChat();
 
     if (this.connected && this.channel) {
       void this.channel.send({
@@ -1383,6 +1415,7 @@ export class MultiplayerManager {
 
   broadcastVoicePolicy(mode: VoicePolicyMode): boolean {
     if (!this.isHost()) return false;
+    Tracker.track(ANALYTICS_EVENT.VOICE_POLICY, { mode });
     const policy: RoomVoicePolicy = {
       mode,
       updatedBy: this.localPlayerId,

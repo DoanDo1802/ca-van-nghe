@@ -8,6 +8,7 @@ import { EntryLobbyFlowModal } from '../components/EntryLobbyFlowModal';
 import { MultiplayerManager } from '../network/MultiplayerManager';
 import { AdminService } from '../network/AdminService';
 import { isSupabaseConfigured } from '../network/supabaseClient';
+import { Tracker, ANALYTICS_EVENT } from '../analytics/Tracker';
 import {
   CINEMA_SCENE_ID,
   getSceneDefinition,
@@ -89,6 +90,8 @@ export const WebGamePlayer: React.FC = () => {
     let active = true;
     const startupId = getStartupSceneId();
 
+    Tracker.init();
+    Tracker.onSceneLoadStart();
     engine.mount(canvas, { restoreAutoDraft: false, autoLoadScene: false });
 
     const tryAdminQuickJoin = async () => {
@@ -132,6 +135,7 @@ export const WebGamePlayer: React.FC = () => {
       .loadSceneById(startupId, { keepPlayMode: true })
       .then(async () => {
         if (!active) return;
+        Tracker.onSceneLoadComplete(startupId);
         setReady(true);
         await tryAdminQuickJoin();
       })
@@ -142,7 +146,9 @@ export const WebGamePlayer: React.FC = () => {
     const onKicked = () => {
       if (!active) return;
       const mp = MultiplayerManager.getInstance();
-      setKickedNotice(mp.getLastJoinError() || 'Bạn đã bị mời rời khỏi phòng.');
+      const reason = mp.getLastJoinError() || 'Bạn đã bị mời rời khỏi phòng.';
+      Tracker.track(ANALYTICS_EVENT.KICKED, { reason: reason.slice(0, 80) });
+      setKickedNotice(reason);
       setEntryInitialStep('room');
       setHasEnteredLobby(false);
       if (engine.getSceneId() !== LOBBY_SCENE_ID) {

@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { Tracker, ANALYTICS_EVENT } from '../analytics/Tracker';
 import {
   Tv,
   X,
@@ -164,12 +165,14 @@ export default function StageScreenModal({
       }
       const ytId = parseYouTubeVideoId(trimmed);
       if (ytId && onChangeYouTube) {
+        Tracker.track(ANALYTICS_EVENT.STAGE_MEDIA, { src: 'youtube', vid: ytId });
         onChangeYouTube(ytId, `YouTube (${ytId})`);
         triggerAppliedFeedback();
         return;
       }
       if (onChangeMedia) {
         const fileName = trimmed.split('/').pop()?.split('?')[0] || 'Media tùy chỉnh';
+        Tracker.track(ANALYTICS_EVENT.STAGE_MEDIA, { src: 'url', title: fileName.slice(0, 60) });
         onChangeMedia(trimmed, fileName);
         triggerAppliedFeedback();
       }
@@ -183,6 +186,7 @@ export default function StageScreenModal({
       );
       return;
     }
+    Tracker.track(ANALYTICS_EVENT.STAGE_MEDIA, { src: 'youtube', vid: id });
     onChangeVideo?.(id);
     triggerAppliedFeedback();
   };
@@ -190,6 +194,7 @@ export default function StageScreenModal({
   const handleSelectPreset = (preset) => {
     setErrorMsg('');
     setInputUrl('');
+    Tracker.track(ANALYTICS_EVENT.STAGE_MEDIA, { src: 'preset', vid: preset.id, title: preset.title?.slice(0, 60) });
     if (spatialMode && onChangeYouTube) {
       onChangeYouTube(preset.id, preset.title);
     } else {

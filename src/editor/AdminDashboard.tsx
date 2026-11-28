@@ -3,6 +3,7 @@ import {
   ArrowRight,
   BadgeCheck,
   Ban,
+  BarChart3,
   ChevronDown,
   ChevronUp,
   Crown,
@@ -26,6 +27,7 @@ import {
   Users,
   Wrench,
 } from 'lucide-react';
+import { AdminAnalyticsPanel } from './components/AdminAnalyticsPanel';
 import {
   AdminService,
   type ActiveRoomInfo,
@@ -35,6 +37,7 @@ import {
 } from '../network/AdminService';
 
 export const AdminDashboard: React.FC = () => {
+  const [adminTab, setAdminTab] = useState<'ops' | 'analytics'>('ops');
   const [loading, setLoading] = useState(true);
   const [account, setAccount] = useState<AdminAccount | null>(null);
 
@@ -280,7 +283,7 @@ export const AdminDashboard: React.FC = () => {
   const onlinePercent = Math.min(100, Math.round((totalOnline / Math.max(1, maxTotalPlayers)) * 100));
 
   return (
-    <div className="min-h-screen bg-[#0b0d12] text-neutral-100">
+    <div className="h-screen overflow-y-auto bg-[#0b0d12] text-neutral-100">
       {/* Full-Width Sticky Command Header */}
       <header className="sticky top-0 z-20 border-b border-white/[0.08] bg-[#0f1218]/90 backdrop-blur-md px-5 lg:px-8 py-3.5 flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3.5 min-w-0">
@@ -312,6 +315,31 @@ export const AdminDashboard: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center rounded-lg bg-white/[0.04] border border-white/[0.08] p-0.5 mr-1">
+            <button
+              type="button"
+              onClick={() => setAdminTab('ops')}
+              className={`px-3 py-1 rounded-md text-xs font-medium transition ${
+                adminTab === 'ops'
+                  ? 'bg-white text-neutral-950'
+                  : 'text-neutral-300 hover:text-white'
+              }`}
+            >
+              Vận hành
+            </button>
+            <button
+              type="button"
+              onClick={() => setAdminTab('analytics')}
+              className={`px-3 py-1 rounded-md text-xs font-medium flex items-center gap-1.5 transition ${
+                adminTab === 'analytics'
+                  ? 'bg-white text-neutral-950'
+                  : 'text-neutral-300 hover:text-white'
+              }`}
+            >
+              <BarChart3 className="w-3.5 h-3.5" />
+              <span>Analytics</span>
+            </button>
+          </div>
           <button
             type="button"
             onClick={() => void loadDashboardData()}
@@ -347,6 +375,10 @@ export const AdminDashboard: React.FC = () => {
 
       {/* Edge-to-Edge Main Workspace */}
       <main className="w-full px-5 lg:px-8 py-6 space-y-6">
+        {adminTab === 'analytics' ? (
+          <AdminAnalyticsPanel accountId={account.id} />
+        ) : (
+          <>
         {/* Row 1: 4-Column KPI Strip */}
         <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
           <div className="rounded-2xl bg-[#12151c] border border-white/[0.08] p-4 flex items-center justify-between gap-4">
@@ -801,6 +833,8 @@ export const AdminDashboard: React.FC = () => {
             </div>
           </aside>
         </section>
+          </>
+        )}
       </main>
     </div>
   );

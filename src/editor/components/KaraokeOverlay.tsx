@@ -26,6 +26,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { KARAOKE_SONGS, karaokeAudio, type KaraokeSong } from '../../utils/karaokeAudio';
+import { Tracker, ANALYTICS_EVENT } from '../../analytics/Tracker';
 import {
   AUTOTUNE_PRESETS,
   MUSICAL_KEYS,
@@ -850,16 +851,30 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
     setIsSearching(true);
     setSearchError(null);
     setActiveTab('search');
+    const searchStart = Date.now();
     try {
       const res = await fetch(`/api/yt-search?q=${encodeURIComponent(raw)}`);
       if (!res.ok) throw new Error('Search request failed');
       const data = (await res.json()) as { items?: KaraokeSong[] };
+      const cnt = Array.isArray(data.items) ? data.items.length : 0;
+      Tracker.track(ANALYTICS_EVENT.KARAOKE_SEARCH, {
+        q: raw.slice(0, 40),
+        cnt,
+        fb: false,
+        ms: Date.now() - searchStart,
+      });
       if (Array.isArray(data.items) && data.items.length > 0) {
         setYtResults(data.items);
       } else {
         setYtResults([]);
       }
     } catch (err) {
+      Tracker.track(ANALYTICS_EVENT.KARAOKE_SEARCH, {
+        q: raw.slice(0, 40),
+        cnt: 0,
+        fb: true,
+        ms: Date.now() - searchStart,
+      });
       DebugLogger.warn('KaraokeOverlay', `YouTube search failed for "${raw}", falling back to preset songs`, err);
       setSearchError('Không tìm được trực tiếp trên YouTube lúc này — đang lọc danh sách có sẵn.');
       setYtResults(null);
@@ -954,6 +969,17 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
     }
 
     setSearchError(null);
+    Tracker.incKaraokeSong();
+    Tracker.track(ANALYTICS_EVENT.KARAOKE_SONG, {
+      src: 'youtube',
+      vid: song.youtubeId,
+      title: song.title.slice(0, 60),
+      mic: micEnabled,
+      preset: activePreset ?? 'lounge',
+      rapper: activePreset === 'rapper',
+      style,
+      aud: MultiplayerManager.getInstance().getRemotePlayers().size,
+    });
     DebugLogger.log('KaraokeOverlay', `Playing YouTube karaoke: "${song.title}" (${song.youtubeId})`);
     isFileSessionActiveRef.current = false;
     karaokeAudio.clearCustomFile();

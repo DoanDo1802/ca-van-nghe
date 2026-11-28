@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { Tracker, ANALYTICS_EVENT } from '../analytics/Tracker';
 import {
   ArrowLeft,
   ArrowRight,
@@ -178,6 +179,7 @@ export const EntryLobbyFlowModal: React.FC<EntryLobbyFlowModalProps> = ({
     setAvatarColor(clean);
     MultiplayerManager.getInstance().setLocalAvatarColor(clean);
     window.dispatchEvent(new CustomEvent('cavannghe:avatar-color', { detail: clean }));
+    Tracker.track(ANALYTICS_EVENT.AVATAR_PICK, { color: clean });
     if (account?.id) {
       void AdminService.updatePlayerAvatarColor(account.id, clean);
     }
@@ -188,6 +190,7 @@ export const EntryLobbyFlowModal: React.FC<EntryLobbyFlowModalProps> = ({
     setAvatarModel(clean);
     MultiplayerManager.getInstance().setLocalAvatarModel(clean);
     window.dispatchEvent(new CustomEvent('cavannghe:avatar-model', { detail: clean }));
+    Tracker.track(ANALYTICS_EVENT.AVATAR_PICK, { model: clean });
   };
 
   const applyAccountSession = (acc: AdminAccount) => {
@@ -220,6 +223,8 @@ export const EntryLobbyFlowModal: React.FC<EntryLobbyFlowModalProps> = ({
     mp.setLocalIsAdmin(false);
     mp.setLocalPlayerName(cleanName);
     mp.setLocalAvatarColor(avatarColor);
+    Tracker.setIdentity(null, true);
+    Tracker.track(ANALYTICS_EVENT.AUTH_RESULT, { type: 'guest', ok: true });
     setStep('room');
   };
 
@@ -239,10 +244,17 @@ export const EntryLobbyFlowModal: React.FC<EntryLobbyFlowModalProps> = ({
 
     setSubmittingAuth(false);
     if (res.error) {
+      Tracker.track(ANALYTICS_EVENT.AUTH_RESULT, {
+        type: identityMode,
+        ok: false,
+        err: res.error.slice(0, 60),
+      });
       setAuthError(res.error);
       return;
     }
     if (res.account) {
+      Tracker.setIdentity(res.account.id, false);
+      Tracker.track(ANALYTICS_EVENT.AUTH_RESULT, { type: identityMode, ok: true });
       applyAccountSession(res.account);
       setPassword('');
       setStep('room');
@@ -341,6 +353,10 @@ export const EntryLobbyFlowModal: React.FC<EntryLobbyFlowModalProps> = ({
     });
     setJoiningRoomId(null);
     if (ok) {
+      Tracker.track(ANALYTICS_EVENT.ROOM_CREATE, {
+        has_pw: Boolean(newRoomPassword.trim()),
+        scene: LOBBY_SCENE_ID,
+      });
       setNewRoomName('');
       setNewRoomPassword('');
       onEnteredLobby(roomId);
