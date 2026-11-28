@@ -71,6 +71,8 @@ const WALK_SPEED = 4.5;
 const RUN_SPEED = 7.5;
 const JUMP_VELOCITY = 6.2;
 const GRAVITY = -18.0;
+const MIN_CAMERA_DISTANCE = 1.2;
+const MAX_CAMERA_DISTANCE = 8.0;
 
 export interface NearbyPromptData {
   type: 'chair' | 'object' | 'door';
@@ -102,6 +104,8 @@ export class PlayerControllerRuntime {
   private targetCamYaw: number | null = null;
   private targetCamPitch: number | null = null;
   private cameraMode: 'third' | 'first' = 'third';
+  private cameraDistance = 3.6;
+  private targetCameraDistance = 3.6;
   private velocityY = 0;
   private grounded = true;
   private isSitting = false;
@@ -164,6 +168,13 @@ export class PlayerControllerRuntime {
     this.playerYaw = rot.y;
     // Player faces -Z (rot.y = 180°). Camera orbits behind player (+Z) when yaw = 0°.
     this.yaw = ((rot.y - 180) % 360 + 360) % 360;
+    const initialDist = pc.math.clamp(
+      this.getNumberAttr(this.playerEntity, 'cameraDistance', 3.6),
+      MIN_CAMERA_DISTANCE,
+      MAX_CAMERA_DISTANCE
+    );
+    this.cameraDistance = initialDist;
+    this.targetCameraDistance = initialDist;
 
     this.collectDynamicTargets();
     this.detectRoomEnvironment();
@@ -180,6 +191,7 @@ export class PlayerControllerRuntime {
     window.addEventListener('keyup', this.onKeyUp);
     this.canvas.addEventListener('mousedown', this.onMouseDown);
     this.canvas.addEventListener('mouseleave', this.onMouseLeave);
+    this.canvas.addEventListener('wheel', this.onWheel, { passive: false });
     window.addEventListener('mousemove', this.onMouseMove);
     window.addEventListener('mouseup', this.onMouseUp);
     this.canvas.addEventListener('touchstart', this.onTouchStart, { passive: false });
@@ -214,7 +226,7 @@ export class PlayerControllerRuntime {
     }
 
     if (this.karaoke.isActive()) {
-      this.karaoke.update(clampedDt);
+      this.karaoke.update(clampedDt, this.activeEmoteAnim);
       this.playAnim(this.activeEmoteAnim ?? 'Idle_Loop');
     } else if (!this.isSitting) {
       this.updateMovement(clampedDt);
@@ -238,6 +250,9 @@ export class PlayerControllerRuntime {
         this.pitch += pitchDiff * (1 - Math.exp(-5.5 * clampedDt));
       }
     }
+
+    this.cameraDistance +=
+      (this.targetCameraDistance - this.cameraDistance) * (1 - Math.exp(-14 * clampedDt));
 
     this.updateCameraTransform(1 - Math.exp(-12 * clampedDt));
     this.updateProximity();
@@ -263,6 +278,7 @@ export class PlayerControllerRuntime {
       emote: this.activeEmoteId,
       isSitting: this.isSitting,
       chairId: this.isSitting ? this.currentSeatId : null,
+      isHoldingMic: this.isHoldingKaraokeMic(),
     });
   }
 
@@ -275,6 +291,7 @@ export class PlayerControllerRuntime {
     window.removeEventListener('keyup', this.onKeyUp);
     this.canvas.removeEventListener('mousedown', this.onMouseDown);
     this.canvas.removeEventListener('mouseleave', this.onMouseLeave);
+    this.canvas.removeEventListener('wheel', this.onWheel);
     window.removeEventListener('mousemove', this.onMouseMove);
     window.removeEventListener('mouseup', this.onMouseUp);
     this.canvas.removeEventListener('touchstart', this.onTouchStart);
@@ -440,7 +457,7 @@ export class PlayerControllerRuntime {
       return;
     }
 
-    const dist = this.getNumberAttr(this.playerEntity, 'cameraDistance', 3.6);
+    const dist = this.cameraDistance;
     const horiz = dist * Math.cos(pitchRad);
     const targetX = p.x;
     const targetY = p.y + 1.15;
@@ -763,6 +780,32 @@ export class PlayerControllerRuntime {
 
   private onPointerLockChange = (): void => {
     this.hasLastPointer = false;
+  };
+
+  private onWheel = (e: WheelEvent): void => {
+    if (this.destroyed || !this.playerEntity) return;
+    e.preventDefault();
+    const scale = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 120 : 1;
+    const rawDelta = pc.math.clamp(e.deltaY * scale, -180, 180);
+    const step = rawDelta * 0.0045;
+    if (this.cameraMode === 'first') {
+      if (step > 0) {
+        this.cameraMode = 'third';
+        this.cameraDistance = MIN_CAMERA_DISTANCE;
+        this.targetCameraDistance = pc.math.clamp(
+          MIN_CAMERA_DISTANCE + step,
+          MIN_CAMERA_DISTANCE,
+          MAX_CAMERA_DISTANCE
+        );
+        window.dispatchEvent(new CustomEvent('cavannghe:camera-mode', { detail: 'third' }));
+      }
+      return;
+    }
+    this.targetCameraDistance = pc.math.clamp(
+      this.targetCameraDistance + step,
+      MIN_CAMERA_DISTANCE,
+      MAX_CAMERA_DISTANCE
+    );
   };
 
   private onMouseMove = (e: MouseEvent): void => {
@@ -1099,6 +1142,10 @@ export class PlayerControllerRuntime {
     this.syncNetPositionImmediate();
   }
 
+  private isHoldingKaraokeMic(): boolean {
+    return this.karaoke.isActive() && !this.activeEmoteAnim;
+  }
+
   private syncNetPositionImmediate(): void {
     if (!this.playerEntity) return;
     const pos = this.playerEntity.getLocalPosition();
@@ -1116,6 +1163,7 @@ export class PlayerControllerRuntime {
         emote: this.activeEmoteId,
         isSitting: this.isSitting,
         chairId: this.isSitting ? this.currentSeatId : null,
+        isHoldingMic: this.isHoldingKaraokeMic(),
       },
       { force: true }
     );

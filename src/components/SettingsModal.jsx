@@ -54,6 +54,9 @@ export default function SettingsModal({
   const [showFps, setShowFps] = useState(
     () => localStorage.getItem('cavannghe:show-fps') === '1'
   );
+  const [showPing, setShowPing] = useState(
+    () => localStorage.getItem('cavannghe:show-ping') !== '0'
+  );
 
   if (!isOpen) return null;
 
@@ -68,6 +71,13 @@ export default function SettingsModal({
     setShowFps(next);
     localStorage.setItem('cavannghe:show-fps', next ? '1' : '0');
     window.dispatchEvent(new CustomEvent('cavannghe:show-fps', { detail: next }));
+  };
+
+  const handleTogglePing = () => {
+    const next = !showPing;
+    setShowPing(next);
+    localStorage.setItem('cavannghe:show-ping', next ? '1' : '0');
+    window.dispatchEvent(new CustomEvent('cavannghe:show-ping', { detail: next }));
   };
 
   const handleResetClick = () => {
@@ -340,6 +350,26 @@ export default function SettingsModal({
                 </button>
               </div>
 
+              {/* Show Ping */}
+              <div className="p-4 rounded-xl bg-white/[0.03] border border-white/10 flex items-center justify-between gap-4">
+                <div>
+                  <h4 className="text-xs font-semibold text-white">Hiển thị Ping mạng</h4>
+                  <p className="text-[11px] text-neutral-400 mt-0.5">
+                    Hiện độ trễ kết nối phòng (ms) ở góc trên bên phải
+                  </p>
+                </div>
+                <button
+                  onClick={handleTogglePing}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition shrink-0 ${
+                    showPing
+                      ? 'bg-white text-black border-white'
+                      : 'bg-white/5 text-neutral-300 border-white/10 hover:bg-white/10'
+                  }`}
+                >
+                  {showPing ? 'Đang bật' : 'Đang tắt'}
+                </button>
+              </div>
+
               {/* Render Scale */}
               {onChangeRenderScale && (
                 <div className="p-4 rounded-xl bg-white/[0.03] border border-white/10 space-y-2.5">
@@ -458,6 +488,7 @@ export default function SettingsModal({
                 { key: 'Space', desc: 'Nhảy' },
                 { key: 'E', desc: 'Tương tác / Ngồi ghế / Hát' },
                 { key: 'V', desc: 'Đổi góc nhìn thứ 1 / thứ 3' },
+                { key: 'Cuộn chuột', desc: 'Đưa camera lại gần / ra xa' },
                 { key: 'M', desc: 'Bật / Tắt loa sân khấu' },
                 { key: '1 - 5', desc: 'Động tác nhân vật' },
                 { key: 'Esc', desc: 'Nhả chuột / Đóng bảng' },

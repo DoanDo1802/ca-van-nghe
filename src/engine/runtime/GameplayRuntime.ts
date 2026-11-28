@@ -28,6 +28,7 @@ interface CharacterState {
   data: CharacterControllerComponentData;
   yaw: number;
   pitch: number;
+  cameraDistance: number;
   vy: number;
   grounded: boolean;
   isSitting: boolean;
@@ -222,6 +223,7 @@ export class GameplayRuntime {
           data,
           yaw: euler.y,
           pitch: -12,
+          cameraDistance: 4.5,
           vy: 0,
           grounded: true,
           isSitting: false,
@@ -553,7 +555,7 @@ export class GameplayRuntime {
       cam.lookAt(pos.x, pos.y + 1, pos.z);
     } else {
       // Third-person
-      const dist = 4.5;
+      const dist = char.cameraDistance;
       const cosP = Math.cos(pitchRad);
       const camX = pos.x + Math.sin(yawRad) * cosP * dist;
       const camY = pos.y + 1.5 - Math.sin(pitchRad) * dist;
@@ -865,6 +867,11 @@ export class GameplayRuntime {
           rig.data.minDistance,
           Math.min(rig.data.maxDistance, rig.distance + e.deltaY * 0.005)
         );
+      }
+    }
+    for (const char of this.characters) {
+      if (char.data.mode === 'third-person' && (!char.cameraEntity || !getEntityMeta(char.cameraEntity).cameraRig?.enabled)) {
+        char.cameraDistance = Math.max(1.2, Math.min(10, char.cameraDistance + e.deltaY * 0.005));
       }
     }
   };
