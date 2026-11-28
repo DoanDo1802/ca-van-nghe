@@ -31,6 +31,7 @@ export function getSupabaseClient(): SupabaseClient | null {
 
   cachedClient = createClient(url, key, {
     realtime: {
+      heartbeatIntervalMs: 8000,
       params: {
         eventsPerSecond: 30,
       },

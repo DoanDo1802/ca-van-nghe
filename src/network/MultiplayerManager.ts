@@ -91,12 +91,20 @@ export interface RemotePlayerState {
   emote: string | null;
   isSitting: boolean;
   chairId: string | null;
+  isHoldingMic?: boolean;
   isAdmin?: boolean;
   avatarColor?: string;
   avatarModel?: string;
   joinedAt: number;
   seq: number;
   chairStateSeq?: number;
+}
+
+export interface NetworkPingSnapshot {
+  pingMs: number | null;
+  status: 'good' | 'fair' | 'poor' | 'offline';
+  source: 'realtime' | 'http' | 'none';
+  updatedAt: number;
 }
 
 export interface RoomStatusSnapshot {
@@ -122,6 +130,7 @@ interface PresencePayload {
   avatarModel?: string;
   joinedAt: number;
   chairId: string | null;
+  isHoldingMic?: boolean;
   playerStateSeq?: number;
   stageState?: NetworkStageState;
   karaokeState?: NetworkKaraokeState;
@@ -170,6 +179,7 @@ export class MultiplayerManager {
   private lastKnownOtherDbPlayers = 0;
   private joinedAt = Date.now();
   private localChairId: string | null = null;
+  private localHoldingMic = false;
   private hostStageState: NetworkStageState | null = null;
   private lastStageUpdateBySender = new Map<string, number>();
   private remoteKaraokeState: NetworkKaraokeState | null = null;
@@ -181,6 +191,13 @@ export class MultiplayerManager {
   private localKaraokeState: NetworkKaraokeState | null = null;
   private hostId: string | null = null;
   private hostName: string | null = null;
+
+  private pingMs: number | null = null;
+  private pingSource: 'realtime' | 'http' | 'none' = 'none';
+  private pingUpdatedAt = 0;
+  private realtimeHeartbeatHooked = false;
+  private initialPingTimer: number | null = null;
+  private fallbackPingTimer: number | null = null;
 
   private remotePlayers = new Map<string, RemotePlayerState>();
   private presenceList: PresencePayload[] = [];
@@ -208,6 +225,8 @@ export class MultiplayerManager {
       window.addEventListener('offline', () => {
         if (!this.desiredRoomActive) return;
         this.connected = false;
+        this.clearPingTimers();
+        this.resetPingState();
         this.emitRoomStatus();
       });
     }
@@ -445,6 +464,7 @@ export class MultiplayerManager {
     this.localPlayerName = playerName.trim() || 'Khách';
     this.joinedAt = Date.now();
     this.localChairId = null;
+    this.localHoldingMic = false;
     this.remotePlayers.clear();
     this.presenceList = [];
     this.speakingPeers.clear();
@@ -666,6 +686,7 @@ export class MultiplayerManager {
     const supabase = getSupabaseClient();
     if (!supabase) return false;
     if (!this.desiredRoomActive || this.roomSessionId !== sessionId) return false;
+    this.hookRealtimeHeartbeat();
 
     const prevChannel = this.channel;
     if (prevChannel) {
@@ -738,10 +759,13 @@ export class MultiplayerManager {
           }
           this.emitRoomStatus();
           this.requestStageResync();
+          this.scheduleInitialPingProbe();
           window.dispatchEvent(new CustomEvent('cavannghe:channel-subscribed'));
           finish(true);
         } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
           this.connected = false;
+          this.clearPingTimers();
+          this.resetPingState();
           this.emitRoomStatus();
 
           if (this.channel === channel) {
@@ -790,6 +814,9 @@ export class MultiplayerManager {
     this.clearReconnectTimer();
     this.stopRoomHeartbeat();
     this.clearKaraokeRecovery();
+    this.clearPingTimers();
+    this.resetPingState();
+    this.localHoldingMic = false;
 
     const ch = this.channel;
     const hadRemoteKaraoke = this.remoteKaraokeState;
@@ -1025,13 +1052,16 @@ export class MultiplayerManager {
       emote: string | null;
       isSitting: boolean;
       chairId: string | null;
+      isHoldingMic?: boolean;
     },
     options?: { force?: boolean }
   ): void {
     if (!this.connected || !this.channel) return;
 
     const chairChanged = state.chairId !== this.localChairId;
-    const force = options?.force || chairChanged;
+    const nextHoldingMic = Boolean(state.isHoldingMic);
+    const micChanged = nextHoldingMic !== this.localHoldingMic;
+    const force = options?.force || chairChanged || micChanged;
     const now = performance.now();
     if (!force && now - this.lastBroadcastTime < BROADCAST_INTERVAL_MS) {
       return;
@@ -1039,7 +1069,7 @@ export class MultiplayerManager {
 
     const vxVal = state.vx ?? 0;
     const vzVal = state.vz ?? 0;
-    const sig = `${state.x.toFixed(2)},${state.y.toFixed(2)},${state.z.toFixed(2)},${vxVal.toFixed(1)},${vzVal.toFixed(1)},${state.yaw.toFixed(1)},${state.anim},${state.emote ?? ''},${state.isSitting ? 1 : 0},${state.chairId ?? ''},${this.localAvatarColor},${this.localAvatarModel}`;
+    const sig = `${state.x.toFixed(2)},${state.y.toFixed(2)},${state.z.toFixed(2)},${vxVal.toFixed(1)},${vzVal.toFixed(1)},${state.yaw.toFixed(1)},${state.anim},${state.emote ?? ''},${state.isSitting ? 1 : 0},${state.chairId ?? ''},${nextHoldingMic ? 1 : 0},${this.localAvatarColor},${this.localAvatarModel}`;
 
     if (!force && sig === this.lastSentSig && now - this.lastBroadcastTime < 1500) {
       return;
@@ -1048,8 +1078,9 @@ export class MultiplayerManager {
     this.lastBroadcastTime = now;
     this.lastSentSig = sig;
     this.localSeq += 1;
-    if (chairChanged) {
-      this.localChairId = state.chairId;
+    if (chairChanged || micChanged) {
+      if (chairChanged) this.localChairId = state.chairId;
+      if (micChanged) this.localHoldingMic = nextHoldingMic;
       void this.trackLocalPresence();
     }
 
@@ -1066,6 +1097,7 @@ export class MultiplayerManager {
       emote: state.emote,
       isSitting: state.isSitting,
       chairId: state.chairId,
+      isHoldingMic: nextHoldingMic,
       avatarColor: this.localAvatarColor,
       avatarModel: this.localAvatarModel,
       joinedAt: this.joinedAt,
@@ -1406,6 +1438,7 @@ export class MultiplayerManager {
       avatarModel: this.localAvatarModel,
       joinedAt: this.joinedAt,
       chairId: this.localChairId,
+      isHoldingMic: this.localHoldingMic,
       playerStateSeq: this.localSeq,
       ...(this.isHost() && this.hostStageState ? { stageState: this.hostStageState } : {}),
       ...(this.isHost() && this.voicePolicy.updatedAt > 0 ? { voicePolicy: this.voicePolicy } : {}),
@@ -1594,6 +1627,7 @@ export class MultiplayerManager {
         const chairSeq = p.playerStateSeq ?? 0;
         if (p.joinedAt === existing.joinedAt && chairSeq >= (existing.chairStateSeq ?? existing.seq)) {
           existing.chairId = p.chairId;
+          existing.isHoldingMic = Boolean(p.isHoldingMic);
           existing.chairStateSeq = chairSeq;
         }
         existing.isAdmin = Boolean(p.isAdmin);
@@ -1613,6 +1647,7 @@ export class MultiplayerManager {
           emote: null,
           isSitting: false,
           chairId: p.chairId,
+          isHoldingMic: Boolean(p.isHoldingMic),
           isAdmin: Boolean(p.isAdmin),
           avatarColor: p.avatarColor,
           avatarModel: p.avatarModel,
@@ -1736,6 +1771,7 @@ export class MultiplayerManager {
       existing.anim = payload.anim;
       existing.emote = payload.emote;
       existing.isSitting = payload.isSitting;
+      existing.isHoldingMic = Boolean(payload.isHoldingMic);
       const incomingSeq = payload.seq ?? existing.seq + 1;
       if (sessionChanged || incomingSeq >= (existing.chairStateSeq ?? existing.seq)) {
         existing.chairId = payload.chairId;
@@ -1755,5 +1791,111 @@ export class MultiplayerManager {
         detail: this.getRoomStatus(),
       })
     );
+  }
+
+  getNetworkPing(): NetworkPingSnapshot {
+    const status: NetworkPingSnapshot['status'] =
+      this.pingMs === null
+        ? 'offline'
+        : this.pingMs < 80
+          ? 'good'
+          : this.pingMs <= 160
+            ? 'fair'
+            : 'poor';
+    return {
+      pingMs: this.pingMs,
+      status,
+      source: this.pingSource,
+      updatedAt: this.pingUpdatedAt,
+    };
+  }
+
+  private emitNetworkPing(): void {
+    if (typeof window === 'undefined') return;
+    window.dispatchEvent(
+      new CustomEvent<NetworkPingSnapshot>('cavannghe:network-ping', {
+        detail: this.getNetworkPing(),
+      })
+    );
+  }
+
+  private clearPingTimers(): void {
+    if (this.initialPingTimer !== null) {
+      window.clearTimeout(this.initialPingTimer);
+      this.initialPingTimer = null;
+    }
+    if (this.fallbackPingTimer !== null) {
+      window.clearTimeout(this.fallbackPingTimer);
+      this.fallbackPingTimer = null;
+    }
+  }
+
+  private resetPingState(): void {
+    if (this.pingMs === null && this.pingSource === 'none') return;
+    this.pingMs = null;
+    this.pingSource = 'none';
+    this.pingUpdatedAt = Date.now();
+    this.emitNetworkPing();
+  }
+
+  private hookRealtimeHeartbeat(): void {
+    if (this.realtimeHeartbeatHooked) return;
+    const supabase = getSupabaseClient();
+    if (!supabase) return;
+    this.realtimeHeartbeatHooked = true;
+    supabase.realtime.onHeartbeat((status, latency) => {
+      if (status === 'ok' && typeof latency === 'number' && Number.isFinite(latency)) {
+        this.pingMs = Math.max(1, Math.round(latency));
+        this.pingSource = 'realtime';
+        this.pingUpdatedAt = Date.now();
+        this.emitNetworkPing();
+      } else if (
+        (status === 'timeout' || status === 'error' || status === 'disconnected') &&
+        !this.connected
+      ) {
+        this.resetPingState();
+      }
+    });
+  }
+
+  private async measureHttpPingOnce(): Promise<void> {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+    const cfg = getSupabaseRestConfig();
+    const start = performance.now();
+    try {
+      const res = cfg
+        ? await fetch(`${cfg.url}/rest/v1/`, {
+            method: 'HEAD',
+            cache: 'no-store',
+            headers: { apikey: cfg.anonKey },
+          })
+        : await fetch('/healthz', { method: 'GET', cache: 'no-store' });
+      if (!res.ok && res.status >= 500) return;
+      const rtt = Math.max(1, Math.round(performance.now() - start));
+      this.pingMs = rtt;
+      this.pingSource = 'http';
+      this.pingUpdatedAt = Date.now();
+      this.emitNetworkPing();
+    } catch {
+      // ignore transient probe errors
+    }
+  }
+
+  private scheduleInitialPingProbe(): void {
+    this.clearPingTimers();
+    const supabase = getSupabaseClient();
+    this.initialPingTimer = window.setTimeout(() => {
+      this.initialPingTimer = null;
+      if (!this.connected || !supabase) return;
+      if (supabase.realtime.isConnected() && !supabase.realtime.pendingHeartbeatRef) {
+        void supabase.realtime.sendHeartbeat();
+      }
+    }, 350);
+    this.fallbackPingTimer = window.setTimeout(() => {
+      this.fallbackPingTimer = null;
+      if (this.connected && this.pingMs === null) {
+        void this.measureHttpPingOnce();
+      }
+    }, 1800);
   }
 }
