@@ -11,6 +11,7 @@ import { AnimationRegistry } from '../animation/AnimationRegistry';
 import { CharacterRegistry } from '../animation/CharacterRegistry';
 import { loadGlbFromArrayBuffer } from '../animation/GlbAnimExtractor';
 import { applyCharacterAnimations } from '../animation/HumanoidRetargeter';
+import { HandheldMicRig } from './HandheldMicPose';
 
 export interface NameplateEntry {
   id: string;
@@ -31,7 +32,9 @@ interface SnapshotSample {
   vz: number;
   yaw: number;
   anim: string;
+  emote: string | null;
   isSitting: boolean;
+  isHoldingMic: boolean;
   recvTime: number;
 }
 
@@ -40,17 +43,26 @@ interface RemoteAvatarInstance {
   name: string;
   entity: pc.Entity;
   destroyResources: () => void;
+  micRig: HandheldMicRig;
   currentPos: pc.Vec3;
   desiredPos: pc.Vec3;
   currentYaw: number;
   desiredYaw: number;
   currentAnim: string;
   pendingAnim: string;
+  activeEmote: string | null;
+  isHoldingMic: boolean;
   avatarColor?: string;
   avatarModel: AvatarModelId;
   lastSeq: number;
   joinedAt: number;
   snapshots: SnapshotSample[];
+}
+
+function resolveHoldingMic(state: RemotePlayerState, activeSingerId: string | undefined): boolean {
+  return state.isHoldingMic !== undefined
+    ? Boolean(state.isHoldingMic)
+    : activeSingerId === state.id && !state.emote;
 }
 
 const INTERP_BUFFER_MS = 95; // 95ms render delay absorbs network jitter cleanly
@@ -137,7 +149,15 @@ export class RemotePlayerPool {
   constructor(app: pc.Application, sceneRoot: pc.Entity) {
     this.app = app;
     this.sceneRoot = sceneRoot;
+    this.app.systems.on('postUpdate', this.onPostUpdate);
   }
+
+  private onPostUpdate = (): void => {
+    if (this.destroyed) return;
+    for (const avatar of this.avatars.values()) {
+      avatar.micRig.applyPose();
+    }
+  };
 
   update(dt: number): void {
     if (this.destroyed) return;
@@ -148,11 +168,13 @@ export class RemotePlayerPool {
     const remotes = mp.getRemotePlayers();
     const status = mp.getRoomStatus();
     const hostId = status.hostId;
+    const activeSingerId = status.karaokeTurn?.singerId;
 
     // 1. Despawn players who left
     for (const [id, avatar] of this.avatars.entries()) {
       if (!remotes.has(id)) {
         DebugLogger.log('RemotePlayerPool', `Despawning remote avatar "${avatar.name}" (${id})`);
+        avatar.micRig.destroy();
         avatar.entity.destroy();
         avatar.destroyResources();
         this.avatars.delete(id);
@@ -163,8 +185,10 @@ export class RemotePlayerPool {
     for (const [id, state] of remotes.entries()) {
       const existing = this.avatars.get(id);
       const nextModel = normalizeAvatarModelId(state.avatarModel);
+      const nextHoldingMic = resolveHoldingMic(state, activeSingerId);
       if (existing) {
         if (existing.avatarModel !== nextModel && !this.spawningIds.has(id)) {
+          existing.micRig.destroy();
           existing.entity.destroy();
           existing.destroyResources();
           this.avatars.delete(id);
@@ -198,12 +222,17 @@ export class RemotePlayerPool {
             vz: safeVz,
             yaw: state.yaw,
             anim: state.anim || 'Idle_Loop',
+            emote: state.emote ?? null,
             isSitting: state.isSitting,
+            isHoldingMic: nextHoldingMic,
             recvTime: now,
           });
           if (existing.snapshots.length > 12) {
             existing.snapshots.shift();
           }
+        } else if (existing.snapshots.length > 0) {
+          // Presence / karaokeTurn updated mic state even if player:state broadcast had not ticked yet
+          existing.snapshots[existing.snapshots.length - 1].isHoldingMic = nextHoldingMic;
         }
       } else if (!this.spawningIds.has(id)) {
         this.spawningIds.add(id);
@@ -220,6 +249,7 @@ export class RemotePlayerPool {
 
     for (const avatar of this.avatars.values()) {
       this.sampleSnapshots(avatar, renderTime);
+      avatar.micRig.updateBlend(clampedDt, avatar.isHoldingMic, Boolean(avatar.activeEmote));
 
       const jumpDist = avatar.currentPos.distance(avatar.desiredPos);
       if (jumpDist > 3.5) {
@@ -311,7 +341,9 @@ export class RemotePlayerPool {
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
+    this.app.systems.off('postUpdate', this.onPostUpdate);
     for (const avatar of this.avatars.values()) {
+      avatar.micRig.destroy();
       avatar.entity.destroy();
       avatar.destroyResources();
     }
@@ -354,6 +386,8 @@ export class RemotePlayerPool {
         avatar.desiredYaw = lerpAngleDeg(s0.yaw, s1.yaw, t);
       }
       avatar.pendingAnim = s1.anim;
+      avatar.activeEmote = s1.emote;
+      avatar.isHoldingMic = s1.isHoldingMic;
       return;
     }
 
@@ -377,6 +411,8 @@ export class RemotePlayerPool {
     }
     avatar.desiredYaw = latest.yaw;
     avatar.pendingAnim = latest.anim;
+    avatar.activeEmote = latest.emote;
+    avatar.isHoldingMic = latest.isHoldingMic;
   }
 
   private async getModelBuffer(url: string): Promise<ArrayBuffer | null> {
@@ -443,17 +479,26 @@ export class RemotePlayerPool {
 
       this.sceneRoot.addChild(entity);
 
+      const initialSingerId = MultiplayerManager.getInstance().getRoomStatus().karaokeTurn?.singerId;
+      const initialHoldingMic = resolveHoldingMic(state, initialSingerId);
+      const micRig = new HandheldMicRig(this.app, this.sceneRoot);
+      micRig.bindCharacter(entity, preset.id);
+      micRig.setBlendImmediate(initialHoldingMic ? 1 : 0, initialHoldingMic);
+
       const avatar: RemoteAvatarInstance = {
         id: state.id,
         name: state.name,
         entity,
         destroyResources: loaded.destroyResources,
+        micRig,
         currentPos: new pc.Vec3(state.x, state.y, state.z),
         desiredPos: new pc.Vec3(state.x, state.y, state.z),
         currentYaw: state.yaw,
         desiredYaw: state.yaw,
         currentAnim: '',
         pendingAnim: state.anim || 'Idle_Loop',
+        activeEmote: state.emote ?? null,
+        isHoldingMic: initialHoldingMic,
         avatarColor: state.avatarColor,
         avatarModel: preset.id,
         lastSeq: state.seq,
@@ -467,7 +512,9 @@ export class RemotePlayerPool {
             vz: state.vz ?? 0,
             yaw: state.yaw,
             anim: state.anim || 'Idle_Loop',
+            emote: state.emote ?? null,
             isSitting: state.isSitting,
+            isHoldingMic: initialHoldingMic,
             recvTime: performance.now(),
           },
         ],
