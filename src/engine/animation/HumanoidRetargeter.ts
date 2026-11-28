@@ -1,12 +1,19 @@
 import * as pc from 'playcanvas';
 import {
   ALL_HUMANOID_BONE_KEYS,
+  type AnimEditLayer,
   type AnyHumanoidBoneKey,
   type AnimationClipEntry,
   type CharacterManifestEntry,
   type CoreAnimSlotId,
   type HumanoidBoneKey,
 } from '../../types/characterStudio';
+import {
+  clearAnimEditLayerCache,
+  fetchAnimEditLayer,
+  sampleBoneDeltaAtTime,
+  sampleHipsOffsetAtTime,
+} from './AnimEditLayer';
 import { AnimationRegistry, CORE_SLOT_STATE_NAMES } from './AnimationRegistry';
 import { loadGlbFromArrayBuffer } from './GlbAnimExtractor';
 import {
@@ -50,6 +57,7 @@ function getAppTrackCache(app: pc.Application): Map<string, pc.AnimTrack> {
 
 export function clearHumanoidRetargetCaches(app?: pc.Application): void {
   arrayBufferFetchCache.clear();
+  clearAnimEditLayerCache();
   if (app) {
     sourceContainerCache.get(app)?.clear();
     retargetedTrackCache.get(app)?.clear();
@@ -326,6 +334,10 @@ export interface RetargetOptions {
   trimEnd?: number;
   yawOffsetDeg?: number;
   hipsYOffset?: number;
+  /** Automatically compensates shoulder-width / arm-length differences when hands reach in front of chest/mouth */
+  autoArmConvergence?: boolean;
+  /** Optional additive keyframe edit layer in canonical humanoid space */
+  editLayer?: AnimEditLayer | null;
   sampleFps?: number;
 }
 
@@ -490,36 +502,51 @@ export function retargetTrackToHumanoid(
   const tempLocalQ = new pc.Quat();
   const tempHipsDelta = new pc.Vec3();
 
-  // Check if source animation frame 0 itself flips Hips 180° from its bind pose (as in core_emotes.glb)
+  // Check if source animation frame 0 itself flips Hips/Chest ~180° from its bind pose (as in core_emotes.glb,
+  // where bind pose faces -Z so srcRig.facingQuat = RotY(180°), while Singing starts turned ~49° from +Z!).
   const srcEffectiveFacingQuat = srcRig.facingQuat.clone();
-  if (srcHips) {
-    const t0 = sampleSourceTimes[0];
-    for (const bc of boundCurves) {
-      if (bc.prop === 'localPosition') {
-        evalVec3Curve(bc.times, bc.values, bc.interpolation, t0, tempV);
-        bc.node.setLocalPosition(tempV);
-      } else if (bc.prop === 'localRotation') {
-        evalQuatCurve(bc.times, bc.values, bc.interpolation, t0, tempQ);
-        bc.node.setLocalRotation(tempQ);
-      } else {
-        evalVec3Curve(bc.times, bc.values, bc.interpolation, t0, tempV);
-        bc.node.setLocalScale(tempV);
+  const bindHad180Flip = Math.abs(srcRig.facingQuat.y) > 0.7;
+  if (srcHips && bindHad180Flip) {
+    const refChest = srcRig.bones.upperChest ?? srcRig.bones.chest ?? srcHips;
+    let dotSum = 0;
+    let dotCount = 0;
+    const probeIndices = [
+      0,
+      Math.min(frameCount - 1, Math.floor(frameCount * 0.25)),
+      Math.min(frameCount - 1, Math.floor(frameCount * 0.5)),
+    ];
+    for (const pIdx of probeIndices) {
+      const tp = sampleSourceTimes[pIdx];
+      for (const bc of boundCurves) {
+        if (bc.prop === 'localPosition') {
+          evalVec3Curve(bc.times, bc.values, bc.interpolation, tp, tempV);
+          bc.node.setLocalPosition(tempV);
+        } else if (bc.prop === 'localRotation') {
+          evalQuatCurve(bc.times, bc.values, bc.interpolation, tp, tempQ);
+          bc.node.setLocalRotation(tempQ);
+        } else {
+          evalVec3Curve(bc.times, bc.values, bc.interpolation, tp, tempV);
+          bc.node.setLocalScale(tempV);
+        }
+      }
+      sourceContainer.entity.syncHierarchy();
+      for (const probeBone of [srcHips, refChest]) {
+        extractRotationFromMat4(probeBone.node.getWorldTransform(), tempSrcWorldQ);
+        const bindFwd = probeBone.rawModelRot.transformVector(new pc.Vec3(0, 0, 1), new pc.Vec3());
+        const animFwd = tempSrcWorldQ.transformVector(new pc.Vec3(0, 0, 1), new pc.Vec3());
+        bindFwd.y = 0;
+        animFwd.y = 0;
+        if (bindFwd.lengthSq() > 1e-4 && animFwd.lengthSq() > 1e-4) {
+          bindFwd.normalize();
+          animFwd.normalize();
+          dotSum += bindFwd.dot(animFwd);
+          dotCount++;
+        }
       }
     }
-    sourceContainer.entity.syncHierarchy();
-    extractRotationFromMat4(srcHips.node.getWorldTransform(), tempSrcWorldQ);
-    const bindFwd = srcHips.rawModelRot.transformVector(new pc.Vec3(0, 0, 1), new pc.Vec3());
-    const animFwd = tempSrcWorldQ.transformVector(new pc.Vec3(0, 0, 1), new pc.Vec3());
-    bindFwd.y = 0;
-    animFwd.y = 0;
-    if (bindFwd.lengthSq() > 1e-4 && animFwd.lengthSq() > 1e-4) {
-      bindFwd.normalize();
-      animFwd.normalize();
-      // cos(135deg) ~= -0.707: source anim baked a 180deg flip on Hips compared to its own bind pose
-      if (bindFwd.dot(animFwd) < -0.7) {
-        const flip180 = new pc.Quat().setFromEulerAngles(0, 180, 0);
-        srcEffectiveFacingQuat.mul2(flip180, srcEffectiveFacingQuat).normalize();
-      }
+    if (dotCount > 0 && dotSum / dotCount < -0.25) {
+      const flip180 = new pc.Quat().setFromEulerAngles(0, 180, 0);
+      srcEffectiveFacingQuat.mul2(flip180, srcEffectiveFacingQuat).normalize();
     }
     for (const [node, snap] of sourceContainer.restSnapshot.entries()) {
       node.setLocalPosition(snap.pos);
@@ -529,8 +556,9 @@ export function retargetTrackToHumanoid(
   }
 
   // Facing alignment quaternion: F_T^{-1} * F_{S,effective} maps source animated space -> target character space
+  const invTargetFacingQuat = targetRig.facingQuat.clone().invert();
   const facingDelta = new pc.Quat()
-    .mul2(targetRig.facingQuat.clone().invert(), srcEffectiveFacingQuat)
+    .mul2(invTargetFacingQuat, srcEffectiveFacingQuat)
     .normalize();
 
   if (options.yawOffsetDeg && Math.abs(options.yawOffsetDeg) > 0.01) {
@@ -539,13 +567,83 @@ export function retargetTrackToHumanoid(
   }
 
   const computedTargetWorldRot = new Map<AnyHumanoidBoneKey, pc.Quat>();
+  const baseTargetWorldRot = new Map<AnyHumanoidBoneKey, pc.Quat>();
   for (const job of jobs) {
     computedTargetWorldRot.set(job.key, new pc.Quat());
+    baseTargetWorldRot.set(job.key, new pc.Quat());
   }
+
+  const autoConverge = options.autoArmConvergence !== false;
+  const editLayer = options.editLayer ?? null;
+  const overrideBoneSet = new Set<AnyHumanoidBoneKey>(editLayer?.overrideBones ?? []);
+  const hasEditTracks = Boolean(
+    editLayer && (Object.keys(editLayer.tracks).length > 0 || overrideBoneSet.size > 0)
+  );
+  const hasHipsEditKeys = Boolean(editLayer?.hipsOffsetKeys && editLayer.hipsOffsetKeys.length > 0);
+
+  const chestKey: HumanoidBoneKey | null =
+    targetRig.bones.upperChest && srcRig.bones.upperChest
+      ? 'upperChest'
+      : targetRig.bones.chest && srcRig.bones.chest
+        ? 'chest'
+        : targetRig.bones.spine && srcRig.bones.spine
+          ? 'spine'
+          : targetRig.bones.hips && srcRig.bones.hips
+            ? 'hips'
+            : null;
+  const srcChestBone = chestKey ? srcRig.bones[chestKey] : undefined;
+  const tgtChestBone = chestKey ? targetRig.bones[chestKey] : undefined;
+  const invSrcChestModelRot = srcChestBone ? srcChestBone.modelRot.clone().invert() : null;
+  const invTgtChestModelRot = tgtChestBone ? tgtChestBone.modelRot.clone().invert() : null;
+
+  const classifyLimbSide = (
+    k: AnyHumanoidBoneKey
+  ): {
+    side: 'left' | 'right';
+    sign: number;
+    part: 'upper' | 'lower' | 'hand' | 'thumb' | 'f1' | 'f2' | 'f3';
+  } | null => {
+    const isLeft = k.startsWith('left');
+    const isRight = k.startsWith('right');
+    if (!isLeft && !isRight) return null;
+    const side: 'left' | 'right' = isLeft ? 'left' : 'right';
+    const sign = isLeft ? 1 : -1;
+    const rest = isLeft ? k.slice(4) : k.slice(5);
+    if (rest === 'UpperArm') return { side, sign, part: 'upper' };
+    if (rest === 'LowerArm') return { side, sign, part: 'lower' };
+    if (rest === 'Hand') return { side, sign, part: 'hand' };
+    if (rest.startsWith('Thumb')) return { side, sign, part: 'thumb' };
+    if (rest.endsWith('1')) return { side, sign, part: 'f1' };
+    if (rest.endsWith('2')) return { side, sign, part: 'f2' };
+    if (rest.endsWith('3')) return { side, sign, part: 'f3' };
+    return null;
+  };
+
+  const jobSideMeta = new Map<
+    AnyHumanoidBoneKey,
+    ReturnType<typeof classifyLimbSide>
+  >();
+  const accumEditCanonDelta = new Map<AnyHumanoidBoneKey, pc.Quat>();
+  for (const job of jobs) {
+    jobSideMeta.set(job.key, classifyLimbSide(job.key));
+    accumEditCanonDelta.set(job.key, new pc.Quat(0, 0, 0, 1));
+  }
+
+  const tempChestSrcWQ = new pc.Quat();
+  const tempChestCanonQ = new pc.Quat();
+  const tempInvChestCanonQ = new pc.Quat();
+  const tempRelHand = new pc.Vec3();
+  const tempChestUpAxis = new pc.Vec3(0, 1, 0);
+  const tempChestRightAxis = new pc.Vec3(1, 0, 0);
+  const tempAdductQ = new pc.Quat();
+  const tempLocalDeltaQ = new pc.Quat();
+  const tempTargetEditQ = new pc.Quat();
+  const tempEditHipsOff = new pc.Vec3();
 
   // Sample FK across all frames
   for (let k = 0; k < frameCount; k++) {
     const t = sampleSourceTimes[k];
+    const clipLocalT = outputTimes[k];
 
     for (const bc of boundCurves) {
       if (bc.prop === 'localPosition') {
@@ -562,10 +660,131 @@ export function retargetTrackToHumanoid(
 
     sourceContainer.entity.syncHierarchy();
 
+    // Compute per-arm automatic chest-space inward convergence for two-hand (Clapping) & mouth-reach (Singing) poses
+    let leftAutoAdductDeg = 0;
+    let rightAutoAdductDeg = 0;
+    let leftUpLiftDeg = 0;
+    let rightUpLiftDeg = 0;
+
+    if (autoConverge && srcChestBone && invSrcChestModelRot) {
+      extractRotationFromMat4(srcChestBone.node.getWorldTransform(), tempChestSrcWQ);
+      tempChestCanonQ.mul2(srcEffectiveFacingQuat, tempChestSrcWQ);
+      tempChestCanonQ.mul2(tempChestCanonQ, invSrcChestModelRot).normalize();
+      tempInvChestCanonQ.copy(tempChestCanonQ).invert();
+
+      const pChest = srcChestBone.node.getPosition();
+      const ratioDiff = targetRig.shoulderToArmRatio - srcRig.shoulderToArmRatio;
+
+      if (Math.abs(ratioDiff) > 0.015) {
+        for (const side of ['left', 'right'] as const) {
+          const srcHand = srcRig.bones[`${side}Hand` as HumanoidBoneKey];
+          if (!srcHand) continue;
+          const pHand = srcHand.node.getPosition();
+          tempRelHand.sub2(pHand, pChest);
+          srcEffectiveFacingQuat.transformVector(tempRelHand, tempRelHand);
+          tempInvChestCanonQ.transformVector(tempRelHand, tempRelHand);
+
+          const fwdFrac = tempRelHand.z / Math.max(1e-4, srcRig.armLength);
+          const midFrac =
+            1 - pc.math.clamp(Math.abs(tempRelHand.x) / Math.max(1e-4, srcRig.shoulderHalfWidth * 1.28), 0, 1);
+          const reachWeight = pc.math.clamp((fwdFrac - 0.1) / 0.3, 0, 1) * midFrac;
+          if (reachWeight > 0.01) {
+            const deg = pc.math.clamp(ratioDiff * 56 * reachWeight, -18, 18);
+            const highWeight = pc.math.clamp((tempRelHand.y / Math.max(1e-4, srcRig.armLength) + 0.02) / 0.25, 0, 1);
+            const liftDeg = pc.math.clamp(ratioDiff * 28 * reachWeight * highWeight, -10, 10);
+            if (side === 'left') {
+              leftAutoAdductDeg = deg;
+              leftUpLiftDeg = liftDeg;
+            } else {
+              rightAutoAdductDeg = deg;
+              rightUpLiftDeg = liftDeg;
+            }
+          }
+        }
+      }
+    }
+
+    let chestUpReady = false;
+    tempChestUpAxis.set(0, 1, 0);
+    tempChestRightAxis.set(1, 0, 0);
+
     for (const job of jobs) {
-      extractRotationFromMat4(job.srcNode.getWorldTransform(), tempSrcWorldQ);
-      tempAlignedSrcQ.mul2(facingDelta, tempSrcWorldQ);
-      tempTgtWorldQ.mul2(tempAlignedSrcQ, job.qOffset).normalize();
+      if (overrideBoneSet.has(job.key)) {
+        if (job.nearestMappedAncestorKey) {
+          const ancBase = baseTargetWorldRot.get(job.nearestMappedAncestorKey)!;
+          tempParentWorldQ.mul2(ancBase, job.parentChainOffset);
+        } else {
+          tempParentWorldQ.copy(job.parentChainOffset);
+        }
+        const restLocal = targetRig.bones[job.key]?.localRot;
+        if (restLocal) {
+          tempTgtWorldQ.mul2(tempParentWorldQ, restLocal).normalize();
+        } else {
+          tempTgtWorldQ.copy(tempParentWorldQ).normalize();
+        }
+      } else {
+        extractRotationFromMat4(job.srcNode.getWorldTransform(), tempSrcWorldQ);
+        tempAlignedSrcQ.mul2(facingDelta, tempSrcWorldQ);
+        tempTgtWorldQ.mul2(tempAlignedSrcQ, job.qOffset).normalize();
+
+        if (job.key === chestKey && invTgtChestModelRot) {
+          tempChestCanonQ.mul2(targetRig.facingQuat, tempTgtWorldQ);
+          tempChestCanonQ.mul2(tempChestCanonQ, invTgtChestModelRot).normalize();
+          tempChestCanonQ.transformVector(new pc.Vec3(0, 1, 0), tempChestUpAxis);
+          invTargetFacingQuat.transformVector(tempChestUpAxis, tempChestUpAxis);
+          tempChestUpAxis.normalize();
+
+          tempChestCanonQ.transformVector(new pc.Vec3(1, 0, 0), tempChestRightAxis);
+          invTargetFacingQuat.transformVector(tempChestRightAxis, tempChestRightAxis);
+          tempChestRightAxis.normalize();
+          chestUpReady = true;
+        }
+
+        const meta = jobSideMeta.get(job.key);
+        if (meta) {
+          const autoDeg = meta.side === 'left' ? leftAutoAdductDeg : rightAutoAdductDeg;
+          const liftDeg = meta.side === 'left' ? leftUpLiftDeg : rightUpLiftDeg;
+
+          if (Math.abs(autoDeg) > 0.01) {
+            const upAxis = chestUpReady ? tempChestUpAxis : new pc.Vec3(0, 1, 0);
+            tempAdductQ.setFromAxisAngle(upAxis, -meta.sign * autoDeg);
+            tempTgtWorldQ.mul2(tempAdductQ, tempTgtWorldQ).normalize();
+          }
+
+          if (
+            Math.abs(liftDeg) > 0.01 &&
+            (meta.part === 'lower' || meta.part === 'hand' || meta.part === 'thumb' || meta.part === 'f1' || meta.part === 'f2' || meta.part === 'f3')
+          ) {
+            tempAdductQ.setFromAxisAngle(tempChestRightAxis, -liftDeg);
+            tempTgtWorldQ.mul2(tempAdductQ, tempTgtWorldQ).normalize();
+          }
+        }
+      }
+
+      baseTargetWorldRot.get(job.key)!.copy(tempTgtWorldQ);
+
+      // Apply additive canonical edit layer (propagating parent bone edits down the FK chain!)
+      if (hasEditTracks && editLayer) {
+        const accumQ = accumEditCanonDelta.get(job.key)!;
+        if (job.nearestMappedAncestorKey) {
+          accumQ.copy(accumEditCanonDelta.get(job.nearestMappedAncestorKey)!);
+        } else {
+          accumQ.set(0, 0, 0, 1);
+        }
+        if (sampleBoneDeltaAtTime(editLayer.tracks[job.key], clipLocalT, tempLocalDeltaQ)) {
+          accumQ.mul2(accumQ, tempLocalDeltaQ).normalize();
+        }
+        if (
+          Math.abs(accumQ.x) > 1e-5 ||
+          Math.abs(accumQ.y) > 1e-5 ||
+          Math.abs(accumQ.z) > 1e-5
+        ) {
+          tempTargetEditQ.mul2(invTargetFacingQuat, accumQ);
+          tempTargetEditQ.mul2(tempTargetEditQ, targetRig.facingQuat).normalize();
+          tempTgtWorldQ.mul2(tempTargetEditQ, tempTgtWorldQ).normalize();
+        }
+      }
+
       computedTargetWorldRot.get(job.key)!.copy(tempTgtWorldQ);
 
       if (job.nearestMappedAncestorKey) {
@@ -670,9 +889,18 @@ export function retargetTrackToHumanoid(
     const hipsYOffset = options.hipsYOffset ?? 0;
 
     for (let k = 0; k < frameCount; k++) {
-      const dx = shouldZeroXZ ? 0 : rawHipsDeltaX[k] - dx0;
-      const dy = rawHipsDeltaY[k];
-      const dz = shouldZeroXZ ? 0 : rawHipsDeltaZ[k] - dz0;
+      let dx = shouldZeroXZ ? 0 : rawHipsDeltaX[k] - dx0;
+      let dy = rawHipsDeltaY[k];
+      let dz = shouldZeroXZ ? 0 : rawHipsDeltaZ[k] - dz0;
+
+      if (hasHipsEditKeys && editLayer) {
+        if (sampleHipsOffsetAtTime(editLayer.hipsOffsetKeys, outputTimes[k], tempEditHipsOff)) {
+          invTargetFacingQuat.transformVector(tempEditHipsOff, tempEditHipsOff);
+          dx += tempEditHipsOff.x;
+          dy += tempEditHipsOff.y;
+          dz += tempEditHipsOff.z;
+        }
+      }
 
       worldHipsTarget.set(
         tgtHips.modelPos.x + dx,
@@ -768,7 +996,8 @@ export async function applyCharacterAnimations(
   }
 
   const trackCache = getAppTrackCache(app);
-  const charSig = `${preset.id}|${preset.url}|${preset.armPoseOffsetDeg ?? 0}|${preset.facingYawOffset ?? 0}|${JSON.stringify(preset.boneMap ?? {})}`;
+  const charAutoConv = preset.autoArmConvergence !== false ? 1 : 0;
+  const charSig = `${preset.id}|${preset.url}|${preset.armPoseOffsetDeg ?? 0}|${preset.facingYawOffset ?? 0}|${charAutoConv}|${JSON.stringify(preset.boneMap ?? {})}`;
 
   // Build desired state -> clip mapping:
   // 1. Core gameplay slots ('Idle_Loop', 'Walk_Loop', 'Running', 'Jumping', 'JumpWhileRun', 'Crouch_Idle_Loop', 'Idle_Talking_Loop')
@@ -814,14 +1043,19 @@ export async function applyCharacterAnimations(
 
   for (const item of desiredAssignments) {
     const { stateName, clip, strictLockXZ } = item;
-    const cacheKey = `${charSig}::${stateName}::${clip.id}|${clip.url}|${clip.trackName ?? ''}|${clip.inPlace ? 1 : 0}|${strictLockXZ ? 1 : 0}|${clip.trimStart ?? 0}|${clip.trimEnd ?? 0}|${clip.yawOffsetDeg ?? 0}|${clip.hipsYOffset ?? 0}|${clip.updatedAt ?? ''}`;
+    const cacheKey = `${charSig}::${stateName}::${clip.id}|${clip.url}|${clip.trackName ?? ''}|${clip.inPlace ? 1 : 0}|${strictLockXZ ? 1 : 0}|${clip.trimStart ?? 0}|${clip.trimEnd ?? 0}|${clip.yawOffsetDeg ?? 0}|${clip.hipsYOffset ?? 0}|${clip.editLayerUrl ?? ''}|${clip.editLayerUpdatedAt ?? ''}|${clip.updatedAt ?? ''}`;
 
     let retargeted = trackCache.get(cacheKey);
     if (!retargeted && targetRig.mappedCount >= 6) {
-      const srcContainer = await getOrLoadSourceContainer(app, clip.url, {
-        sourceBoneMap: clip.sourceBoneMap,
-        sourceArmPoseOffsetDeg: clip.sourceArmPoseOffsetDeg,
-      });
+      const [srcContainer, editLayer] = await Promise.all([
+        getOrLoadSourceContainer(app, clip.url, {
+          sourceBoneMap: clip.sourceBoneMap,
+          sourceArmPoseOffsetDeg: clip.sourceArmPoseOffsetDeg,
+        }),
+        clip.editLayerUrl
+          ? fetchAnimEditLayer(clip.editLayerUrl, clip.editLayerUpdatedAt ?? clip.updatedAt)
+          : Promise.resolve(null),
+      ]);
       if (srcContainer) {
         const srcTrack =
           (clip.trackName ? srcContainer.animTrackMap[clip.trackName] : undefined) ??
@@ -839,6 +1073,8 @@ export async function applyCharacterAnimations(
             trimEnd: clip.trimEnd,
             yawOffsetDeg: clip.yawOffsetDeg,
             hipsYOffset: (clip.hipsYOffset ?? 0) / Math.max(0.001, preset.scale || 1),
+            autoArmConvergence: preset.autoArmConvergence !== false,
+            editLayer,
           });
           trackCache.set(cacheKey, retargeted);
         }

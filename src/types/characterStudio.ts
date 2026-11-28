@@ -96,6 +96,8 @@ export interface CharacterManifestEntry {
   facingYawOffset?: number;
   /** Optional arm A-pose -> T-pose calibration angle in degrees (-45..45) */
   armPoseOffsetDeg?: number;
+  /** Automatic proportional shoulder-width / arm-length convergence in front of chest (default true) */
+  autoArmConvergence?: boolean;
   tintable: boolean;
   isBuiltIn?: boolean;
   /** Default/original URL when built-in slot was replaced, enabling 1-click restore */
@@ -108,6 +110,7 @@ export interface CharacterManifestEntry {
     groundOffsetY?: number;
     facingYawOffset?: number;
     armPoseOffsetDeg?: number;
+    autoArmConvergence?: boolean;
     tintable: boolean;
   };
   /** Optional explicit bone mapping overrides saved from Studio */
@@ -139,6 +142,10 @@ export interface AnimationClipEntry {
   yawOffsetDeg?: number;
   /** Optional vertical Hips height offset in meters if clip floats or sinks */
   hipsYOffset?: number;
+  /** Optional additive keyframe edit layer JSON (e.g. "/animations/edits/clapping.json") */
+  editLayerUrl?: string;
+  /** Timestamp of last edit layer save for cache busting */
+  editLayerUpdatedAt?: string;
   /** Optional arm pose offset on source rig */
   sourceArmPoseOffsetDeg?: number;
   /** Optional bone map override for source animation rig */
@@ -170,4 +177,39 @@ export interface AnimationManifest {
   emotes: EmoteSliceEntry[];
   /** Library of all available animation clips */
   clips: AnimationClipEntry[];
+}
+
+export type AnimEditInterp = 'linear' | 'ease' | 'step';
+
+export interface AnimEditKey {
+  /** Time in seconds within the trimmed clip */
+  t: number;
+  /** Additive rotation delta [x, y, z, w] in canonical (+Z forward, +X left, +Y up) space */
+  rot: [number, number, number, number];
+  interp: AnimEditInterp;
+}
+
+export interface AnimHipsOffsetKey {
+  t: number;
+  /** Additive Hips translation offset [x, y, z] in meters (canonical space) */
+  pos: [number, number, number];
+  interp: AnimEditInterp;
+}
+
+export interface AnimEditIKTarget {
+  bone: 'leftHand' | 'rightHand' | 'leftFoot' | 'rightFoot' | 'hips';
+  t: number;
+  pos: [number, number, number];
+  pole?: [number, number, number];
+}
+
+export interface AnimEditLayer {
+  version: 1;
+  clipId: string;
+  updatedAt: string;
+  tracks: Partial<Record<AnyHumanoidBoneKey, AnimEditKey[]>>;
+  /** Bones that ignore the base animation's local motion and use rest pose + keyframes only */
+  overrideBones?: AnyHumanoidBoneKey[];
+  hipsOffsetKeys?: AnimHipsOffsetKey[];
+  ikTargets?: AnimEditIKTarget[];
 }
