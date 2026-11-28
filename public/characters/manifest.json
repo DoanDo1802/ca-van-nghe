@@ -49,6 +49,20 @@
         "armPoseOffsetDeg": 0,
         "tintable": false
       }
+    },
+    {
+      "id": "mainalpha",
+      "label": "MainAlpha",
+      "subtitle": "Custom • MIXAMO Rig (22/22 xương)",
+      "url": "/models/mainalpha.glb",
+      "filename": "mainalpha.glb",
+      "scale": 0.0075,
+      "groundOffsetY": 0,
+      "facingYawOffset": 0,
+      "armPoseOffsetDeg": 0,
+      "tintable": false,
+      "isBuiltIn": false,
+      "updatedAt": "2026-11-28T06:11:29.186Z"
     }
   ]
 }

@@ -81,6 +81,24 @@
       "icon": "flame",
       "clipId": "clapping",
       "isBuiltIn": false
+    },
+    {
+      "id": "cheering",
+      "label": "Cheering",
+      "sublabel": "Cheering",
+      "accent": "#a855f7",
+      "icon": "music",
+      "clipId": "cheering",
+      "isBuiltIn": false
+    },
+    {
+      "id": "salsa_dancing",
+      "label": "Salsa Dancing",
+      "sublabel": "Salsa_Dancing",
+      "accent": "#ec4899",
+      "icon": "sparkles",
+      "clipId": "salsa_dancing",
+      "isBuiltIn": false
     }
   ],
   "clips": [
@@ -182,7 +200,8 @@
       "speed": 1,
       "loop": true,
       "inPlace": true,
-      "isBuiltIn": true
+      "isBuiltIn": true,
+      "updatedAt": "2026-11-28T08:06:14.611Z"
     },
     {
       "id": "samba_dancing",
@@ -243,7 +262,7 @@
       "loop": true,
       "inPlace": true,
       "isBuiltIn": false,
-      "updatedAt": "2026-11-26T18:41:05.761Z"
+      "updatedAt": "2026-11-28T07:06:27.627Z"
     },
     {
       "id": "sitting",
@@ -255,6 +274,28 @@
       "inPlace": true,
       "isBuiltIn": false,
       "updatedAt": "2026-11-26T18:42:32.598Z"
+    },
+    {
+      "id": "cheering",
+      "name": "Custom_cheering",
+      "url": "/animations/cheering.glb",
+      "trackName": "Cheering",
+      "speed": 0.8,
+      "loop": true,
+      "inPlace": true,
+      "isBuiltIn": false,
+      "updatedAt": "2026-11-28T06:02:43.273Z"
+    },
+    {
+      "id": "salsa_dancing",
+      "name": "Custom_salsa_dancing",
+      "url": "/animations/salsa_dancing.glb",
+      "trackName": "Salsa_Dancing",
+      "speed": 1,
+      "loop": true,
+      "inPlace": true,
+      "isBuiltIn": false,
+      "updatedAt": "2026-11-28T06:03:09.307Z"
     }
   ]
 }
