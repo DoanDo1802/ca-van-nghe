@@ -1,7 +1,7 @@
 import { AnimationRegistry } from '../../engine/animation/AnimationRegistry';
 import { CharacterRegistry } from '../../engine/animation/CharacterRegistry';
 import { clearHumanoidRetargetCaches } from '../../engine/animation/HumanoidRetargeter';
-import type { AnimationManifest, CharacterManifest } from '../../types/characterStudio';
+import type { AnimEditLayer, AnimationManifest, CharacterManifest } from '../../types/characterStudio';
 import type * as pc from 'playcanvas';
 
 export interface UploadedPublicAsset {
@@ -10,6 +10,37 @@ export interface UploadedPublicAsset {
   url: string;
   diskPath: string;
   sizeBytes: number;
+}
+
+export interface PublicAnimationFileEntry {
+  name: string;
+  url: string;
+  sizeBytes: number;
+  ext: string;
+  updatedAt: string;
+  isProtected: boolean;
+  isReferenced: boolean;
+  usedBy: string[];
+}
+
+export async function listPublicAnimationFiles(): Promise<{
+  diskDir: string;
+  files: PublicAnimationFileEntry[];
+}> {
+  const res = await fetch('/api/dev/studio/list-animations', { cache: 'no-store' });
+  const data = (await res.json()) as {
+    ok?: boolean;
+    diskDir?: string;
+    files?: PublicAnimationFileEntry[];
+    error?: string;
+  };
+  if (!res.ok || !data.ok) {
+    throw new Error(data.error || 'Không thể đọc thư mục public/animations/');
+  }
+  return {
+    diskDir: data.diskDir || 'public/animations',
+    files: Array.isArray(data.files) ? data.files : [],
+  };
 }
 
 export async function checkStudioServerAvailable(): Promise<boolean> {
@@ -75,6 +106,44 @@ export async function persistAnimationManifest(
   clearHumanoidRetargetCaches(app);
   AnimationRegistry.setManifestInMemory(manifest);
   return data.diskPath || 'public/animations/manifest.json';
+}
+
+export async function persistAnimEditLayer(
+  layer: AnimEditLayer,
+  app?: pc.Application
+): Promise<{ url: string; diskPath: string }> {
+  const res = await fetch('/api/dev/studio/save-anim-edit', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(layer),
+  });
+  const data = (await res.json()) as {
+    ok?: boolean;
+    url?: string;
+    diskPath?: string;
+    error?: string;
+  };
+  if (!res.ok || !data.ok || !data.url) {
+    throw new Error(data.error || 'Không thể lưu file chỉnh sửa animation JSON');
+  }
+  clearHumanoidRetargetCaches(app);
+  return { url: data.url, diskPath: data.diskPath || '' };
+}
+
+export async function deleteAnimEditLayer(
+  clipId: string,
+  app?: pc.Application
+): Promise<void> {
+  const res = await fetch('/api/dev/studio/delete-anim-edit', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ clipId }),
+  });
+  if (!res.ok) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(data.error || 'Không thể xóa file chỉnh sửa animation');
+  }
+  clearHumanoidRetargetCaches(app);
 }
 
 export async function deletePublicStudioAsset(assetUrl: string): Promise<void> {

@@ -58,6 +58,76 @@ export function characterStudioPlugin() {
           return;
         }
 
+        if (req.method === 'GET' && route === '/list-animations') {
+          const animDir = path.resolve(process.cwd(), 'public', 'animations');
+          fs.mkdirSync(animDir, { recursive: true });
+          const manifestPath = path.join(animDir, 'manifest.json');
+          const usedUrls = new Map();
+
+          if (fs.existsSync(manifestPath)) {
+            try {
+              const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+              const clipById = new Map((manifest.clips || []).map((c) => [c.id, c]));
+              const markUse = (clipId, label) => {
+                const clip = clipById.get(clipId);
+                if (!clip || !clip.url) return;
+                const clean = String(clip.url).split('?')[0];
+                if (!usedUrls.has(clean)) usedUrls.set(clean, []);
+                usedUrls.get(clean).push(label);
+              };
+              if (manifest.slots) {
+                for (const [slotKey, clipId] of Object.entries(manifest.slots)) {
+                  markUse(clipId, `Slot: ${slotKey}`);
+                }
+              }
+              if (manifest.defaultSlots) {
+                for (const [slotKey, clipId] of Object.entries(manifest.defaultSlots)) {
+                  markUse(clipId, `Default: ${slotKey}`);
+                }
+              }
+              if (Array.isArray(manifest.emotes)) {
+                for (const em of manifest.emotes) {
+                  markUse(em.clipId, `Emote: ${em.label || em.id}`);
+                }
+              }
+            } catch {
+              // ignore malformed manifest
+            }
+          }
+
+          const protectedSet = new Set([
+            'manifest.json',
+            'core_locomotion.glb',
+            'core_emotes.glb',
+          ]);
+          const entries = fs.readdirSync(animDir, { withFileTypes: true });
+          const files = [];
+          for (const entry of entries) {
+            if (!entry.isFile()) continue;
+            const full = path.join(animDir, entry.name);
+            const st = fs.statSync(full);
+            const url = `/animations/${entry.name}`;
+            const usedBy = usedUrls.get(url) || [];
+            const ext = path.extname(entry.name).toLowerCase();
+            files.push({
+              name: entry.name,
+              url,
+              sizeBytes: st.size,
+              ext,
+              updatedAt: st.mtime.toISOString(),
+              isProtected: protectedSet.has(entry.name),
+              isReferenced: entry.name === 'manifest.json' || usedBy.length > 0,
+              usedBy,
+            });
+          }
+          files.sort((a, b) => {
+            if (a.isReferenced !== b.isReferenced) return a.isReferenced ? 1 : -1;
+            return a.name.localeCompare(b.name);
+          });
+          sendJson(res, 200, { ok: true, diskDir: 'public/animations', files });
+          return;
+        }
+
         if (req.method === 'POST' && route === '/upload-binary') {
           const kind = urlObj.searchParams.get('kind') === 'animation' ? 'animation' : 'model';
           const rawName = urlObj.searchParams.get('filename') || (kind === 'animation' ? 'anim' : 'character');
@@ -127,6 +197,42 @@ export function characterStudioPlugin() {
           return;
         }
 
+        if (req.method === 'POST' && route === '/save-anim-edit') {
+          const buf = await readRawBody(req, 5 * 1024 * 1024);
+          const parsed = JSON.parse(buf.toString('utf8'));
+          if (!parsed || !parsed.clipId || !parsed.tracks) {
+            sendJson(res, 400, { ok: false, error: 'Invalid AnimEditLayer payload' });
+            return;
+          }
+          const safeId = sanitizeBaseName(parsed.clipId, 'clip');
+          const dir = path.resolve(process.cwd(), 'public', 'animations', 'edits');
+          fs.mkdirSync(dir, { recursive: true });
+          const filePath = path.join(dir, `${safeId}.json`);
+          fs.writeFileSync(filePath, `${JSON.stringify(parsed, null, 2)}\n`, 'utf8');
+          sendJson(res, 200, {
+            ok: true,
+            url: `/animations/edits/${safeId}.json`,
+            diskPath: `public/animations/edits/${safeId}.json`,
+          });
+          return;
+        }
+
+        if (req.method === 'POST' && route === '/delete-anim-edit') {
+          const buf = await readRawBody(req, 64 * 1024);
+          const { clipId } = JSON.parse(buf.toString('utf8') || '{}');
+          const safeId = sanitizeBaseName(clipId, '');
+          if (!safeId) {
+            sendJson(res, 400, { ok: false, error: 'Missing clipId' });
+            return;
+          }
+          const filePath = path.resolve(process.cwd(), 'public', 'animations', 'edits', `${safeId}.json`);
+          if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+          }
+          sendJson(res, 200, { ok: true, deleted: `/animations/edits/${safeId}.json` });
+          return;
+        }
+
         if (req.method === 'POST' && route === '/delete-asset') {
           const buf = await readRawBody(req, 64 * 1024);
           const { assetUrl } = JSON.parse(buf.toString('utf8') || '{}');
@@ -134,7 +240,9 @@ export function characterStudioPlugin() {
           const protectedFiles = new Set([
             '/models/Character.glb',
             '/models/Tyler.glb',
-            '/animations/shared_core_clips.glb',
+            '/animations/core_locomotion.glb',
+            '/animations/core_emotes.glb',
+            '/animations/manifest.json',
           ]);
           if (protectedFiles.has(cleanUrl)) {
             sendJson(res, 400, { ok: false, error: 'Protected built-in file cannot be deleted' });
@@ -146,7 +254,11 @@ export function characterStudioPlugin() {
           }
           const publicRoot = path.resolve(process.cwd(), 'public');
           const resolved = path.resolve(publicRoot, cleanUrl.slice(1));
-          if (!resolved.startsWith(publicRoot) || !resolved.toLowerCase().endsWith('.glb')) {
+          const lower = resolved.toLowerCase();
+          const validExt = cleanUrl.startsWith('/animations/')
+            ? lower.endsWith('.glb') || lower.endsWith('.gltf') || lower.endsWith('.fbx')
+            : lower.endsWith('.glb');
+          if (!resolved.startsWith(publicRoot) || !validExt) {
             sendJson(res, 400, { ok: false, error: 'Invalid asset path' });
             return;
           }
