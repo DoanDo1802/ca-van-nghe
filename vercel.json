@@ -7,5 +7,16 @@
       "source": "/((?!api/|assets/|models/|animations/|characters/|textures/|media/|ammo/|scenes/|worklets/).*)",
       "destination": "/index.html"
     }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "Referrer-Policy",
+          "value": "strict-origin-when-cross-origin"
+        }
+      ]
+    }
   ]
 }

@@ -43,6 +43,13 @@ import { karaokeRecorder } from '../../utils/karaokeRecorder';
 import { MultiplayerManager } from '../../network/MultiplayerManager';
 import { KaraokeVoiceManager } from '../../network/KaraokeVoiceManager';
 import { DebugLogger } from '../../utils/debugLogger';
+import {
+  configureYouTubeIframe,
+  getYouTubeErrorMessage,
+  loadYouTubeIframeApi,
+  YOUTUBE_EMBED_HOSTS,
+  type YTPlayerInstance,
+} from '../../utils/youtubeApi';
 
 interface KaraokeOverlayProps {
   isOpen: boolean;
@@ -74,6 +81,12 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
   const [activeSong, setActiveSong] = useState<KaraokeSong | null>(null);
   const [queue, setQueue] = useState<KaraokeSong[]>([]);
   const [youtubeVideoId, setYoutubeVideoId] = useState<string | null>(null);
+  const [ytHostIndex, setYtHostIndex] = useState(0);
+  const [ytRetryNonce, setYtRetryNonce] = useState(0);
+  const [ytError, setYtError] = useState<string | null>(null);
+  const [ytNeedsTapToPlay, setYtNeedsTapToPlay] = useState(false);
+  const [ytStalled, setYtStalled] = useState(false);
+  const [ytDirectFallback, setYtDirectFallback] = useState(false);
   const [customFileName, setCustomFileName] = useState<string | null>(null);
   const [isPlayerCompact, setIsPlayerCompact] = useState(true);
   const [playerWidth, setPlayerWidth] = useState<number | null>(null);
@@ -113,13 +126,17 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
   };
 
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const ytIframeRef = useRef<HTMLIFrameElement>(null);
+  const ytHostRef = useRef<HTMLDivElement>(null);
+  const ytPlayerRef = useRef<YTPlayerInstance | null>(null);
+  const ytReadyRef = useRef(false);
   const lastYtPlayingRef = useRef<boolean | null>(null);
   const ytCurrentTimeRef = useRef<number>(0);
   const lastTimeSyncSentRef = useRef<number>(0);
   const lastVolumeSyncSentRef = useRef<number>(0);
   const audienceMusicVolumeRef = useRef<number>(audienceMusicVolume);
   audienceMusicVolumeRef.current = audienceMusicVolume;
+  const activeSongTitleRef = useRef<string | undefined>(activeSong?.title);
+  activeSongTitleRef.current = activeSong?.title;
   const trailingVolumeTimerRef = useRef<number | null>(null);
   const presenceVolumeTimerRef = useRef<number | null>(null);
   const playerBoxRef = useRef<HTMLDivElement>(null);
@@ -135,8 +152,8 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
   } | null>(null);
 
   const clampPlayerWidth = (w: number) => {
-    const maxW = Math.max(220, Math.min(720, window.innerWidth - 16));
-    return Math.max(215, Math.min(maxW, Math.round(w)));
+    const maxW = Math.max(240, Math.min(720, window.innerWidth - 16));
+    return Math.max(240, Math.min(maxW, Math.round(w)));
   };
 
   const clampPlayerPos = (x: number, y: number) => {
@@ -374,6 +391,11 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
       setIsRecordingsOpen(false);
       setIsFilePlaying(false);
       setYoutubeVideoId(null);
+      setYtHostIndex(0);
+      setYtError(null);
+      setYtNeedsTapToPlay(false);
+      setYtStalled(false);
+      setYtDirectFallback(false);
       setActiveSong(null);
       setSearchError(null);
       window.dispatchEvent(new CustomEvent('cavannghe:karaoke-playing', { detail: false }));
@@ -547,90 +569,238 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
   }, []);
 
   useEffect(() => {
-    if (!isOpen || !youtubeVideoId) {
-      lastYtPlayingRef.current = null;
-      ytCurrentTimeRef.current = 0;
+    if (!isOpen || !youtubeVideoId || ytDirectFallback) {
+      ytReadyRef.current = false;
+      ytPlayerRef.current?.destroy();
+      ytPlayerRef.current = null;
+      if (!isOpen || !youtubeVideoId) {
+        lastYtPlayingRef.current = null;
+        ytCurrentTimeRef.current = 0;
+        setYtError(null);
+        setYtNeedsTapToPlay(false);
+        setYtStalled(false);
+      }
       return;
     }
-    const onMessage = (e: MessageEvent) => {
-      if (
-        !ytIframeRef.current || e.source !== ytIframeRef.current.contentWindow ||
-        e.origin !== 'https://www.youtube.com'
-      ) {
-        return;
+
+    let cancelled = false;
+    let readyTimer: number | null = null;
+    let autoplayTimer: number | null = null;
+    let bufferTimer: number | null = null;
+    let syncTimer: number | null = null;
+
+    const clearTimers = () => {
+      if (readyTimer !== null) {
+        window.clearTimeout(readyTimer);
+        readyTimer = null;
       }
-      if (typeof e.data !== 'string') return;
-      let parsed: {
-        event?: string;
-        info?: number | { playerState?: number; currentTime?: number };
-      } | null = null;
-      try {
-        parsed = JSON.parse(e.data);
-      } catch {
-        return;
+      if (autoplayTimer !== null) {
+        window.clearTimeout(autoplayTimer);
+        autoplayTimer = null;
       }
-      if (!parsed) return;
-      if (
-        parsed.event === 'infoDelivery' &&
-        typeof parsed.info === 'object' &&
-        parsed.info !== null &&
-        typeof parsed.info.currentTime === 'number'
-      ) {
-        const prevTime = ytCurrentTimeRef.current;
-        const nextTime = parsed.info.currentTime;
-        const jumped = Math.abs(nextTime - prevTime) > 1.8;
-        ytCurrentTimeRef.current = nextTime;
-        const now = Date.now();
-        if (
-          lastYtPlayingRef.current === true &&
-          (parsed.info.playerState === undefined || parsed.info.playerState === 1) &&
-          (jumped || now - lastTimeSyncSentRef.current >= 3000)
-        ) {
-          lastTimeSyncSentRef.current = now;
-          MultiplayerManager.getInstance().broadcastKaraokeState(
-            {
-              active: true,
-              youtubeVideoId,
-              title: activeSong?.title ?? 'YouTube Karaoke',
-              isPlaying: true,
-              currentTime: nextTime,
-              musicVolume: audienceMusicVolumeRef.current,
-              syncYouTubeAudio: !supportsKaraokeTabAudio(),
-            },
-            { updatePresence: false }
-          );
-        }
+      if (bufferTimer !== null) {
+        window.clearTimeout(bufferTimer);
+        bufferTimer = null;
       }
-      let playerState: number | undefined;
-      if (
-        parsed.event === 'infoDelivery' &&
-        typeof parsed.info === 'object' &&
-        parsed.info !== null &&
-        typeof parsed.info.playerState === 'number'
-      ) {
-        playerState = parsed.info.playerState;
-      } else if (parsed.event === 'onStateChange' && typeof parsed.info === 'number') {
-        playerState = parsed.info;
+      if (syncTimer !== null) {
+        window.clearInterval(syncTimer);
+        syncTimer = null;
       }
-      if (playerState === undefined) return;
-      const nextPlaying = playerState === 1;
-      if (![0, 1, 2].includes(playerState) || lastYtPlayingRef.current === nextPlaying) return;
+    };
+
+    const broadcastYtPlaying = (nextPlaying: boolean, forceSync = false) => {
+      const title = activeSongTitleRef.current ?? 'YouTube Karaoke';
+      if (!forceSync && lastYtPlayingRef.current === nextPlaying) return;
       lastYtPlayingRef.current = nextPlaying;
       lastTimeSyncSentRef.current = Date.now();
       window.dispatchEvent(new CustomEvent('cavannghe:karaoke-playing', { detail: nextPlaying }));
       MultiplayerManager.getInstance().broadcastKaraokeState({
         active: true,
         youtubeVideoId,
-        title: activeSong?.title ?? 'YouTube Karaoke',
+        title,
         isPlaying: nextPlaying,
         currentTime: ytCurrentTimeRef.current,
         musicVolume: audienceMusicVolumeRef.current,
         syncYouTubeAudio: !supportsKaraokeTabAudio(),
       });
     };
-    window.addEventListener('message', onMessage);
-    return () => window.removeEventListener('message', onMessage);
-  }, [isOpen, youtubeVideoId, activeSong?.title]);
+
+    setYtError(null);
+    setYtStalled(false);
+
+    void loadYouTubeIframeApi()
+      .then(() => {
+        if (cancelled || !ytHostRef.current || !window.YT?.Player) return;
+
+        ytPlayerRef.current?.destroy();
+        ytReadyRef.current = false;
+
+        const mountEl = document.createElement('div');
+        ytHostRef.current.innerHTML = '';
+        ytHostRef.current.appendChild(mountEl);
+
+        const embedHost = YOUTUBE_EMBED_HOSTS[ytHostIndex] ?? YOUTUBE_EMBED_HOSTS[0];
+        const player = new window.YT.Player(mountEl, {
+          width: '100%',
+          height: '100%',
+          host: embedHost,
+          videoId: youtubeVideoId,
+          playerVars: {
+            autoplay: 1,
+            mute: 0,
+            playsinline: 1,
+            controls: 1,
+            rel: 0,
+            modestbranding: 1,
+            enablejsapi: 1,
+            origin: window.location.origin,
+          },
+          events: {
+            onReady: (ev) => {
+              if (cancelled) {
+                ev.target.destroy();
+                return;
+              }
+              if (readyTimer !== null) {
+                window.clearTimeout(readyTimer);
+                readyTimer = null;
+              }
+              ytReadyRef.current = true;
+              configureYouTubeIframe(ev.target.getIframe?.());
+              ev.target.setVolume(audienceMusicVolumeRef.current);
+              ev.target.playVideo();
+
+              // If browser blocks unmuted autoplay after async capture prompt, fall back to muted play + tap CTA.
+              // Do NOT mute if already PLAYING (1) or BUFFERING (3).
+              autoplayTimer = window.setTimeout(() => {
+                if (cancelled || ytPlayerRef.current !== ev.target) return;
+                const state = ev.target.getPlayerState?.();
+                if (state !== 1 && state !== 3) {
+                  ev.target.mute();
+                  ev.target.playVideo();
+                  setYtNeedsTapToPlay(true);
+                }
+              }, 1800);
+            },
+            onStateChange: (ev) => {
+              if (cancelled) return;
+              const playerState = ev.data;
+              if (playerState === 1) {
+                if (autoplayTimer !== null) {
+                  window.clearTimeout(autoplayTimer);
+                  autoplayTimer = null;
+                }
+                if (bufferTimer !== null) {
+                  window.clearTimeout(bufferTimer);
+                  bufferTimer = null;
+                }
+                setYtError(null);
+                setYtStalled(false);
+                if (!ev.target.isMuted?.()) {
+                  setYtNeedsTapToPlay(false);
+                } else {
+                  setYtNeedsTapToPlay(true);
+                }
+                const curTime = ev.target.getCurrentTime?.();
+                if (typeof curTime === 'number' && Number.isFinite(curTime)) {
+                  ytCurrentTimeRef.current = curTime;
+                }
+                broadcastYtPlaying(true);
+              } else if (playerState === 2 || playerState === 0) {
+                if (bufferTimer !== null) {
+                  window.clearTimeout(bufferTimer);
+                  bufferTimer = null;
+                }
+                const curTime = ev.target.getCurrentTime?.();
+                if (typeof curTime === 'number' && Number.isFinite(curTime)) {
+                  ytCurrentTimeRef.current = curTime;
+                }
+                broadcastYtPlaying(false);
+              } else if (playerState === 3) {
+                if (bufferTimer !== null) {
+                  window.clearTimeout(bufferTimer);
+                }
+                bufferTimer = window.setTimeout(() => {
+                  if (cancelled || ytPlayerRef.current !== ev.target) return;
+                  if (ev.target.getPlayerState?.() === 3) {
+                    setYtStalled(true);
+                  }
+                }, 7000);
+              }
+            },
+            onError: (ev) => {
+              if (cancelled) return;
+              clearTimers();
+              if ((ev.data === 153 || ev.data === 5) && ytHostIndex === 0) {
+                DebugLogger.warn(
+                  'KaraokeOverlay',
+                  `YouTube error ${ev.data} on youtube.com, switching to youtube-nocookie.com`
+                );
+                setYtHostIndex(1);
+                return;
+              }
+              const errMsg = getYouTubeErrorMessage(ev.data);
+              DebugLogger.error('KaraokeOverlay', `Karaoke YouTube error (${ev.data}): ${errMsg}`);
+              setYtError(errMsg);
+              setYtNeedsTapToPlay(false);
+            },
+          },
+        });
+        ytPlayerRef.current = player;
+        configureYouTubeIframe(player.getIframe?.());
+
+        readyTimer = window.setTimeout(() => {
+          if (cancelled || ytReadyRef.current) return;
+          if (ytHostIndex === 0) {
+            DebugLogger.warn('KaraokeOverlay', 'YouTube player ready timed out, switching to youtube-nocookie.com');
+            setYtHostIndex(1);
+          } else {
+            setYtStalled(true);
+          }
+        }, 6500);
+
+        syncTimer = window.setInterval(() => {
+          if (cancelled || !ytReadyRef.current || !ytPlayerRef.current) return;
+          if (ytPlayerRef.current.getPlayerState?.() !== 1) return;
+          const nextTime = ytPlayerRef.current.getCurrentTime?.();
+          if (typeof nextTime !== 'number' || !Number.isFinite(nextTime)) return;
+          const prevTime = ytCurrentTimeRef.current;
+          const jumped = Math.abs(nextTime - prevTime) > 1.8;
+          ytCurrentTimeRef.current = nextTime;
+          const now = Date.now();
+          if (jumped || now - lastTimeSyncSentRef.current >= 3000) {
+            lastTimeSyncSentRef.current = now;
+            MultiplayerManager.getInstance().broadcastKaraokeState(
+              {
+                active: true,
+                youtubeVideoId,
+                title: activeSongTitleRef.current ?? 'YouTube Karaoke',
+                isPlaying: true,
+                currentTime: nextTime,
+                musicVolume: audienceMusicVolumeRef.current,
+                syncYouTubeAudio: !supportsKaraokeTabAudio(),
+              },
+              { updatePresence: false }
+            );
+          }
+        }, 1000);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        DebugLogger.warn('KaraokeOverlay', 'YouTube IFrame API failed, falling back to direct nocookie embed', err);
+        setYtDirectFallback(true);
+        setYtError(null);
+        setYtStalled(false);
+      });
+
+    return () => {
+      cancelled = true;
+      clearTimers();
+      ytReadyRef.current = false;
+      ytPlayerRef.current?.destroy();
+      ytPlayerRef.current = null;
+    };
+  }, [isOpen, youtubeVideoId, ytHostIndex, ytRetryNonce, ytDirectFallback]);
 
   const displayedSongs = useMemo(() => {
     if (ytResults) return ytResults;
@@ -700,11 +870,15 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
 
   const stopYouTubeSong = () => {
     stopTabCapture();
-    ytIframeRef.current?.contentWindow?.postMessage(
-      JSON.stringify({ event: 'command', func: 'pauseVideo', args: [] }),
-      'https://www.youtube.com',
-    );
+    if (ytReadyRef.current && ytPlayerRef.current) {
+      ytPlayerRef.current.pauseVideo();
+    }
     setYoutubeVideoId(null);
+    setYtHostIndex(0);
+    setYtError(null);
+    setYtNeedsTapToPlay(false);
+    setYtStalled(false);
+    setYtDirectFallback(false);
     setActiveSong(null);
     window.dispatchEvent(new CustomEvent('cavannghe:karaoke-playing', { detail: false }));
     MultiplayerManager.getInstance().broadcastKaraokeState({
@@ -786,6 +960,11 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
     setCustomFileName(null);
     setIsFilePlaying(false);
     setActiveSong(song);
+    setYtHostIndex(0);
+    setYtError(null);
+    setYtNeedsTapToPlay(false);
+    setYtStalled(false);
+    setYtDirectFallback(false);
     setYoutubeVideoId(song.youtubeId);
     ytCurrentTimeRef.current = 0;
     lastTimeSyncSentRef.current = Date.now();
@@ -1011,8 +1190,8 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
               playerWidth !== null
                 ? ''
                 : isPlayerCompact
-                  ? 'w-[215px] sm:w-[240px]'
-                  : 'w-[min(295px,calc(100vw-1.25rem))] sm:w-[360px]'
+                  ? 'w-[260px] sm:w-[300px]'
+                  : 'w-[min(340px,calc(100vw-1.25rem))] sm:w-[400px]'
             }`}
           >
             <div
@@ -1057,36 +1236,106 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
                 </button>
               </div>
             </div>
-            <div className="relative">
-              <iframe
-                ref={ytIframeRef}
-                key={youtubeVideoId}
-                className={`w-full aspect-video block ${isDraggingPlayer || isResizingPlayer ? 'pointer-events-none' : ''}`}
-                src={`https://www.youtube.com/embed/${youtubeVideoId}?autoplay=1&playsinline=1&rel=0&modestbranding=1&enablejsapi=1&origin=${encodeURIComponent(window.location.origin)}`}
-                title="YouTube Karaoke Player"
-                allow="autoplay; encrypted-media; picture-in-picture"
-                allowFullScreen
-                onLoad={() => {
-                  const sendListening = () => {
-                    const win = ytIframeRef.current?.contentWindow;
-                    win?.postMessage(
-                      JSON.stringify({ event: 'listening', id: 1, channel: 'widget' }),
-                      '*'
-                    );
-                    win?.postMessage(
-                      JSON.stringify({
-                        event: 'command',
-                        func: 'setVolume',
-                        args: [audienceMusicVolumeRef.current],
-                      }),
-                      'https://www.youtube.com'
-                    );
-                  };
-                  sendListening();
-                  window.setTimeout(sendListening, 500);
-                  window.setTimeout(sendListening, 1400);
-                }}
-              />
+            <div className="relative w-full aspect-video bg-black">
+              {ytDirectFallback ? (
+                <iframe
+                  key={`direct-${youtubeVideoId}`}
+                  src={`https://www.youtube-nocookie.com/embed/${youtubeVideoId}?autoplay=1&playsinline=1&rel=0`}
+                  title="YouTube Karaoke Direct Player"
+                  referrerPolicy="strict-origin-when-cross-origin"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen"
+                  allowFullScreen
+                  className={`w-full h-full block border-0 ${
+                    isDraggingPlayer || isResizingPlayer ? 'pointer-events-none' : ''
+                  }`}
+                />
+              ) : (
+                <div
+                  ref={ytHostRef}
+                  className={`w-full h-full [&_iframe]:w-full [&_iframe]:h-full [&_iframe]:block ${
+                    isDraggingPlayer || isResizingPlayer ? 'pointer-events-none' : ''
+                  }`}
+                />
+              )}
+
+              {!ytDirectFallback && ytNeedsTapToPlay && !ytError && (
+                <div className="absolute inset-0 flex items-center justify-center bg-black/55 backdrop-blur-[1px] p-2 z-10">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setYtNeedsTapToPlay(false);
+                      if (ytReadyRef.current && ytPlayerRef.current) {
+                        ytPlayerRef.current.unMute();
+                        ytPlayerRef.current.setVolume(audienceMusicVolumeRef.current);
+                        ytPlayerRef.current.playVideo();
+                      }
+                    }}
+                    className="px-3 py-1.5 rounded-full bg-red-600 hover:bg-red-500 text-white text-xs font-semibold shadow-lg flex items-center gap-1.5 transition"
+                  >
+                    <Play className="w-3.5 h-3.5 fill-current" />
+                    <span>Nhấn để bật tiếng & phát nhạc</span>
+                  </button>
+                </div>
+              )}
+
+              {!ytDirectFallback && (ytError || ytStalled) && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/85 backdrop-blur-sm p-3 text-center z-20">
+                  <p className="text-[11px] text-amber-200 leading-snug">
+                    {ytError ?? 'Video đang tải quá lâu hoặc bị dừng trên mạng này.'}
+                  </p>
+                  <div className="flex flex-wrap items-center justify-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setYtError(null);
+                        setYtStalled(false);
+                        setYtRetryNonce((n) => n + 1);
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-white/15 hover:bg-white/25 text-white text-[11px] font-medium transition"
+                    >
+                      Thử lại
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setYtError(null);
+                        setYtStalled(false);
+                        setYtHostIndex((i) => (i === 0 ? 1 : 0));
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-sky-500/25 hover:bg-sky-500/35 border border-sky-400/35 text-sky-200 text-[11px] font-medium transition"
+                    >
+                      {ytHostIndex === 0 ? 'Đổi nguồn dự phòng' : 'Nguồn YouTube chính'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setYtError(null);
+                        setYtStalled(false);
+                        setYtDirectFallback(true);
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-emerald-500/25 hover:bg-emerald-500/35 border border-emerald-400/35 text-emerald-200 text-[11px] font-medium transition"
+                    >
+                      Nhúng trực tiếp
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setIsPickerOpen(true)}
+                      className="px-2.5 py-1 rounded-lg bg-red-600/80 hover:bg-red-500 text-white text-[11px] font-medium transition"
+                    >
+                      Đổi bài
+                    </button>
+                    <a
+                      href={`https://www.youtube.com/watch?v=${youtubeVideoId}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-neutral-300 text-[11px] transition"
+                    >
+                      Mở YouTube
+                    </a>
+                  </div>
+                </div>
+              )}
+
               {/* Bottom-right resize handle */}
               <div
                 onPointerDown={handleResizePointerDown}
@@ -1866,11 +2115,9 @@ export const KaraokeOverlay: React.FC<KaraokeOverlayProps> = ({ isOpen, onExit }
                       setAudienceMusicVolume(v);
                       karaokeAudio.setBackingMusicVolume(v / 100);
                       scheduleAudienceMusicVolumeSync(v);
-                      if (youtubeVideoId) {
-                        ytIframeRef.current?.contentWindow?.postMessage(
-                          JSON.stringify({ event: 'command', func: 'setVolume', args: [v] }),
-                          'https://www.youtube.com',
-                        );
+                      if (youtubeVideoId && ytReadyRef.current && ytPlayerRef.current) {
+                        if (v > 0) ytPlayerRef.current.unMute();
+                        ytPlayerRef.current.setVolume(v);
                       }
                     }}
                     className="w-full h-2.5 cursor-pointer accent-sky-400"

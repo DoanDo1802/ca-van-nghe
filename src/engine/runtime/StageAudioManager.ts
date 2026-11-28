@@ -299,6 +299,7 @@ export class StageAudioManager {
     this.lastYtTime = 0;
     this.lastYtIsLive = false;
     this.lastEmittedYtVolume = -1;
+    this.lastScreenProjectionSig = '';
     this.ensureAudioGraph();
     this.applyMediaSource(trimmed);
     this.syncScreenVisual();
@@ -327,6 +328,7 @@ export class StageAudioManager {
     }
     this.videoHasFrames = false;
     this.lastEmittedYtVolume = -1;
+    this.lastScreenProjectionSig = '';
     this.syncScreenVisual();
     this.syncGain();
     this.emitStateChanged();
@@ -374,6 +376,7 @@ export class StageAudioManager {
   setScreenOn(on: boolean): void {
     if (!this.canControlStage()) return;
     this.state.isScreenOn = on;
+    this.lastScreenProjectionSig = '';
     this.syncScreenVisual();
     this.syncGain();
     this.emitStateChanged();
@@ -442,6 +445,7 @@ export class StageAudioManager {
       this.videoEl?.pause();
       this.videoHasFrames = false;
       this.lastEmittedYtVolume = -1;
+      this.lastScreenProjectionSig = '';
     } else if (mediaChanged) {
       this.state.domVideoFallback = false;
       this.pendingSeekSec = expectedSec;
@@ -484,7 +488,7 @@ export class StageAudioManager {
         ? this.videoEl && Number.isFinite(this.videoEl.duration)
           ? this.videoEl.currentTime
           : undefined
-        : !this.lastYtIsLive
+        : !this.lastYtIsLive && this.lastYtTime > 0.5
           ? this.lastYtTime
           : undefined;
 
@@ -828,6 +832,7 @@ export class StageAudioManager {
         this.videoEl.load();
       }
       this.lastEmittedYtVolume = -1;
+      this.lastScreenProjectionSig = '';
       this.syncScreenVisual();
       this.syncGain();
       this.emitStateChanged();

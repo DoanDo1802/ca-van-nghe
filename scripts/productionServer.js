@@ -38,6 +38,7 @@ async function serveFile(res, filePath, isAsset) {
     'Content-Type': MIME_TYPES[ext] || 'application/octet-stream',
     'Content-Length': info.size,
     'Cache-Control': isAsset ? 'public, max-age=31536000, immutable' : 'public, max-age=3600',
+    'Referrer-Policy': 'strict-origin-when-cross-origin',
   });
   await pipeline(createReadStream(filePath), res).catch(() => {});
   return true;
