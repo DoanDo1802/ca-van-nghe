@@ -9,11 +9,13 @@ import {
   ExternalLink,
   Film,
   Flame,
+  FolderOpen,
   Heart,
   Loader2,
   Mic,
   Music,
   Pause,
+  Pencil,
   Play,
   Plus,
   RefreshCw,
@@ -42,7 +44,11 @@ import {
   retargetTrackToHumanoid,
 } from '../engine/animation/HumanoidRetargeter';
 import {
+  ALL_HUMANOID_BONE_KEYS,
   HUMANOID_BONE_KEYS,
+  type AnimEditInterp,
+  type AnimEditLayer,
+  type AnyHumanoidBoneKey,
   type AnimationClipEntry,
   type AnimationManifest,
   type CharacterManifest,
@@ -52,15 +58,47 @@ import {
   type HumanoidBoneKey,
   type HumanoidBoneMap,
 } from '../types/characterStudio';
+import {
+  cloneAnimEditLayer,
+  createEmptyAnimEditLayer,
+  fetchAnimEditLayer,
+  hasAnyEditKeys,
+  moveBoneEditKey,
+  removeBoneEditKey,
+  sampleBoneDeltaAtTime,
+  sampleHipsOffsetAtTime,
+  setBoneEditKeyInterp,
+  upsertBoneEditKey,
+  upsertHipsOffsetKey,
+} from '../engine/animation/AnimEditLayer';
 import { AVATAR_COLOR_PRESETS, applyAvatarColor } from '../utils/avatarColor';
+import { AnimationEditorInspector } from './studio/AnimationEditorInspector';
+import { AnimationEditorTimeline } from './studio/AnimationEditorTimeline';
+import {
+  applyEditorPoseAtTime,
+  applyTwoBoneIKToLayer,
+  buildBaseClipPoseCache,
+  getLimbBoneKeys,
+} from './studio/AnimEditorRuntime';
+import type {
+  AnimEditorSession,
+  BaseClipPoseCache,
+  GizmoToolMode,
+  IKLimbId,
+  SelectedKeyRef,
+} from './studio/AnimEditorTypes';
 import { convertDroppedFileToGlb, type ConvertedGlbPayload } from './studio/FbxConverter';
 import {
   checkStudioServerAvailable,
+  deleteAnimEditLayer,
   deletePublicStudioAsset,
+  listPublicAnimationFiles,
+  persistAnimEditLayer,
   persistAnimationManifest,
   persistCharacterManifest,
   slugifyStudioId,
   uploadStudioGlbToPublic,
+  type PublicAnimationFileEntry,
 } from './studio/StudioApiClient';
 
 type StudioTab = 'character' | 'animation';
@@ -112,6 +150,7 @@ interface DraftModelState {
   groundOffsetY: number;
   facingYawOffset: number;
   armPoseOffsetDeg: number;
+  autoArmConvergence: boolean;
   tintable: boolean;
   boneMap: HumanoidBoneMap;
 }
@@ -141,6 +180,16 @@ export const CharacterStudioApp: React.FC = () => {
   const stageRootRef = useRef<pc.Entity | null>(null);
   const activeCharacterEntityRef = useRef<pc.Entity | null>(null);
   const showBonesRef = useRef(false);
+  const camEntityRef = useRef<pc.Entity | null>(null);
+  const rotateGizmoRef = useRef<pc.RotateGizmo | null>(null);
+  const translateGizmoRef = useRef<pc.TranslateGizmo | null>(null);
+  const gizmoProxyRef = useRef<pc.Entity | null>(null);
+  const gizmoDraggingRef = useRef(false);
+  const targetRigRef = useRef<HumanoidRigProfile | null>(null);
+  const basePoseCacheRef = useRef<BaseClipPoseCache | null>(null);
+  const accumCanonRef = useRef<Map<AnyHumanoidBoneKey, pc.Quat>>(new Map());
+  const lockedLeftFootPosRef = useRef<pc.Vec3 | null>(null);
+  const lockedRightFootPosRef = useRef<pc.Vec3 | null>(null);
 
   const [studioTab, setStudioTab] = useState<StudioTab>('character');
   const [localApiReady, setLocalApiReady] = useState<boolean | null>(null);
@@ -168,6 +217,7 @@ export const CharacterStudioApp: React.FC = () => {
     groundOffsetY: number;
     facingYawOffset: number;
     armPoseOffsetDeg: number;
+    autoArmConvergence: boolean;
     tintable: boolean;
     boneMap: HumanoidBoneMap;
   } | null>(null);
@@ -183,6 +233,45 @@ export const CharacterStudioApp: React.FC = () => {
   // Animation draft / replace state
   const [draftAnim, setDraftAnim] = useState<DraftAnimationState | null>(null);
   const [replaceAnimTarget, setReplaceAnimTarget] = useState<string>('slot:walk');
+  const [animFolderFiles, setAnimFolderFiles] = useState<PublicAnimationFileEntry[]>([]);
+  const [loadingAnimFolder, setLoadingAnimFolder] = useState(false);
+
+  // Unity-style Keyframe / Gizmo / IK Animation Editor state
+  const [animEditorSession, setAnimEditorSession] = useState<AnimEditorSession | null>(null);
+  const [editorTime, setEditorTime] = useState(0);
+  const [editorPlaying, setEditorPlaying] = useState(false);
+  const [autoKey, setAutoKey] = useState(true);
+  const [loopRegion, setLoopRegion] = useState<[number, number] | null>(null);
+  const [gizmoMode, setGizmoMode] = useState<GizmoToolMode>('fk-rotate');
+  const [coordSpace, setCoordSpace] = useState<'local' | 'world'>('local');
+  const [selectedBone, setSelectedBone] = useState<AnyHumanoidBoneKey | null>('rightUpperArm');
+  const [selectedKey, setSelectedKey] = useState<SelectedKeyRef | null>(null);
+  const [selectedIKLimb, setSelectedIKLimb] = useState<IKLimbId>('rightArm');
+  const [footLock, setFootLock] = useState(false);
+  const [undoStack, setUndoStack] = useState<AnimEditLayer[]>([]);
+  const [redoStack, setRedoStack] = useState<AnimEditLayer[]>([]);
+  const [copiedKeyRot, setCopiedKeyRot] = useState<[number, number, number, number] | null>(null);
+  const [availableEditorBones, setAvailableEditorBones] = useState<Set<AnyHumanoidBoneKey>>(
+    () => new Set()
+  );
+
+  const editorSessionRef = useRef<AnimEditorSession | null>(null);
+  const editorTimeRef = useRef(0);
+  const editorPlayingRef = useRef(false);
+  const loopRegionRef = useRef<[number, number] | null>(null);
+  const gizmoModeRef = useRef<GizmoToolMode>('fk-rotate');
+  const selectedBoneRef = useRef<AnyHumanoidBoneKey | null>('rightUpperArm');
+  const selectedIKLimbRef = useRef<IKLimbId>('rightArm');
+  const footLockRef = useRef(false);
+
+  editorSessionRef.current = animEditorSession;
+  editorTimeRef.current = editorTime;
+  editorPlayingRef.current = editorPlaying;
+  loopRegionRef.current = loopRegion;
+  gizmoModeRef.current = gizmoMode;
+  selectedBoneRef.current = selectedBone;
+  selectedIKLimbRef.current = selectedIKLimb;
+  footLockRef.current = footLock;
 
   // Status / busy banners
   const [busyMessage, setBusyMessage] = useState<string | null>(null);
@@ -195,6 +284,18 @@ export const CharacterStudioApp: React.FC = () => {
 
   const showToast = useCallback((kind: 'ok' | 'err', text: string) => {
     setToast({ kind, text });
+  }, []);
+
+  const refreshAnimFolder = useCallback(async () => {
+    setLoadingAnimFolder(true);
+    try {
+      const res = await listPublicAnimationFiles();
+      setAnimFolderFiles(res.files);
+    } catch {
+      // ignore if dev studio API is unavailable
+    } finally {
+      setLoadingAnimFolder(false);
+    }
   }, []);
 
   // Load manifests & check Vite local file server
@@ -211,11 +312,20 @@ export const CharacterStudioApp: React.FC = () => {
       setSelectedCharacterId(cm.defaultCharacterId || cm.characters[0]?.id || 'default');
       setReplaceTargetCharId(cm.defaultCharacterId || cm.characters[0]?.id || 'default');
       setLocalApiReady(apiOk);
+      if (apiOk) {
+        void refreshAnimFolder();
+      }
     });
     return () => {
       active = false;
     };
-  }, []);
+  }, [refreshAnimFolder]);
+
+  useEffect(() => {
+    if (localApiReady && studioTab === 'animation') {
+      void refreshAnimFolder();
+    }
+  }, [localApiReady, studioTab, refreshAnimFolder]);
 
   // Sync editPresetForm whenever selectedCharacterId changes (when no unsaved draft model is active)
   useEffect(() => {
@@ -228,6 +338,7 @@ export const CharacterStudioApp: React.FC = () => {
       groundOffsetY: found.groundOffsetY ?? 0,
       facingYawOffset: found.facingYawOffset ?? 0,
       armPoseOffsetDeg: found.armPoseOffsetDeg ?? 0,
+      autoArmConvergence: found.autoArmConvergence !== false,
       tintable: found.tintable,
       boneMap: { ...(found.boneMap ?? {}) },
     });
@@ -254,6 +365,12 @@ export const CharacterStudioApp: React.FC = () => {
     app.root.addChild(stageRoot);
     stageRootRef.current = stageRoot;
 
+    const gizmoProxy = new pc.Entity('StudioGizmoProxy');
+    stageRoot.addChild(gizmoProxy);
+    gizmoProxyRef.current = gizmoProxy;
+
+    const gizmoLayer = pc.Gizmo.createLayer(app);
+
     // Camera with Orbit + Zoom + Pan
     const cam = new pc.Entity('StudioCamera');
     cam.addComponent('camera', {
@@ -261,8 +378,164 @@ export const CharacterStudioApp: React.FC = () => {
       fov: 42,
       nearClip: 0.05,
       farClip: 80,
+      layers: [
+        pc.LAYERID_WORLD,
+        pc.LAYERID_DEPTH,
+        pc.LAYERID_SKYBOX,
+        pc.LAYERID_IMMEDIATE,
+        gizmoLayer.id,
+      ],
     });
     app.root.addChild(cam);
+    camEntityRef.current = cam;
+
+    const rotateGizmo = new pc.RotateGizmo(cam.camera!, gizmoLayer);
+    rotateGizmo.size = 0.55;
+    rotateGizmo.coordSpace = 'local';
+    rotateGizmoRef.current = rotateGizmo;
+
+    const translateGizmo = new pc.TranslateGizmo(cam.camera!, gizmoLayer);
+    translateGizmo.size = 0.55;
+    translateGizmo.coordSpace = 'world';
+    translateGizmoRef.current = translateGizmo;
+
+    let gizmoHovering = false;
+    let startSnapLayer: AnimEditLayer | null = null;
+    let startBoneWorldRot = new pc.Quat();
+    let startProxyRot = new pc.Quat();
+    let startLocalDelta = new pc.Quat();
+    let startParentAccum = new pc.Quat();
+
+    const wireGizmoDragFlags = (g: pc.TransformGizmo) => {
+      g.on('pointer:down', () => {
+        gizmoDraggingRef.current = true;
+      });
+      g.on('pointer:up', () => {
+        gizmoDraggingRef.current = false;
+      });
+      g.on('pointer:move', (_x: number, _y: number, mi: unknown) => {
+        gizmoHovering = Boolean(mi);
+      });
+    };
+    wireGizmoDragFlags(rotateGizmo);
+    wireGizmoDragFlags(translateGizmo);
+
+    rotateGizmo.on('transform:start', () => {
+      gizmoDraggingRef.current = true;
+      const sess = editorSessionRef.current;
+      const rig = targetRigRef.current;
+      const boneKey = selectedBoneRef.current;
+      if (!sess || !rig || !boneKey) return;
+      const bone = rig.bones[boneKey];
+      if (!bone) return;
+      startSnapLayer = cloneAnimEditLayer(sess.layer);
+      startBoneWorldRot.copy(bone.node.getRotation());
+      startProxyRot.copy(gizmoProxy.getRotation());
+      sampleBoneDeltaAtTime(sess.layer.tracks[boneKey], editorTimeRef.current, startLocalDelta);
+      const ancKey = basePoseCacheRef.current?.nearestAncestor[boneKey] ?? null;
+      startParentAccum.copy(
+        (ancKey ? accumCanonRef.current.get(ancKey) : undefined) ?? new pc.Quat(0, 0, 0, 1)
+      );
+    });
+
+    rotateGizmo.on('transform:move', () => {
+      const sess = editorSessionRef.current;
+      const rig = targetRigRef.current;
+      const cache = basePoseCacheRef.current;
+      const ent = activeCharacterEntityRef.current;
+      const boneKey = selectedBoneRef.current;
+      if (!sess || !rig || !cache || !ent || !boneKey) return;
+
+      const stepWorld = new pc.Quat()
+        .mul2(gizmoProxy.getRotation(), startProxyRot.clone().invert())
+        .normalize();
+      const invFacing = rig.facingQuat.clone().invert();
+      const stepCanon = new pc.Quat()
+        .mul2(rig.facingQuat, stepWorld)
+        .mul(invFacing)
+        .normalize();
+      const invParent = startParentAccum.clone().invert();
+      const localStep = new pc.Quat()
+        .mul2(invParent, stepCanon)
+        .mul(startParentAccum)
+        .normalize();
+      const finalLocal = new pc.Quat().mul2(localStep, startLocalDelta).normalize();
+
+      const nextLayer = upsertBoneEditKey(
+        sess.layer,
+        boneKey,
+        editorTimeRef.current,
+        [finalLocal.x, finalLocal.y, finalLocal.z, finalLocal.w],
+        'linear'
+      );
+      accumCanonRef.current = applyEditorPoseAtTime(
+        ent,
+        rig,
+        cache,
+        nextLayer,
+        editorTimeRef.current,
+        {
+          footLock: footLockRef.current,
+          lockedLeftFootPos: lockedLeftFootPosRef.current,
+          lockedRightFootPos: lockedRightFootPosRef.current,
+        }
+      );
+      setAnimEditorSession((prev) => (prev ? { ...prev, layer: nextLayer } : prev));
+    });
+
+    rotateGizmo.on('transform:end', () => {
+      gizmoDraggingRef.current = false;
+      if (startSnapLayer) {
+        const snap = startSnapLayer;
+        setUndoStack((u) => [...u.slice(-39), snap]);
+        setRedoStack([]);
+        startSnapLayer = null;
+      }
+    });
+
+    translateGizmo.on('transform:start', () => {
+      gizmoDraggingRef.current = true;
+      const sess = editorSessionRef.current;
+      if (sess) {
+        startSnapLayer = cloneAnimEditLayer(sess.layer);
+      }
+    });
+
+    translateGizmo.on('transform:move', () => {
+      const sess = editorSessionRef.current;
+      const rig = targetRigRef.current;
+      const cache = basePoseCacheRef.current;
+      const ent = activeCharacterEntityRef.current;
+      if (!sess || !rig || !cache || !ent) return;
+
+      const nextLayer = applyTwoBoneIKToLayer({
+        entity: ent,
+        targetRig: rig,
+        cache,
+        layer: sess.layer,
+        limb: selectedIKLimbRef.current,
+        timeSec: editorTimeRef.current,
+        targetWorldPos: gizmoProxy.getPosition().clone(),
+      });
+      accumCanonRef.current = applyEditorPoseAtTime(
+        ent,
+        rig,
+        cache,
+        nextLayer,
+        editorTimeRef.current
+      );
+      setAnimEditorSession((prev) => (prev ? { ...prev, layer: nextLayer } : prev));
+    });
+
+    translateGizmo.on('transform:end', () => {
+      gizmoDraggingRef.current = false;
+      if (startSnapLayer) {
+        const snap = startSnapLayer;
+        setUndoStack((u) => [...u.slice(-39), snap]);
+        setRedoStack([]);
+        startSnapLayer = null;
+      }
+    });
 
     let camYaw = 18;
     let camPitch = 14;
@@ -283,16 +556,21 @@ export const CharacterStudioApp: React.FC = () => {
     updateCam();
 
     let draggingButton: number | null = null;
+    let downX = 0;
+    let downY = 0;
     let lastX = 0;
     let lastY = 0;
 
     const onDown = (e: MouseEvent) => {
+      if (gizmoDraggingRef.current || gizmoHovering) return;
       draggingButton = e.button;
+      downX = e.clientX;
+      downY = e.clientY;
       lastX = e.clientX;
       lastY = e.clientY;
     };
     const onMove = (e: MouseEvent) => {
-      if (draggingButton === null) return;
+      if (draggingButton === null || gizmoDraggingRef.current) return;
       const dx = e.clientX - lastX;
       const dy = e.clientY - lastY;
       lastX = e.clientX;
@@ -310,8 +588,64 @@ export const CharacterStudioApp: React.FC = () => {
       }
       updateCam();
     };
-    const onUp = () => {
+    const onUp = (e: MouseEvent) => {
+      const wasLeftClick =
+        draggingButton === 0 &&
+        Math.hypot(e.clientX - downX, e.clientY - downY) < 4 &&
+        !gizmoDraggingRef.current;
       draggingButton = null;
+
+      if (wasLeftClick && editorSessionRef.current && targetRigRef.current && cam.camera) {
+        const rect = canvas.getBoundingClientRect();
+        const clickX = e.clientX - rect.left;
+        const clickY = e.clientY - rect.top;
+        const screenPos = new pc.Vec3();
+        let bestBone: AnyHumanoidBoneKey | null = null;
+        let bestDist = 22;
+        for (const boneKey of HUMANOID_BONE_KEYS) {
+          const b = targetRigRef.current.bones[boneKey];
+          if (!b) continue;
+          cam.camera.worldToScreen(b.node.getPosition(), screenPos);
+          if (screenPos.z <= 0) continue;
+          const d = Math.hypot(screenPos.x - clickX, screenPos.y - clickY);
+          if (d < bestDist) {
+            bestDist = d;
+            bestBone = boneKey;
+          }
+        }
+        if (bestBone) {
+          setSelectedBone(bestBone);
+          if (gizmoModeRef.current === 'ik-move') {
+            if (
+              bestBone === 'leftHand' ||
+              bestBone === 'leftLowerArm' ||
+              bestBone === 'leftUpperArm' ||
+              bestBone === 'leftShoulder'
+            ) {
+              setSelectedIKLimb('leftArm');
+            } else if (
+              bestBone === 'rightHand' ||
+              bestBone === 'rightLowerArm' ||
+              bestBone === 'rightUpperArm' ||
+              bestBone === 'rightShoulder'
+            ) {
+              setSelectedIKLimb('rightArm');
+            } else if (
+              bestBone === 'leftFoot' ||
+              bestBone === 'leftLowerLeg' ||
+              bestBone === 'leftUpperLeg'
+            ) {
+              setSelectedIKLimb('leftLeg');
+            } else if (
+              bestBone === 'rightFoot' ||
+              bestBone === 'rightLowerLeg' ||
+              bestBone === 'rightUpperLeg'
+            ) {
+              setSelectedIKLimb('rightLeg');
+            }
+          }
+        }
+      }
     };
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
@@ -388,10 +722,38 @@ export const CharacterStudioApp: React.FC = () => {
     const arrowColor = new pc.Color(0.22, 0.78, 0.98, 1);
     const heightColor = new pc.Color(0.95, 0.72, 0.25, 1);
     const boneColor = new pc.Color(0.2, 0.95, 0.55, 1);
+    const jointPickColor = new pc.Color(0.35, 0.82, 1, 1);
+    const jointSelectedColor = new pc.Color(1, 0.82, 0.15, 1);
     const pA = new pc.Vec3();
     const pB = new pc.Vec3();
 
-    const onUpdate = () => {
+    const onUpdate = (dt: number) => {
+      // Advance animation editor playback if active & playing
+      const sess = editorSessionRef.current;
+      if (sess && editorPlayingRef.current && activeCharacterEntityRef.current && targetRigRef.current && basePoseCacheRef.current) {
+        const lr = loopRegionRef.current;
+        const minT = lr ? lr[0] : 0;
+        const maxT = lr ? lr[1] : Math.max(0.05, sess.duration);
+        let nextT = editorTimeRef.current + dt;
+        if (nextT > maxT) {
+          nextT = minT + ((nextT - minT) % Math.max(0.02, maxT - minT));
+        }
+        editorTimeRef.current = nextT;
+        setEditorTime(nextT);
+        accumCanonRef.current = applyEditorPoseAtTime(
+          activeCharacterEntityRef.current,
+          targetRigRef.current,
+          basePoseCacheRef.current,
+          sess.layer,
+          nextT,
+          {
+            footLock: footLockRef.current,
+            lockedLeftFootPos: lockedLeftFootPosRef.current,
+            lockedRightFootPos: lockedRightFootPosRef.current,
+          }
+        );
+      }
+
       // Floor grid lines (-1.5m .. +1.5m)
       for (let i = -3; i <= 3; i++) {
         const v = i * 0.5;
@@ -408,8 +770,8 @@ export const CharacterStudioApp: React.FC = () => {
       app.drawLine(pA.set(-0.85, 0, 0), pB.set(-0.85, 1.72, 0), heightColor, true);
       app.drawLine(pA.set(-0.92, 1.72, 0), pB.set(-0.78, 1.72, 0), heightColor, true);
 
-      // Optional skeleton gizmo lines
-      if (showBonesRef.current && activeCharacterEntityRef.current) {
+      // Optional skeleton gizmo lines + interactive joint markers in Animation Editor
+      if ((showBonesRef.current || sess) && activeCharacterEntityRef.current) {
         const walkBones = (node: pc.GraphNode) => {
           if (node !== activeCharacterEntityRef.current && node.parent && node.parent !== activeCharacterEntityRef.current) {
             const cPos = node.getPosition();
@@ -423,12 +785,32 @@ export const CharacterStudioApp: React.FC = () => {
           }
         };
         walkBones(activeCharacterEntityRef.current);
+
+        if (sess && targetRigRef.current) {
+          for (const boneKey of HUMANOID_BONE_KEYS) {
+            const b = targetRigRef.current.bones[boneKey];
+            if (!b) continue;
+            const jp = b.node.getPosition();
+            const isSel = selectedBoneRef.current === boneKey;
+            const r = isSel ? 0.028 : 0.015;
+            const col = isSel ? jointSelectedColor : jointPickColor;
+            app.drawLine(pA.set(jp.x - r, jp.y, jp.z), pB.set(jp.x + r, jp.y, jp.z), col, false);
+            app.drawLine(pA.set(jp.x, jp.y - r, jp.z), pB.set(jp.x, jp.y + r, jp.z), col, false);
+            app.drawLine(pA.set(jp.x, jp.y, jp.z - r), pB.set(jp.x, jp.y, jp.z + r), col, false);
+          }
+        }
       }
     };
     app.on('update', onUpdate);
 
     return () => {
       app.off('update', onUpdate);
+      rotateGizmo.destroy();
+      translateGizmo.destroy();
+      rotateGizmoRef.current = null;
+      translateGizmoRef.current = null;
+      gizmoProxyRef.current = null;
+      camEntityRef.current = null;
       ro.disconnect();
       canvas.removeEventListener('mousedown', onDown);
       window.removeEventListener('mousemove', onMove);
@@ -458,6 +840,7 @@ export const CharacterStudioApp: React.FC = () => {
         groundOffsetY: draftModel.groundOffsetY,
         facingYawOffset: draftModel.facingYawOffset,
         armPoseOffsetDeg: draftModel.armPoseOffsetDeg,
+        autoArmConvergence: draftModel.autoArmConvergence,
         tintable: draftModel.tintable,
         boneMap: draftModel.boneMap,
       };
@@ -474,6 +857,7 @@ export const CharacterStudioApp: React.FC = () => {
       groundOffsetY: editPresetForm.groundOffsetY,
       facingYawOffset: editPresetForm.facingYawOffset,
       armPoseOffsetDeg: editPresetForm.armPoseOffsetDeg,
+      autoArmConvergence: editPresetForm.autoArmConvergence,
       tintable: editPresetForm.tintable,
       boneMap: editPresetForm.boneMap,
     };
@@ -578,6 +962,7 @@ export const CharacterStudioApp: React.FC = () => {
             trimEnd: draftAnim.trimEnd > draftAnim.trimStart ? draftAnim.trimEnd : undefined,
             yawOffsetDeg: draftAnim.yawOffsetDeg,
             hipsYOffset: draftAnim.hipsYOffset / Math.max(0.001, activePreviewPreset.scale || 1),
+            autoArmConvergence: activePreviewPreset.autoArmConvergence !== false,
           });
           entity.anim.assignAnimation(
             '__draft_anim__',
@@ -596,9 +981,19 @@ export const CharacterStudioApp: React.FC = () => {
       stageRoot.addChild(entity);
       activeCharacterEntityRef.current = entity;
 
+      const liveTargetRig = buildHumanoidRigProfile(entity, {
+        explicitBoneMap: activePreviewPreset.boneMap,
+        armPoseOffsetDeg: activePreviewPreset.armPoseOffsetDeg ?? 0,
+        normalizeArmsToTPose: true,
+      });
+      targetRigRef.current = liveTargetRig;
+      setAvailableEditorBones(
+        new Set(ALL_HUMANOID_BONE_KEYS.filter((k) => Boolean(liveTargetRig.bones[k])))
+      );
+
       if (entity.anim) {
         entity.anim.activate = true;
-        entity.anim.enabled = true;
+        entity.anim.enabled = !editorSessionRef.current;
         entity.anim.playing = isPlaying;
         entity.anim.speed = playbackSpeed;
         const desiredState = draftAnim ? '__draft_anim__' : previewAnimState;
@@ -610,6 +1005,57 @@ export const CharacterStudioApp: React.FC = () => {
             : states[0];
         if (target) {
           entity.anim.baseLayer?.play(target);
+        }
+      }
+
+      // If Animation Editor is currently open (e.g. user switched preview character), rebuild basePoseCache for new rig
+      const openSess = editorSessionRef.current;
+      if (openSess) {
+        const clip = animManifest.clips.find((c) => c.id === openSess.clipId);
+        if (clip) {
+          const clipRes = await fetch(clip.url);
+          if (clipRes.ok) {
+            const buf = await clipRes.arrayBuffer();
+            const srcContainer = await loadAnimSourceContainerFromBuffer(
+              app,
+              buf,
+              clip.url.split('/').pop() || 'anim.glb',
+              `anim_edit_src:${clip.url}`,
+              {
+                sourceBoneMap: clip.sourceBoneMap,
+                sourceArmPoseOffsetDeg: clip.sourceArmPoseOffsetDeg,
+              }
+            );
+            const srcTrack =
+              (clip.trackName ? srcContainer.animTrackMap[clip.trackName] : undefined) ??
+              srcContainer.animTrackMap[clip.name] ??
+              (srcContainer.animTracks[0]
+                ? srcContainer.animTrackMap[srcContainer.animTracks[0]]
+                : undefined);
+            if (srcTrack) {
+              const isCoreSlot = Object.values(CORE_SLOT_STATE_NAMES).includes(openSess.stateName);
+              const baseTrack = retargetTrackToHumanoid(srcContainer, srcTrack, liveTargetRig, {
+                stateName: openSess.stateName,
+                inPlace: clip.inPlace,
+                strictLockXZ: isCoreSlot,
+                trimStart: clip.trimStart,
+                trimEnd: clip.trimEnd,
+                yawOffsetDeg: clip.yawOffsetDeg,
+                hipsYOffset: (clip.hipsYOffset ?? 0) / Math.max(0.001, activePreviewPreset.scale || 1),
+                autoArmConvergence: activePreviewPreset.autoArmConvergence !== false,
+                editLayer: null,
+              });
+              const cache = buildBaseClipPoseCache(baseTrack, liveTargetRig, openSess.fps);
+              basePoseCacheRef.current = cache;
+              accumCanonRef.current = applyEditorPoseAtTime(
+                entity,
+                liveTargetRig,
+                cache,
+                openSess.layer,
+                editorTimeRef.current
+              );
+            }
+          }
         }
       }
     } catch (err) {
@@ -625,6 +1071,11 @@ export const CharacterStudioApp: React.FC = () => {
   useEffect(() => {
     const ent = activeCharacterEntityRef.current;
     if (!ent?.anim) return;
+    if (animEditorSession) {
+      ent.anim.enabled = false;
+      return;
+    }
+    ent.anim.enabled = true;
     ent.anim.playing = isPlaying;
     ent.anim.speed = playbackSpeed;
     const desired = draftAnim && previewAnimState === '__draft_anim__' ? '__draft_anim__' : previewAnimState;
@@ -632,7 +1083,406 @@ export const CharacterStudioApp: React.FC = () => {
     if (states.includes(desired)) {
       ent.anim.baseLayer?.transition(desired, 0.15);
     }
-  }, [previewAnimState, isPlaying, playbackSpeed, draftAnim]);
+  }, [previewAnimState, isPlaying, playbackSpeed, draftAnim, animEditorSession]);
+
+  // === UNITY-STYLE ANIMATION EDITOR HELPERS ===
+
+  const syncGizmoAttachment = useCallback(() => {
+    const rotG = rotateGizmoRef.current;
+    const transG = translateGizmoRef.current;
+    const proxy = gizmoProxyRef.current;
+    const rig = targetRigRef.current;
+    if (!rotG || !transG || !proxy) return;
+
+    if (!animEditorSession || !rig) {
+      rotG.detach();
+      transG.detach();
+      return;
+    }
+
+    if (gizmoMode === 'fk-rotate') {
+      transG.detach();
+      const bone = selectedBone ? rig.bones[selectedBone] : undefined;
+      if (!bone) {
+        rotG.detach();
+        return;
+      }
+      proxy.setPosition(bone.node.getPosition());
+      proxy.setRotation(bone.node.getRotation());
+      rotG.coordSpace = coordSpace;
+      rotG.attach([proxy]);
+    } else {
+      rotG.detach();
+      const { end } = getLimbBoneKeys(selectedIKLimb);
+      const endBone = rig.bones[end];
+      if (!endBone) {
+        transG.detach();
+        return;
+      }
+      proxy.setPosition(endBone.node.getPosition());
+      proxy.setRotation(0, 0, 0, 1);
+      transG.attach([proxy]);
+    }
+  }, [animEditorSession, gizmoMode, coordSpace, selectedBone, selectedIKLimb]);
+
+  // Re-evaluate pose and re-attach gizmo whenever editorTime, layer, or gizmo mode changes
+  useEffect(() => {
+    if (!animEditorSession) {
+      syncGizmoAttachment();
+      return;
+    }
+    const ent = activeCharacterEntityRef.current;
+    const rig = targetRigRef.current;
+    const cache = basePoseCacheRef.current;
+    if (ent && rig && cache && !editorPlaying) {
+      accumCanonRef.current = applyEditorPoseAtTime(
+        ent,
+        rig,
+        cache,
+        animEditorSession.layer,
+        editorTime,
+        {
+          footLock,
+          lockedLeftFootPos: lockedLeftFootPosRef.current,
+          lockedRightFootPos: lockedRightFootPosRef.current,
+        }
+      );
+    }
+    if (!gizmoDraggingRef.current) {
+      syncGizmoAttachment();
+    }
+  }, [animEditorSession, editorTime, editorPlaying, footLock, syncGizmoAttachment]);
+
+  const commitLayerWithUndo = useCallback(
+    (nextLayer: AnimEditLayer) => {
+      setAnimEditorSession((prev) => {
+        if (!prev) return prev;
+        setUndoStack((u) => [...u.slice(-39), cloneAnimEditLayer(prev.layer)]);
+        setRedoStack([]);
+        return { ...prev, layer: nextLayer };
+      });
+    },
+    []
+  );
+
+  const handleSeekEditor = useCallback((t: number) => {
+    const sess = editorSessionRef.current;
+    if (!sess) return;
+    const clamped = pc.math.clamp(t, 0, Math.max(0.05, sess.duration));
+    editorTimeRef.current = clamped;
+    setEditorTime(clamped);
+  }, []);
+
+  const handleUndoEditor = useCallback(() => {
+    setAnimEditorSession((prev) => {
+      if (!prev || undoStack.length === 0) return prev;
+      const top = undoStack[undoStack.length - 1];
+      setUndoStack((u) => u.slice(0, -1));
+      setRedoStack((r) => [...r, cloneAnimEditLayer(prev.layer)]);
+      return { ...prev, layer: top };
+    });
+  }, [undoStack]);
+
+  const handleRedoEditor = useCallback(() => {
+    setAnimEditorSession((prev) => {
+      if (!prev || redoStack.length === 0) return prev;
+      const top = redoStack[redoStack.length - 1];
+      setRedoStack((r) => r.slice(0, -1));
+      setUndoStack((u) => [...u, cloneAnimEditLayer(prev.layer)]);
+      return { ...prev, layer: top };
+    });
+  }, [redoStack]);
+
+  const openAnimationEditor = useCallback(
+    async (clip: AnimationClipEntry, stateName: string, displayLabel: string) => {
+      const app = appRef.current;
+      const ent = activeCharacterEntityRef.current;
+      const rig = targetRigRef.current;
+      if (!app || !ent || !rig) {
+        showToast('err', 'Nhân vật 3D chưa sẵn sàng — hãy đợi load xong rồi thử lại.');
+        return;
+      }
+      setBusyMessage(`Đang mở trình chỉnh sửa Keyframe cho "${displayLabel}"...`);
+      try {
+        const res = await fetch(clip.url);
+        if (!res.ok) throw new Error(`Không tải được ${clip.url}`);
+        const buf = await res.arrayBuffer();
+        const srcContainer = await loadAnimSourceContainerFromBuffer(
+          app,
+          buf,
+          clip.url.split('/').pop() || 'anim.glb',
+          `anim_edit_src:${clip.url}`,
+          {
+            sourceBoneMap: clip.sourceBoneMap,
+            sourceArmPoseOffsetDeg: clip.sourceArmPoseOffsetDeg,
+          }
+        );
+        const srcTrack =
+          (clip.trackName ? srcContainer.animTrackMap[clip.trackName] : undefined) ??
+          srcContainer.animTrackMap[clip.name] ??
+          (srcContainer.animTracks[0]
+            ? srcContainer.animTrackMap[srcContainer.animTracks[0]]
+            : undefined);
+        if (!srcTrack) throw new Error('Không tìm thấy animation track trong file.');
+
+        const fps = 30;
+        const isCoreSlot = Object.values(CORE_SLOT_STATE_NAMES).includes(stateName);
+        const baseTrack = retargetTrackToHumanoid(srcContainer, srcTrack, rig, {
+          stateName,
+          inPlace: clip.inPlace,
+          strictLockXZ: isCoreSlot,
+          trimStart: clip.trimStart,
+          trimEnd: clip.trimEnd,
+          yawOffsetDeg: clip.yawOffsetDeg,
+          hipsYOffset: (clip.hipsYOffset ?? 0) / Math.max(0.001, activePreviewPreset.scale || 1),
+          autoArmConvergence: activePreviewPreset.autoArmConvergence !== false,
+          editLayer: null,
+        });
+
+        const existingLayer = clip.editLayerUrl
+          ? await fetchAnimEditLayer(clip.editLayerUrl, clip.editLayerUpdatedAt ?? clip.updatedAt)
+          : null;
+        const layer = existingLayer ? cloneAnimEditLayer(existingLayer) : createEmptyAnimEditLayer(clip.id);
+        const cache = buildBaseClipPoseCache(baseTrack, rig, fps);
+        basePoseCacheRef.current = cache;
+
+        setDraftModel(null);
+        setDraftAnim(null);
+        setStudioTab('animation');
+        setPreviewAnimState(stateName);
+        setEditorPlaying(false);
+        setEditorTime(0);
+        setLoopRegion(null);
+        setFootLock(false);
+        setUndoStack([]);
+        setRedoStack([]);
+        setSelectedKey(null);
+        setSelectedBone('rightUpperArm');
+        setAnimEditorSession({
+          clipId: clip.id,
+          stateName,
+          displayLabel,
+          duration: cache.duration,
+          fps,
+          layer,
+          savedSnapshotJson: JSON.stringify(layer),
+        });
+
+        if (ent.anim) {
+          ent.anim.enabled = false;
+        }
+        accumCanonRef.current = applyEditorPoseAtTime(ent, rig, cache, layer, 0);
+      } catch (err) {
+        showToast('err', err instanceof Error ? err.message : String(err));
+      } finally {
+        setBusyMessage(null);
+      }
+    },
+    [activePreviewPreset, showToast]
+  );
+
+  const handleOpenEditorForCurrentPreview = useCallback(() => {
+    let resolvedClip: AnimationClipEntry | undefined;
+    let displayLabel = previewAnimState;
+    for (const [slotKey, st] of Object.entries(CORE_SLOT_STATE_NAMES) as Array<[CoreAnimSlotId, string]>) {
+      if (st === previewAnimState) {
+        resolvedClip = animManifest.clips.find((c) => c.id === animManifest.slots[slotKey]);
+        displayLabel = CORE_SLOT_LABELS[slotKey];
+        break;
+      }
+    }
+    if (!resolvedClip) {
+      resolvedClip = animManifest.clips.find(
+        (c) => c.name === previewAnimState || c.id === previewAnimState
+      );
+      if (resolvedClip) {
+        const em = animManifest.emotes.find((e) => e.clipId === resolvedClip!.id);
+        displayLabel = em ? em.label : resolvedClip.name;
+      }
+    }
+    if (!resolvedClip) {
+      showToast('err', 'Hãy chọn một Slot hoặc Emote sẵn có để chỉnh sửa.');
+      return;
+    }
+    void openAnimationEditor(resolvedClip, previewAnimState, displayLabel);
+  }, [previewAnimState, animManifest, openAnimationEditor, showToast]);
+
+  const handleExitAnimationEditor = useCallback(() => {
+    if (
+      animEditorSession &&
+      JSON.stringify(animEditorSession.layer) !== animEditorSession.savedSnapshotJson
+    ) {
+      if (!window.confirm('Bạn có chỉnh sửa chưa lưu. Vẫn thoát trình chỉnh sửa Animation?')) {
+        return;
+      }
+    }
+    setEditorPlaying(false);
+    setAnimEditorSession(null);
+    basePoseCacheRef.current = null;
+    rotateGizmoRef.current?.detach();
+    translateGizmoRef.current?.detach();
+    if (activeCharacterEntityRef.current?.anim) {
+      activeCharacterEntityRef.current.anim.enabled = true;
+    }
+  }, [animEditorSession]);
+
+  const handleSaveAnimationEditor = useCallback(async () => {
+    if (!animEditorSession || !localApiReady) return;
+    setBusyMessage('Đang lưu lớp chỉnh sửa Keyframe & cập nhật toàn bộ Game...');
+    try {
+      const layerToSave = cloneAnimEditLayer(animEditorSession.layer);
+      layerToSave.updatedAt = new Date().toISOString();
+      const hasKeys = hasAnyEditKeys(layerToSave);
+
+      const nextManifest = structuredClone(animManifest);
+      const clipIdx = nextManifest.clips.findIndex((c) => c.id === animEditorSession.clipId);
+      if (clipIdx < 0) throw new Error('Không tìm thấy clip trong manifest.');
+
+      if (hasKeys) {
+        const saveRes = await persistAnimEditLayer(layerToSave, appRef.current ?? undefined);
+        nextManifest.clips[clipIdx] = {
+          ...nextManifest.clips[clipIdx],
+          editLayerUrl: saveRes.url,
+          editLayerUpdatedAt: layerToSave.updatedAt,
+          updatedAt: layerToSave.updatedAt,
+        };
+      } else {
+        await deleteAnimEditLayer(animEditorSession.clipId, appRef.current ?? undefined).catch(
+          () => undefined
+        );
+        delete nextManifest.clips[clipIdx].editLayerUrl;
+        delete nextManifest.clips[clipIdx].editLayerUpdatedAt;
+        nextManifest.clips[clipIdx].updatedAt = layerToSave.updatedAt;
+      }
+
+      await persistAnimationManifest(nextManifest, appRef.current ?? undefined);
+      setAnimManifest(nextManifest);
+      setAnimEditorSession((prev) =>
+        prev
+          ? {
+              ...prev,
+              layer: layerToSave,
+              savedSnapshotJson: JSON.stringify(layerToSave),
+            }
+          : prev
+      );
+      showToast(
+        'ok',
+        `Đã lưu chỉnh sửa "${animEditorSession.displayLabel}" — tự động áp dụng cho mọi nhân vật & Multiplayer!`
+      );
+    } catch (err) {
+      showToast('err', err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyMessage(null);
+    }
+  }, [animEditorSession, animManifest, localApiReady, showToast]);
+
+  const handleDeleteAnimationEditorLayer = useCallback(async () => {
+    if (!animEditorSession || !localApiReady) return;
+    if (!window.confirm(`Xóa toàn bộ chỉnh sửa keyframe của "${animEditorSession.displayLabel}" để về bản gốc?`)) {
+      return;
+    }
+    setBusyMessage('Đang xóa lớp chỉnh sửa & khôi phục bản gốc...');
+    try {
+      await deleteAnimEditLayer(animEditorSession.clipId, appRef.current ?? undefined);
+      const nextManifest = structuredClone(animManifest);
+      const clipIdx = nextManifest.clips.findIndex((c) => c.id === animEditorSession.clipId);
+      if (clipIdx >= 0) {
+        delete nextManifest.clips[clipIdx].editLayerUrl;
+        delete nextManifest.clips[clipIdx].editLayerUpdatedAt;
+        nextManifest.clips[clipIdx].updatedAt = new Date().toISOString();
+      }
+      await persistAnimationManifest(nextManifest, appRef.current ?? undefined);
+      setAnimManifest(nextManifest);
+      const empty = createEmptyAnimEditLayer(animEditorSession.clipId);
+      setUndoStack([]);
+      setRedoStack([]);
+      setAnimEditorSession((prev) =>
+        prev
+          ? {
+              ...prev,
+              layer: empty,
+              savedSnapshotJson: JSON.stringify(empty),
+            }
+          : prev
+      );
+      showToast('ok', `Đã khôi phục "${animEditorSession.displayLabel}" về animation gốc.`);
+    } catch (err) {
+      showToast('err', err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyMessage(null);
+    }
+  }, [animEditorSession, animManifest, localApiReady, showToast]);
+
+  // Keyboard shortcuts when Animation Editor is active
+  useEffect(() => {
+    if (!animEditorSession) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
+
+      if (e.code === 'Space') {
+        e.preventDefault();
+        setEditorPlaying((p) => !p);
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        handleUndoEditor();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+        e.preventDefault();
+        handleRedoEditor();
+      } else if (e.key.toLowerCase() === 'k' && selectedBone) {
+        e.preventDefault();
+        const q = new pc.Quat(0, 0, 0, 1);
+        sampleBoneDeltaAtTime(animEditorSession.layer.tracks[selectedBone], editorTimeRef.current, q);
+        commitLayerWithUndo(
+          upsertBoneEditKey(animEditorSession.layer, selectedBone, editorTimeRef.current, [
+            q.x,
+            q.y,
+            q.z,
+            q.w,
+          ])
+        );
+      } else if ((e.key === 'Delete' || e.key === 'Backspace') && selectedKey) {
+        e.preventDefault();
+        commitLayerWithUndo(
+          removeBoneEditKey(animEditorSession.layer, selectedKey.bone, selectedKey.t)
+        );
+        setSelectedKey(null);
+      } else if (e.key === ',') {
+        e.preventDefault();
+        handleSeekEditor(editorTimeRef.current - 1 / animEditorSession.fps);
+      } else if (e.key === '.') {
+        e.preventDefault();
+        handleSeekEditor(editorTimeRef.current + 1 / animEditorSession.fps);
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c' && selectedKey) {
+        const keyObj = animEditorSession.layer.tracks[selectedKey.bone]?.find(
+          (k) => Math.abs(k.t - selectedKey.t) < 0.012
+        );
+        if (keyObj) setCopiedKeyRot([...keyObj.rot]);
+      } else if (
+        (e.ctrlKey || e.metaKey) &&
+        e.key.toLowerCase() === 'v' &&
+        copiedKeyRot &&
+        selectedBone
+      ) {
+        e.preventDefault();
+        commitLayerWithUndo(
+          upsertBoneEditKey(animEditorSession.layer, selectedBone, editorTimeRef.current, copiedKeyRot)
+        );
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [
+    animEditorSession,
+    selectedBone,
+    selectedKey,
+    copiedKeyRot,
+    commitLayerWithUndo,
+    handleUndoEditor,
+    handleRedoEditor,
+    handleSeekEditor,
+  ]);
 
   // Handle dropping a file (Character Model or Animation Clip)
   const handleImportCharacterFile = async (file: File) => {
@@ -675,6 +1525,7 @@ export const CharacterStudioApp: React.FC = () => {
         groundOffsetY: bounds.recommendedGroundOffsetY,
         facingYawOffset: autoFacingYaw,
         armPoseOffsetDeg: 0,
+        autoArmConvergence: true,
         tintable: false,
         boneMap: {},
       });
@@ -808,6 +1659,7 @@ export const CharacterStudioApp: React.FC = () => {
                 groundOffsetY: prev.groundOffsetY ?? 0,
                 facingYawOffset: prev.facingYawOffset ?? 0,
                 armPoseOffsetDeg: prev.armPoseOffsetDeg ?? 0,
+                autoArmConvergence: prev.autoArmConvergence,
                 tintable: prev.tintable,
               }
             : undefined);
@@ -822,12 +1674,20 @@ export const CharacterStudioApp: React.FC = () => {
           groundOffsetY: draftModel.groundOffsetY,
           facingYawOffset: draftModel.facingYawOffset,
           armPoseOffsetDeg: draftModel.armPoseOffsetDeg,
+          autoArmConvergence: draftModel.autoArmConvergence,
           tintable: draftModel.tintable,
           boneMap: Object.keys(draftModel.boneMap).length > 0 ? draftModel.boneMap : undefined,
           originalPreset: preservedOriginal,
           updatedAt: nowIso,
         };
         await persistCharacterManifest(nextManifest, appRef.current ?? undefined);
+        const oldUrlStillUsed =
+          prev.url === uploadRes.url ||
+          prev.url === preservedOriginal?.url ||
+          nextManifest.characters.some((c) => c.url === prev.url);
+        if (!oldUrlStillUsed && prev.url.startsWith('/models/')) {
+          await deletePublicStudioAsset(prev.url).catch(() => undefined);
+        }
         setCharManifest(nextManifest);
         setSelectedCharacterId(prev.id);
         setDraftModel(null);
@@ -851,6 +1711,7 @@ export const CharacterStudioApp: React.FC = () => {
           groundOffsetY: draftModel.groundOffsetY,
           facingYawOffset: draftModel.facingYawOffset,
           armPoseOffsetDeg: draftModel.armPoseOffsetDeg,
+          autoArmConvergence: draftModel.autoArmConvergence,
           tintable: draftModel.tintable,
           isBuiltIn: false,
           boneMap: Object.keys(draftModel.boneMap).length > 0 ? draftModel.boneMap : undefined,
@@ -912,6 +1773,7 @@ export const CharacterStudioApp: React.FC = () => {
           groundOffsetY: bounds.recommendedGroundOffsetY,
           facingYawOffset: autoFacingYaw,
           armPoseOffsetDeg: 0,
+          autoArmConvergence: true,
           boneMap: {},
         });
       } else if (editPresetForm) {
@@ -921,6 +1783,7 @@ export const CharacterStudioApp: React.FC = () => {
           groundOffsetY: bounds.recommendedGroundOffsetY,
           facingYawOffset: autoFacingYaw,
           armPoseOffsetDeg: 0,
+          autoArmConvergence: true,
           boneMap: {},
         });
       }
@@ -950,6 +1813,7 @@ export const CharacterStudioApp: React.FC = () => {
         groundOffsetY: editPresetForm.groundOffsetY,
         facingYawOffset: editPresetForm.facingYawOffset,
         armPoseOffsetDeg: editPresetForm.armPoseOffsetDeg,
+        autoArmConvergence: editPresetForm.autoArmConvergence,
         tintable: editPresetForm.tintable,
         boneMap:
           Object.keys(editPresetForm.boneMap).length > 0 ? editPresetForm.boneMap : undefined,
@@ -984,6 +1848,7 @@ export const CharacterStudioApp: React.FC = () => {
         groundOffsetY: orig.groundOffsetY ?? 0,
         facingYawOffset: orig.facingYawOffset ?? 0,
         armPoseOffsetDeg: orig.armPoseOffsetDeg ?? 0,
+        autoArmConvergence: orig.autoArmConvergence,
         tintable: orig.tintable,
         boneMap: undefined,
         updatedAt: new Date().toISOString(),
@@ -1035,6 +1900,29 @@ export const CharacterStudioApp: React.FC = () => {
 
   // === PUBLISH ACTIONS: ANIMATION ===
 
+  const cleanupUnusedCustomClips = async (manifest: AnimationManifest): Promise<void> => {
+    const referencedIds = new Set<string>([
+      ...Object.values(manifest.slots),
+      ...Object.values(manifest.defaultSlots ?? {}),
+      ...manifest.emotes.map((e) => e.clipId),
+    ]);
+    const removedClips = manifest.clips.filter((c) => !c.isBuiltIn && !referencedIds.has(c.id));
+    if (removedClips.length === 0) return;
+
+    manifest.clips = manifest.clips.filter((c) => c.isBuiltIn || referencedIds.has(c.id));
+    const remainingUrls = new Set(manifest.clips.map((c) => c.url));
+    for (const removed of removedClips) {
+      if (
+        removed.url &&
+        !remainingUrls.has(removed.url) &&
+        removed.url !== '/animations/core_locomotion.glb' &&
+        removed.url !== '/animations/core_emotes.glb'
+      ) {
+        await deletePublicStudioAsset(removed.url).catch(() => undefined);
+      }
+    }
+  };
+
   const handlePublishAnimation = async (mode: 'replace' | 'add_emote') => {
     if (!draftAnim) return;
     if (!localApiReady) {
@@ -1044,29 +1932,18 @@ export const CharacterStudioApp: React.FC = () => {
 
     setBusyMessage(
       mode === 'replace'
-        ? 'Đang ghi clip GLB vào public/animations/ & cập nhật slot...'
+        ? 'Đang ghi đè clip GLB vào public/animations/ & cập nhật slot...'
         : 'Đang ghi clip GLB vào public/animations/ & thêm Emote mới...'
     );
     try {
       const slug = slugifyStudioId(draftAnim.clipLabel, 'anim_clip');
-      const uploadRes = await uploadStudioGlbToPublic(
-        'animation',
-        slug,
-        draftAnim.converted.glbBuffer
-      );
-
       const nextAnim = structuredClone(animManifest);
-      let clipId = slug;
-      let suffix = 2;
-      while (nextAnim.clips.some((c) => c.id === clipId)) {
-        clipId = `${slug}_${suffix++}`;
-      }
+      const nowIso = new Date().toISOString();
 
-      const stateName = `Custom_${clipId}`;
-      const newClip: AnimationClipEntry = {
-        id: clipId,
-        name: stateName,
-        url: uploadRes.url,
+      const buildClipProps = (id: string, name: string, url: string): AnimationClipEntry => ({
+        id,
+        name,
+        url,
         trackName: draftAnim.selectedTrackName,
         speed: draftAnim.speed,
         loop: draftAnim.loop,
@@ -1079,43 +1956,113 @@ export const CharacterStudioApp: React.FC = () => {
         hipsYOffset:
           Math.abs(draftAnim.hipsYOffset) > 0.005 ? draftAnim.hipsYOffset : undefined,
         isBuiltIn: false,
-        updatedAt: new Date().toISOString(),
-      };
-      nextAnim.clips.push(newClip);
+        updatedAt: nowIso,
+      });
 
       if (mode === 'replace') {
-        if (replaceAnimTarget.startsWith('slot:')) {
-          const slotKey = replaceAnimTarget.slice(5) as CoreAnimSlotId;
-          nextAnim.slots[slotKey] = clipId;
+        const isSlot = replaceAnimTarget.startsWith('slot:');
+        const slotKey = isSlot ? (replaceAnimTarget.slice(5) as CoreAnimSlotId) : null;
+        const emoteId = !isSlot && replaceAnimTarget.startsWith('emote:') ? replaceAnimTarget.slice(6) : null;
+        const emIdx = emoteId ? nextAnim.emotes.findIndex((e) => e.id === emoteId) : -1;
+
+        const oldClipId = slotKey
+          ? nextAnim.slots[slotKey]
+          : emIdx >= 0
+            ? nextAnim.emotes[emIdx].clipId
+            : '';
+        const oldClipIdx = nextAnim.clips.findIndex((c) => c.id === oldClipId);
+        const oldClip = oldClipIdx >= 0 ? nextAnim.clips[oldClipIdx] : undefined;
+
+        const oldUsedByOtherSlot = Object.entries(nextAnim.slots).some(
+          ([k, cid]) => cid === oldClipId && k !== slotKey
+        );
+        const oldUsedByDefault = Object.values(nextAnim.defaultSlots ?? {}).includes(oldClipId);
+        const oldUsedByOtherEmote = nextAnim.emotes.some(
+          (e, idx) => e.clipId === oldClipId && idx !== emIdx
+        );
+        const canOverwriteInPlace = Boolean(
+          oldClip &&
+            !oldClip.isBuiltIn &&
+            !oldUsedByOtherSlot &&
+            !oldUsedByDefault &&
+            !oldUsedByOtherEmote &&
+            oldClip.url.startsWith('/animations/') &&
+            oldClip.url !== '/animations/core_locomotion.glb' &&
+            oldClip.url !== '/animations/core_emotes.glb'
+        );
+
+        const targetBaseName = canOverwriteInPlace && oldClip
+          ? (oldClip.url.split('/').pop()?.replace(/\.(glb|gltf|fbx)$/i, '') || slug)
+          : slug;
+
+        const uploadRes = await uploadStudioGlbToPublic(
+          'animation',
+          targetBaseName,
+          draftAnim.converted.glbBuffer
+        );
+
+        let finalClipId: string;
+        let finalStateName: string;
+
+        if (canOverwriteInPlace && oldClip) {
+          finalClipId = oldClip.id;
+          finalStateName = oldClip.name;
+          nextAnim.clips[oldClipIdx] = buildClipProps(finalClipId, finalStateName, uploadRes.url);
+        } else {
+          let clipId = slug;
+          let suffix = 2;
+          while (nextAnim.clips.some((c) => c.id === clipId)) {
+            clipId = `${slug}_${suffix++}`;
+          }
+          finalClipId = clipId;
+          finalStateName = `Custom_${clipId}`;
+          nextAnim.clips.push(buildClipProps(finalClipId, finalStateName, uploadRes.url));
+        }
+
+        if (slotKey) {
+          nextAnim.slots[slotKey] = finalClipId;
+          await cleanupUnusedCustomClips(nextAnim);
           await persistAnimationManifest(nextAnim, appRef.current ?? undefined);
           setAnimManifest(nextAnim);
           setDraftAnim(null);
           setPreviewAnimState(CORE_SLOT_STATE_NAMES[slotKey]);
+          void refreshAnimFolder();
           showToast(
             'ok',
-            `Đã thay động tác "${CORE_SLOT_LABELS[slotKey]}" bằng "${uploadRes.diskPath}" trên toàn bộ nhân vật!`
+            `Đã ghi đè động tác "${CORE_SLOT_LABELS[slotKey]}" bằng "${uploadRes.diskPath}" trên toàn bộ nhân vật!`
           );
-        } else if (replaceAnimTarget.startsWith('emote:')) {
-          const emoteId = replaceAnimTarget.slice(6);
-          const emIdx = nextAnim.emotes.findIndex((e) => e.id === emoteId);
-          if (emIdx >= 0) {
-            nextAnim.emotes[emIdx] = {
-              ...nextAnim.emotes[emIdx],
-              label: draftAnim.emoteLabel.trim() || nextAnim.emotes[emIdx].label,
-              sublabel: draftAnim.emoteSublabel.trim() || nextAnim.emotes[emIdx].sublabel,
-              clipId,
-            };
-          }
+        } else if (emIdx >= 0) {
+          nextAnim.emotes[emIdx] = {
+            ...nextAnim.emotes[emIdx],
+            label: draftAnim.emoteLabel.trim() || nextAnim.emotes[emIdx].label,
+            sublabel: draftAnim.emoteSublabel.trim() || nextAnim.emotes[emIdx].sublabel,
+            clipId: finalClipId,
+          };
+          await cleanupUnusedCustomClips(nextAnim);
           await persistAnimationManifest(nextAnim, appRef.current ?? undefined);
           setAnimManifest(nextAnim);
           setDraftAnim(null);
-          setPreviewAnimState(stateName);
+          setPreviewAnimState(finalStateName);
+          void refreshAnimFolder();
           showToast(
             'ok',
-            `Đã thay Emote "${nextAnim.emotes[emIdx]?.label ?? emoteId}" bằng "${uploadRes.diskPath}"!`
+            `Đã ghi đè Emote "${nextAnim.emotes[emIdx].label}" bằng "${uploadRes.diskPath}"!`
           );
         }
       } else {
+        const uploadRes = await uploadStudioGlbToPublic(
+          'animation',
+          slug,
+          draftAnim.converted.glbBuffer
+        );
+        let clipId = slug;
+        let suffix = 2;
+        while (nextAnim.clips.some((c) => c.id === clipId)) {
+          clipId = `${slug}_${suffix++}`;
+        }
+        const stateName = `Custom_${clipId}`;
+        nextAnim.clips.push(buildClipProps(clipId, stateName, uploadRes.url));
+
         let emoteId = slugifyStudioId(draftAnim.emoteLabel, 'emote');
         let eSuffix = 2;
         while (nextAnim.emotes.some((e) => e.id === emoteId)) {
@@ -1134,6 +2081,7 @@ export const CharacterStudioApp: React.FC = () => {
         setAnimManifest(nextAnim);
         setDraftAnim(null);
         setPreviewAnimState(stateName);
+        void refreshAnimFolder();
         showToast(
           'ok',
           `Đã thêm Emote mới "${draftAnim.emoteLabel}" vào vòng quay Hold R (${uploadRes.diskPath})!`
@@ -1152,10 +2100,12 @@ export const CharacterStudioApp: React.FC = () => {
     if (!defClipId) return;
     const next = structuredClone(animManifest);
     next.slots[slotKey] = defClipId;
+    await cleanupUnusedCustomClips(next);
     await persistAnimationManifest(next, appRef.current ?? undefined);
     setAnimManifest(next);
     setPreviewAnimState(CORE_SLOT_STATE_NAMES[slotKey]);
-    showToast('ok', `Đã khôi phục "${CORE_SLOT_LABELS[slotKey]}" về animation mặc định.`);
+    void refreshAnimFolder();
+    showToast('ok', `Đã khôi phục "${CORE_SLOT_LABELS[slotKey]}" về animation mặc định và dọn clip cũ.`);
   };
 
   const handleDeleteCustomEmote = async (emoteId: string) => {
@@ -1164,20 +2114,56 @@ export const CharacterStudioApp: React.FC = () => {
     if (!window.confirm(`Xóa Emote "${target.label}" khỏi vòng quay Hold R?`)) return;
     const next = structuredClone(animManifest);
     next.emotes = next.emotes.filter((e) => e.id !== emoteId);
-    const clip = next.clips.find((c) => c.id === target.clipId);
-    if (clip && !clip.isBuiltIn) {
-      const usedElsewhere =
-        next.emotes.some((e) => e.clipId === clip.id) ||
-        Object.values(next.slots).includes(clip.id);
-      if (!usedElsewhere) {
-        next.clips = next.clips.filter((c) => c.id !== clip.id);
-        await deletePublicStudioAsset(clip.url).catch(() => undefined);
-      }
-    }
+    await cleanupUnusedCustomClips(next);
     await persistAnimationManifest(next, appRef.current ?? undefined);
     setAnimManifest(next);
     setPreviewAnimState('Idle_Loop');
+    void refreshAnimFolder();
     showToast('ok', `Đã xóa Emote "${target.label}".`);
+  };
+
+  const handleDeleteAnimationFile = async (file: PublicAnimationFileEntry) => {
+    if (!localApiReady || file.isProtected) return;
+    const msg = file.isReferenced
+      ? `File "${file.name}" đang được gán trong game (${file.usedBy.join(', ')}). Vẫn muốn xóa khỏi public/animations/?`
+      : `Xóa file không dùng "${file.name}" khỏi thư mục public/animations/?`;
+    if (!window.confirm(msg)) return;
+    setBusyMessage(`Đang xóa ${file.name}...`);
+    try {
+      await deletePublicStudioAsset(file.url);
+      await refreshAnimFolder();
+      showToast('ok', `Đã xóa "${file.name}" khỏi public/animations/.`);
+    } catch (err) {
+      showToast('err', err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyMessage(null);
+    }
+  };
+
+  const handleCleanupUnusedAnimFiles = async () => {
+    if (!localApiReady) return;
+    const unused = animFolderFiles.filter((f) => !f.isProtected && !f.isReferenced);
+    if (unused.length === 0) return;
+    const totalMb = (unused.reduce((acc, f) => acc + f.sizeBytes, 0) / (1024 * 1024)).toFixed(2);
+    if (
+      !window.confirm(
+        `Dọn sạch ${unused.length} file animation không dùng (${totalMb} MB) trong public/animations/?`
+      )
+    ) {
+      return;
+    }
+    setBusyMessage(`Đang dọn ${unused.length} file dư...`);
+    try {
+      for (const f of unused) {
+        await deletePublicStudioAsset(f.url);
+      }
+      await refreshAnimFolder();
+      showToast('ok', `Đã dọn ${unused.length} file không dùng (tiết kiệm ${totalMb} MB).`);
+    } catch (err) {
+      showToast('err', err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyMessage(null);
+    }
   };
 
   const selectedSavedChar = charManifest.characters.find((c) => c.id === selectedCharacterId);
@@ -1454,26 +2440,47 @@ export const CharacterStudioApp: React.FC = () => {
                         }`}
                       >
                         <div className="min-w-0">
-                          <div className="text-xs font-semibold truncate">
-                            {CORE_SLOT_LABELS[slotKey]}
+                          <div className="text-xs font-semibold truncate flex items-center gap-1.5">
+                            <span>{CORE_SLOT_LABELS[slotKey]}</span>
+                            {clip?.editLayerUrl && (
+                              <span className="px-1 py-0.2 rounded bg-amber-500/20 text-amber-300 text-[9px] font-bold">
+                                Đã sửa
+                              </span>
+                            )}
                           </div>
                           <div className="text-[10px] font-mono text-gray-400 truncate">
                             {clip?.url ?? clipId} ({clip?.trackName || clip?.name})
                           </div>
                         </div>
-                        {isOverridden && (
-                          <button
-                            type="button"
-                            title="Khôi phục động tác gốc"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              void handleRestoreCoreSlot(slotKey);
-                            }}
-                            className="p-1 rounded bg-amber-500/15 hover:bg-amber-500/30 text-amber-300 shrink-0"
-                          >
-                            <RotateCcw className="w-3.5 h-3.5" />
-                          </button>
-                        )}
+                        <div className="flex items-center gap-1 shrink-0">
+                          {clip && (
+                            <button
+                              type="button"
+                              title="Mở trình chỉnh sửa Keyframe & IK (kiểu Unity)"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void openAnimationEditor(clip, stateName, CORE_SLOT_LABELS[slotKey]);
+                              }}
+                              className="px-1.5 py-1 rounded bg-indigo-500/20 hover:bg-indigo-500/40 text-indigo-200 text-[10px] font-semibold flex items-center gap-1"
+                            >
+                              <Pencil className="w-3 h-3" />
+                              <span>Sửa</span>
+                            </button>
+                          )}
+                          {isOverridden && (
+                            <button
+                              type="button"
+                              title="Khôi phục động tác gốc"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void handleRestoreCoreSlot(slotKey);
+                              }}
+                              className="p-1 rounded bg-amber-500/15 hover:bg-amber-500/30 text-amber-300"
+                            >
+                              <RotateCcw className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
                       </div>
                     );
                   })}
@@ -1504,28 +2511,147 @@ export const CharacterStudioApp: React.FC = () => {
                             style={{ backgroundColor: emote.accent }}
                           />
                           <div className="min-w-0">
-                            <div className="text-xs font-semibold truncate">{emote.label}</div>
+                            <div className="text-xs font-semibold truncate flex items-center gap-1.5">
+                              <span>{emote.label}</span>
+                              {clip?.editLayerUrl && (
+                                <span className="px-1 py-0.2 rounded bg-amber-500/20 text-amber-300 text-[9px] font-bold">
+                                  Đã sửa
+                                </span>
+                              )}
+                            </div>
                             <div className="text-[10px] font-mono text-gray-400 truncate">
                               {clip?.url ?? emote.clipId}
                             </div>
                           </div>
                         </div>
-                        {!emote.isBuiltIn && (
-                          <button
-                            type="button"
-                            title="Xóa Emote này"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              void handleDeleteCustomEmote(emote.id);
-                            }}
-                            className="p-1 rounded hover:bg-rose-500/20 text-gray-400 hover:text-rose-300 shrink-0"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        )}
+                        <div className="flex items-center gap-1 shrink-0">
+                          {clip && (
+                            <button
+                              type="button"
+                              title="Mở trình chỉnh sửa Keyframe & IK (kiểu Unity)"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void openAnimationEditor(clip, stateName, emote.label);
+                              }}
+                              className="px-1.5 py-1 rounded bg-indigo-500/20 hover:bg-indigo-500/40 text-indigo-200 text-[10px] font-semibold flex items-center gap-1"
+                            >
+                              <Pencil className="w-3 h-3" />
+                              <span>Sửa</span>
+                            </button>
+                          )}
+                          {!emote.isBuiltIn && (
+                            <button
+                              type="button"
+                              title="Xóa Emote này"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void handleDeleteCustomEmote(emote.id);
+                              }}
+                              className="p-1 rounded hover:bg-rose-500/20 text-gray-400 hover:text-rose-300"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
                       </div>
                     );
                   })}
+                </div>
+
+                {/* Public Animations Folder Explorer & Cleanup */}
+                <div className="space-y-2 pt-2 border-t border-[#242a38]">
+                  <div className="flex items-center justify-between gap-2 px-1">
+                    <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-gray-300">
+                      <FolderOpen className="w-3.5 h-3.5 text-amber-400" />
+                      <span>Thư mục public/animations/</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      {animFolderFiles.some((f) => !f.isProtected && !f.isReferenced) && (
+                        <button
+                          type="button"
+                          onClick={() => void handleCleanupUnusedAnimFiles()}
+                          className="px-2 py-0.5 rounded bg-rose-500/20 hover:bg-rose-500/35 border border-rose-500/40 text-rose-200 text-[10px] font-semibold transition"
+                          title="Xóa tất cả file không được slot/emote nào sử dụng"
+                        >
+                          Dọn file dư ({animFolderFiles.filter((f) => !f.isProtected && !f.isReferenced).length})
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => void refreshAnimFolder()}
+                        disabled={loadingAnimFolder}
+                        title="Làm mới danh sách file"
+                        className="p-1 rounded bg-[#191e2a] hover:bg-[#232a3b] border border-[#272e3f] text-gray-300"
+                      >
+                        <RefreshCw className={`w-3 h-3 ${loadingAnimFolder ? 'animate-spin' : ''}`} />
+                      </button>
+                    </div>
+                  </div>
+
+                  {!localApiReady ? (
+                    <div className="p-2.5 rounded-xl bg-[#191e2a] border border-[#272e3f] text-[11px] text-gray-400">
+                      Chạy <code className="text-indigo-300">npm run dev</code> để xem và dọn file trong <code className="text-indigo-300">public/animations/</code>.
+                    </div>
+                  ) : animFolderFiles.length === 0 ? (
+                    <div className="p-2.5 rounded-xl bg-[#191e2a] border border-[#272e3f] text-[11px] text-gray-400">
+                      {loadingAnimFolder ? 'Đang quét thư mục...' : 'Chưa có file nào.'}
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {animFolderFiles.map((file) => {
+                        const sizeLabel =
+                          file.sizeBytes >= 1024 * 1024
+                            ? `${(file.sizeBytes / (1024 * 1024)).toFixed(2)} MB`
+                            : `${Math.max(1, Math.round(file.sizeBytes / 1024))} KB`;
+                        return (
+                          <div
+                            key={file.url}
+                            className="p-2 rounded-xl bg-[#191e2a] border border-[#272e3f] flex items-center justify-between gap-2"
+                          >
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[11px] font-mono text-white truncate">
+                                  {file.name}
+                                </span>
+                                <span className="text-[9px] font-mono px-1 py-0.2 rounded bg-white/10 text-gray-300 shrink-0">
+                                  {sizeLabel}
+                                </span>
+                                {file.isProtected ? (
+                                  <span className="text-[9px] px-1.5 py-0.2 rounded bg-sky-500/20 text-sky-300 font-semibold shrink-0">
+                                    Core
+                                  </span>
+                                ) : file.isReferenced ? (
+                                  <span className="text-[9px] px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 font-semibold shrink-0">
+                                    Đang dùng
+                                  </span>
+                                ) : (
+                                  <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 font-semibold shrink-0">
+                                    Không dùng
+                                  </span>
+                                )}
+                              </div>
+                              {file.usedBy.length > 0 && (
+                                <div className="text-[10px] text-gray-400 truncate mt-0.5">
+                                  {file.usedBy.join(' • ')}
+                                </div>
+                              )}
+                            </div>
+
+                            {!file.isProtected && (
+                              <button
+                                type="button"
+                                onClick={() => void handleDeleteAnimationFile(file)}
+                                title={`Xóa ${file.name}`}
+                                className="p-1.5 rounded hover:bg-rose-500/20 text-gray-400 hover:text-rose-300 shrink-0 transition"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               </div>
             </>
@@ -1628,73 +2754,144 @@ export const CharacterStudioApp: React.FC = () => {
             )}
           </div>
 
-          {/* Bottom Animation Quick-Test Bar */}
-          <div className="p-3 bg-[#141821] border-t border-[#242a38] space-y-2">
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-[11px] font-semibold text-gray-300">
-                Test nhanh với kho Animation sẵn có:
-              </span>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setIsPlaying((p) => !p)}
-                  className="px-2.5 py-1 rounded-lg bg-[#202634] hover:bg-[#2b3346] text-xs text-white flex items-center gap-1"
-                >
-                  {isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
-                  <span>{isPlaying ? 'Tạm dừng' : 'Phát'}</span>
-                </button>
-                <select
-                  value={playbackSpeed}
-                  onChange={(e) => setPlaybackSpeed(Number(e.target.value))}
-                  className="bg-[#10141d] border border-[#2c3448] rounded-lg px-2 py-1 text-xs text-gray-200"
-                >
-                  <option value={0.5}>0.5x</option>
-                  <option value={1}>1.0x</option>
-                  <option value={1.5}>1.5x</option>
-                </select>
+          {/* Bottom Area: Unity-style Dopesheet Timeline OR Animation Quick-Test Bar */}
+          {animEditorSession ? (
+            <AnimationEditorTimeline
+              duration={animEditorSession.duration}
+              fps={animEditorSession.fps}
+              currentTime={editorTime}
+              isPlaying={editorPlaying}
+              autoKey={autoKey}
+              loopRegion={loopRegion}
+              layer={animEditorSession.layer}
+              availableBones={availableEditorBones}
+              selectedBone={selectedBone}
+              selectedKey={selectedKey}
+              canUndo={undoStack.length > 0}
+              canRedo={redoStack.length > 0}
+              onSeek={(t) => {
+                setEditorPlaying(false);
+                handleSeekEditor(t);
+              }}
+              onTogglePlay={() => setEditorPlaying((p) => !p)}
+              onToggleAutoKey={() => setAutoKey((a) => !a)}
+              onSelectBone={(b) => setSelectedBone(b)}
+              onSelectKey={(k) => setSelectedKey(k)}
+              onAddKeyAtPlayhead={(b) => {
+                const q = new pc.Quat(0, 0, 0, 1);
+                sampleBoneDeltaAtTime(animEditorSession.layer.tracks[b], editorTime, q);
+                commitLayerWithUndo(
+                  upsertBoneEditKey(animEditorSession.layer, b, editorTime, [q.x, q.y, q.z, q.w])
+                );
+              }}
+              onDeleteKey={(b, t) => {
+                commitLayerWithUndo(removeBoneEditKey(animEditorSession.layer, b, t));
+                setSelectedKey(null);
+              }}
+              onMoveKey={(b, oldT, newT) => {
+                setAnimEditorSession((prev) =>
+                  prev
+                    ? { ...prev, layer: moveBoneEditKey(prev.layer, b, oldT, newT) }
+                    : prev
+                );
+              }}
+              onChangeKeyInterp={(b, t, interp: AnimEditInterp) => {
+                commitLayerWithUndo(setBoneEditKeyInterp(animEditorSession.layer, b, t, interp));
+              }}
+              onCopyKey={() => {
+                if (!selectedKey) return;
+                const kObj = animEditorSession.layer.tracks[selectedKey.bone]?.find(
+                  (k) => Math.abs(k.t - selectedKey.t) < 0.012
+                );
+                if (kObj) setCopiedKeyRot([...kObj.rot]);
+              }}
+              onPasteKey={() => {
+                if (!copiedKeyRot || !selectedBone) return;
+                commitLayerWithUndo(
+                  upsertBoneEditKey(animEditorSession.layer, selectedBone, editorTime, copiedKeyRot)
+                );
+              }}
+              hasCopiedKey={copiedKeyRot !== null}
+              onUndo={handleUndoEditor}
+              onRedo={handleRedoEditor}
+              onSetLoopRegion={(r) => setLoopRegion(r)}
+            />
+          ) : (
+            <div className="p-3 bg-[#141821] border-t border-[#242a38] space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[11px] font-semibold text-gray-300">
+                  Test nhanh với kho Animation sẵn có:
+                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleOpenEditorForCurrentPreview}
+                    className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-xs font-semibold text-white flex items-center gap-1 shadow"
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                    <span>Chỉnh sửa Animation</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsPlaying((p) => !p)}
+                    className="px-2.5 py-1 rounded-lg bg-[#202634] hover:bg-[#2b3346] text-xs text-white flex items-center gap-1"
+                  >
+                    {isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                    <span>{isPlaying ? 'Tạm dừng' : 'Phát'}</span>
+                  </button>
+                  <select
+                    value={playbackSpeed}
+                    onChange={(e) => setPlaybackSpeed(Number(e.target.value))}
+                    className="bg-[#10141d] border border-[#2c3448] rounded-lg px-2 py-1 text-xs text-gray-200"
+                  >
+                    <option value={0.5}>0.5x</option>
+                    <option value={1}>1.0x</option>
+                    <option value={1.5}>1.5x</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-1.5">
+                {draftAnim && (
+                  <button
+                    type="button"
+                    onClick={() => setPreviewAnimState('__draft_anim__')}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition ${
+                      previewAnimState === '__draft_anim__'
+                        ? 'bg-amber-500 text-black border-amber-400'
+                        : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                    }`}
+                  >
+                    ★ Anim vừa kéo thả
+                  </button>
+                )}
+                {[
+                  { label: 'Idle', state: 'Idle_Loop' },
+                  { label: 'Walk', state: 'Walk_Loop' },
+                  { label: 'Run', state: 'Running' },
+                  { label: 'Jump', state: 'Jumping' },
+                  { label: 'Ngồi ghế', state: 'Crouch_Idle_Loop' },
+                  ...animManifest.emotes.map((em) => {
+                    const cl = animManifest.clips.find((c) => c.id === em.clipId);
+                    return { label: em.label, state: cl?.name ?? em.clipId };
+                  }),
+                ].map((btn) => (
+                  <button
+                    key={`${btn.label}:${btn.state}`}
+                    type="button"
+                    onClick={() => setPreviewAnimState(btn.state)}
+                    className={`px-2.5 py-1 rounded-lg text-[11px] font-medium border transition ${
+                      previewAnimState === btn.state
+                        ? 'bg-sky-600 text-white border-sky-400'
+                        : 'bg-[#1b2130] text-gray-300 border-[#2b3347] hover:border-gray-500'
+                    }`}
+                  >
+                    {btn.label}
+                  </button>
+                ))}
               </div>
             </div>
-
-            <div className="flex flex-wrap gap-1.5">
-              {draftAnim && (
-                <button
-                  type="button"
-                  onClick={() => setPreviewAnimState('__draft_anim__')}
-                  className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition ${
-                    previewAnimState === '__draft_anim__'
-                      ? 'bg-amber-500 text-black border-amber-400'
-                      : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
-                  }`}
-                >
-                  ★ Anim vừa kéo thả
-                </button>
-              )}
-              {[
-                { label: 'Idle', state: 'Idle_Loop' },
-                { label: 'Walk', state: 'Walk_Loop' },
-                { label: 'Run', state: 'Running' },
-                { label: 'Jump', state: 'Jumping' },
-                { label: 'Ngồi ghế', state: 'Crouch_Idle_Loop' },
-                ...animManifest.emotes.map((em) => {
-                  const cl = animManifest.clips.find((c) => c.id === em.clipId);
-                  return { label: em.label, state: cl?.name ?? em.clipId };
-                }),
-              ].map((btn) => (
-                <button
-                  key={`${btn.label}:${btn.state}`}
-                  type="button"
-                  onClick={() => setPreviewAnimState(btn.state)}
-                  className={`px-2.5 py-1 rounded-lg text-[11px] font-medium border transition ${
-                    previewAnimState === btn.state
-                      ? 'bg-sky-600 text-white border-sky-400'
-                      : 'bg-[#1b2130] text-gray-300 border-[#2b3347] hover:border-gray-500'
-                  }`}
-                >
-                  {btn.label}
-                </button>
-              ))}
-            </div>
-          </div>
+          )}
         </main>
 
         {/* RIGHT COLUMN: Import Dropzone, Calibration & Publish to Game */}
@@ -1896,6 +3093,20 @@ export const CharacterStudioApp: React.FC = () => {
 
                     <label className="flex items-center justify-between gap-2 pt-1 cursor-pointer">
                       <span className="text-xs text-gray-300">
+                        Tự động bù tỷ lệ vai rộng / tay ngắn (Vỗ tay &amp; Hát)
+                      </span>
+                      <input
+                        type="checkbox"
+                        checked={draftModel.autoArmConvergence}
+                        onChange={(e) =>
+                          setDraftModel({ ...draftModel, autoArmConvergence: e.target.checked })
+                        }
+                        className="w-4 h-4 accent-sky-500 rounded"
+                      />
+                    </label>
+
+                    <label className="flex items-center justify-between gap-2 pt-1 cursor-pointer">
+                      <span className="text-xs text-gray-300">
                         Cho phép người chơi đổi màu trang phục
                       </span>
                       <input
@@ -2086,6 +3297,23 @@ export const CharacterStudioApp: React.FC = () => {
                     </div>
 
                     <label className="flex items-center justify-between gap-2 cursor-pointer">
+                      <span className="text-xs text-gray-300">
+                        Tự động bù tỷ lệ vai rộng / tay ngắn (Vỗ tay &amp; Hát)
+                      </span>
+                      <input
+                        type="checkbox"
+                        checked={editPresetForm.autoArmConvergence}
+                        onChange={(e) =>
+                          setEditPresetForm({
+                            ...editPresetForm,
+                            autoArmConvergence: e.target.checked,
+                          })
+                        }
+                        className="w-4 h-4 accent-sky-500 rounded"
+                      />
+                    </label>
+
+                    <label className="flex items-center justify-between gap-2 cursor-pointer">
                       <span className="text-xs text-gray-300">Cho phép đổi màu trang phục</span>
                       <input
                         type="checkbox"
@@ -2200,6 +3428,147 @@ export const CharacterStudioApp: React.FC = () => {
                 </div>
               )}
             </div>
+          ) : animEditorSession ? (
+            /* === UNITY-STYLE ANIMATION EDITOR INSPECTOR === */
+            (() => {
+              const curQ = new pc.Quat(0, 0, 0, 1);
+              if (selectedBone) {
+                sampleBoneDeltaAtTime(animEditorSession.layer.tracks[selectedBone], editorTime, curQ);
+              }
+              const eu = new pc.Vec3();
+              curQ.getEulerAngles(eu);
+              const hipsV = new pc.Vec3();
+              sampleHipsOffsetAtTime(animEditorSession.layer.hipsOffsetKeys, editorTime, hipsV);
+              const currentClip = animManifest.clips.find((c) => c.id === animEditorSession.clipId);
+
+              const mirrorSide = (fromPrefix: 'left' | 'right', toPrefix: 'left' | 'right') => {
+                let nextLayer = cloneAnimEditLayer(animEditorSession.layer);
+                for (const key of ALL_HUMANOID_BONE_KEYS) {
+                  if (!key.startsWith(fromPrefix)) continue;
+                  const targetKey = `${toPrefix}${key.slice(fromPrefix.length)}` as AnyHumanoidBoneKey;
+                  const q = new pc.Quat(0, 0, 0, 1);
+                  if (sampleBoneDeltaAtTime(animEditorSession.layer.tracks[key], editorTime, q)) {
+                    nextLayer = upsertBoneEditKey(nextLayer, targetKey, editorTime, [
+                      q.x,
+                      -q.y,
+                      -q.z,
+                      q.w,
+                    ]);
+                  }
+                }
+                commitLayerWithUndo(nextLayer);
+              };
+
+              return (
+                <AnimationEditorInspector
+                  clipDisplayLabel={animEditorSession.displayLabel}
+                  dirty={
+                    JSON.stringify(animEditorSession.layer) !==
+                    animEditorSession.savedSnapshotJson
+                  }
+                  hasAnyEdits={hasAnyEditKeys(animEditorSession.layer)}
+                  gizmoMode={gizmoMode}
+                  coordSpace={coordSpace}
+                  selectedBone={selectedBone}
+                  isSelectedBoneOverridden={Boolean(
+                    selectedBone && animEditorSession.layer.overrideBones?.includes(selectedBone)
+                  )}
+                  selectedIKLimb={selectedIKLimb}
+                  footLock={footLock}
+                  boneEulerDeg={[eu.x, eu.y, eu.z]}
+                  hipsOffset={[hipsV.x, hipsV.y, hipsV.z]}
+                  hasSavedLayer={Boolean(currentClip?.editLayerUrl)}
+                  localApiReady={localApiReady}
+                  onChangeGizmoMode={(m) => setGizmoMode(m)}
+                  onChangeCoordSpace={(s) => setCoordSpace(s)}
+                  onSelectIKLimb={(limb) => {
+                    setSelectedIKLimb(limb);
+                    const { end } = getLimbBoneKeys(limb);
+                    setSelectedBone(end);
+                  }}
+                  onToggleFootLock={() => {
+                    const rig = targetRigRef.current;
+                    if (!footLock && rig) {
+                      lockedLeftFootPosRef.current =
+                        rig.bones.leftFoot?.node.getPosition().clone() ?? null;
+                      lockedRightFootPosRef.current =
+                        rig.bones.rightFoot?.node.getPosition().clone() ?? null;
+                    } else {
+                      lockedLeftFootPosRef.current = null;
+                      lockedRightFootPosRef.current = null;
+                    }
+                    setFootLock((f) => !f);
+                  }}
+                  onChangeBoneEuler={([x, y, z]) => {
+                    if (!selectedBone) return;
+                    const q = new pc.Quat().setFromEulerAngles(x, y, z);
+                    commitLayerWithUndo(
+                      upsertBoneEditKey(animEditorSession.layer, selectedBone, editorTime, [
+                        q.x,
+                        q.y,
+                        q.z,
+                        q.w,
+                      ])
+                    );
+                  }}
+                  onToggleBoneOverride={() => {
+                    if (!selectedBone) return;
+                    const nextLayer = cloneAnimEditLayer(animEditorSession.layer);
+                    const cur = new Set(nextLayer.overrideBones ?? []);
+                    if (cur.has(selectedBone)) {
+                      cur.delete(selectedBone);
+                    } else {
+                      cur.add(selectedBone);
+                    }
+                    nextLayer.overrideBones = Array.from(cur);
+                    nextLayer.updatedAt = new Date().toISOString();
+                    commitLayerWithUndo(nextLayer);
+                  }}
+                  onResetBoneAtTime={() => {
+                    if (!selectedBone) return;
+                    const keys = animEditorSession.layer.tracks[selectedBone] ?? [];
+                    const hasOtherKeys = keys.some((k) => Math.abs(k.t - editorTime) > 0.012);
+                    if (hasOtherKeys) {
+                      commitLayerWithUndo(
+                        upsertBoneEditKey(animEditorSession.layer, selectedBone, editorTime, [
+                          0, 0, 0, 1,
+                        ])
+                      );
+                    } else {
+                      commitLayerWithUndo(
+                        removeBoneEditKey(animEditorSession.layer, selectedBone, editorTime)
+                      );
+                    }
+                  }}
+                  onResetBoneTrack={() => {
+                    if (!selectedBone) return;
+                    const nextLayer = cloneAnimEditLayer(animEditorSession.layer);
+                    delete nextLayer.tracks[selectedBone];
+                    nextLayer.updatedAt = new Date().toISOString();
+                    commitLayerWithUndo(nextLayer);
+                  }}
+                  onResetAllEdits={() => {
+                    commitLayerWithUndo(createEmptyAnimEditLayer(animEditorSession.clipId));
+                    setSelectedKey(null);
+                  }}
+                  onMirrorLeftToRight={() => mirrorSide('left', 'right')}
+                  onMirrorRightToLeft={() => mirrorSide('right', 'left')}
+                  onChangeHipsOffset={(pos) => {
+                    commitLayerWithUndo(
+                      upsertHipsOffsetKey(animEditorSession.layer, editorTime, pos)
+                    );
+                  }}
+                  onResetHipsAtTime={() => {
+                    commitLayerWithUndo(
+                      upsertHipsOffsetKey(animEditorSession.layer, editorTime, [0, 0, 0])
+                    );
+                  }}
+                  onSaveToGame={() => void handleSaveAnimationEditor()}
+                  onDeleteEditLayer={() => void handleDeleteAnimationEditorLayer()}
+                  onExitEditor={handleExitAnimationEditor}
+                />
+              );
+            })()
           ) : (
             /* === ANIMATION STUDIO RIGHT PANEL === */
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
